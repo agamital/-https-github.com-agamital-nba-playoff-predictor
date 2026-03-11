@@ -5,6 +5,7 @@ from typing import Optional
 import uvicorn
 from datetime import datetime, timedelta
 import sqlite3
+import asyncio
 from pathlib import Path
 
 _standings_cache = {"data": None, "expires": None}
@@ -188,19 +189,22 @@ def get_standings():
         return _standings_cache["data"] or []
 
 def generate_matchups():
+    # Skip if matchups already exist for this season
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM series WHERE season = ?', ('2026',))
+    if c.fetchone()[0] > 0:
+        conn.close()
+        print("Matchups already exist, skipping generation")
+        return
+    conn.close()
+
     standings = get_standings()
     if not standings:
         return
-    
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
-    # DELETE OLD PREDICTIONS WHEN REGENERATING
-    c.execute('DELETE FROM predictions WHERE series_id IN (SELECT id FROM series WHERE season = ?)', ('2026',))
-    c.execute('DELETE FROM playin_predictions WHERE game_id IN (SELECT id FROM playin_games WHERE season = ?)', ('2026',))
-    
-    c.execute('DELETE FROM series WHERE season = ?', ('2026',))
-    c.execute('DELETE FROM playin_games WHERE season = ?', ('2026',))
     
     
     for conf_short in ['East', 'West']:
@@ -238,7 +242,9 @@ def generate_matchups():
 async def startup():
     init_db()
     sync_teams()
-    generate_matchups()
+    # Run NBA API call in background so server starts immediately
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, generate_matchups)
 
 @app.get("/")
 async def root():
