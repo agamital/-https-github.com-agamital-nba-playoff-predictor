@@ -39,6 +39,11 @@ export const register = async (username, email, password) => {
   return response.data;
 };
 
+export const getMe = async (userId) => {
+  const response = await api.get(`/api/auth/me?user_id=${userId}`);
+  return response.data;
+};
+
 export const login = async (username, password) => {
   const response = await api.post('/api/auth/login', {
     username,

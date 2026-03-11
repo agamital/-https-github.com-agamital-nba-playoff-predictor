@@ -428,7 +428,16 @@ function App() {
 
   useEffect(() => {
     const stored = localStorage.getItem('nba_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
+    if (stored) {
+      const user = JSON.parse(stored);
+      setCurrentUser(user);
+      // Refresh user data from server to pick up role/points changes
+      api.getMe(user.user_id).then(fresh => {
+        const updated = { ...user, ...fresh };
+        setCurrentUser(updated);
+        localStorage.setItem('nba_user', JSON.stringify(updated));
+      }).catch(() => {});
+    }
   }, []);
 
   const handleLogin = (user) => {

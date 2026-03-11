@@ -81,8 +81,9 @@ const UserPredictionsPage = ({ userId, username, onBack }) => {
                         <p className="text-sm text-white">{pred.team1.name} vs {pred.team2.name}</p>
                       </div>
                       <div className="text-right">
-                        <div className="px-3 py-1 rounded bg-orange-500/20 text-orange-400 text-sm font-bold">
-                          Picked: {pred.predicted_winner.abbreviation}
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-500/20 border border-orange-500/30">
+                          <img src={pred.predicted_winner.logo_url} alt="" className="w-6 h-6" onError={(e) => e.target.style.display='none'} />
+                          <span className="text-orange-400 text-sm font-bold">{pred.predicted_winner.abbreviation}</span>
                         </div>
                         <p className="text-xs text-slate-500 mt-1">
                           {new Date(pred.predicted_at).toLocaleDateString()}
@@ -121,17 +122,18 @@ const UserPredictionsPage = ({ userId, username, onBack }) => {
                           : <XCircle className="w-6 h-6 text-red-400" />
                       )}
                     </div>
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="px-3 py-1 rounded bg-orange-500/20 text-orange-400 text-sm font-bold">
-                        Picked: {pred.predicted_winner.abbreviation}
+                    <div className="flex items-center justify-between flex-wrap gap-2 mt-3 pt-3 border-t border-slate-800">
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-500/20 border border-orange-500/30">
+                        <img src={pred.predicted_winner.logo_url} alt="" className="w-6 h-6" onError={(e) => e.target.style.display='none'} />
+                        <span className="text-orange-400 text-sm font-bold">{pred.predicted_winner.name}</span>
                       </div>
                       {pred.predicted_games && (
-                        <div className="px-3 py-1 rounded bg-blue-500/20 text-blue-400 text-sm font-bold">
+                        <div className="px-3 py-2 rounded-lg bg-blue-500/20 border border-blue-500/30 text-blue-400 text-sm font-bold">
                           in {pred.predicted_games} games
                         </div>
                       )}
                       {pred.points_earned > 0 && (
-                        <div className="px-3 py-1 rounded bg-green-500/20 text-green-400 text-sm font-bold">
+                        <div className="px-3 py-2 rounded-lg bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-bold">
                           +{pred.points_earned} pts
                         </div>
                       )}

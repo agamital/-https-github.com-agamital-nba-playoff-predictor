@@ -295,6 +295,17 @@ async def register(user: User):
         conn.close()
         raise HTTPException(400, "User exists")
 
+@app.get("/api/auth/me")
+async def get_me(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "User not found")
+    return {"user_id": row[0], "username": row[1], "email": row[2], "role": row[4], "points": row[5]}
+
 @app.post("/api/auth/login")
 async def login(creds: UserLogin):
     conn = sqlite3.connect(DB_PATH)
@@ -448,7 +459,7 @@ async def my_predictions(user_id: int, season: str = "2026"):
         SELECT p.*, s.round, s.conference,
                ht.name, ht.abbreviation, ht.logo_url,
                at.name, at.abbreviation, at.logo_url,
-               wt.name, wt.abbreviation
+               wt.name, wt.abbreviation, wt.logo_url
         FROM predictions p
         JOIN series s ON p.series_id = s.id
         JOIN teams ht ON s.home_team_id = ht.id
@@ -467,7 +478,7 @@ async def my_predictions(user_id: int, season: str = "2026"):
             'conference': row[9],
             'home_team': {'name': row[10], 'abbreviation': row[11], 'logo_url': row[12]},
             'away_team': {'name': row[13], 'abbreviation': row[14], 'logo_url': row[15]},
-            'predicted_winner': {'name': row[16], 'abbreviation': row[17]},
+            'predicted_winner': {'name': row[16], 'abbreviation': row[17], 'logo_url': row[18]},
             'predicted_at': row[4],
             'is_correct': row[5],
             'points_earned': row[6]
@@ -478,7 +489,7 @@ async def my_predictions(user_id: int, season: str = "2026"):
         SELECT pp.*, pg.game_type, pg.conference,
                t1.name, t1.abbreviation, t1.logo_url,
                t2.name, t2.abbreviation, t2.logo_url,
-               wt.name, wt.abbreviation
+               wt.name, wt.abbreviation, wt.logo_url
         FROM playin_predictions pp
         JOIN playin_games pg ON pp.game_id = pg.id
         JOIN teams t1 ON pg.team1_id = t1.id
@@ -496,7 +507,7 @@ async def my_predictions(user_id: int, season: str = "2026"):
             'conference': row[8],
             'team1': {'name': row[9], 'abbreviation': row[10], 'logo_url': row[11]},
             'team2': {'name': row[12], 'abbreviation': row[13], 'logo_url': row[14]},
-            'predicted_winner': {'name': row[15], 'abbreviation': row[16]},
+            'predicted_winner': {'name': row[15], 'abbreviation': row[16], 'logo_url': row[17]},
             'predicted_at': row[4]
         })
     
