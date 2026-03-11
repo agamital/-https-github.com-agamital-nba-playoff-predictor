@@ -7,6 +7,7 @@ import './index.css';
 import MyPredictionsPage from './MyPredictionsPage';
 import UserPredictionsPage from './UserPredictionsPage';
 import AdminPage from './AdminPage';
+import BracketPage from './BracketPage';
 
 const Button = ({ children, onClick, className, variant = 'default', ...props }) => {
   const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-all';
@@ -482,7 +483,7 @@ function App() {
       case 'standings': return <StandingsPage currentUser={currentUser} />;
       case 'playin': return <PlayInPage currentUser={currentUser} />;
       case 'teams': return <TeamsPage />;
-      case 'betting': return <BettingPage currentUser={currentUser} />;
+      case 'betting': return <BracketPage currentUser={currentUser} />;
       case 'leaderboard': return <LeaderboardPage onUserClick={handleUserClick} />;
       case 'mypredictions': return <MyPredictionsPage currentUser={currentUser} />;
       case 'user-predictions': return selectedUser ? <UserPredictionsPage userId={selectedUser.user_id} username={selectedUser.username} onBack={() => navigate('leaderboard')} /> : null;
