@@ -5,6 +5,7 @@ import StandingsPage from './StandingsPage';
 import PlayInPage from './PlayInPage';
 import './index.css';
 import MyPredictionsPage from './MyPredictionsPage';
+import UserPredictionsPage from './UserPredictionsPage';
 
 const Button = ({ children, onClick, className, variant = 'default', ...props }) => {
   const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-all';
@@ -19,8 +20,8 @@ const Button = ({ children, onClick, className, variant = 'default', ...props })
   );
 };
 
-const Card = ({ children, className }) => (
-  <div className={`bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur-sm ${className}`}>
+const Card = ({ children, className, onClick }) => (
+  <div className={`bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur-sm ${className}`} onClick={onClick}>
     {children}
   </div>
 );
@@ -215,6 +216,8 @@ const TeamsPage = () => {
 const BettingPage = ({ currentUser }) => {
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [picks, setPicks] = useState({}); // { [seriesId]: { teamId, games } }
+  const [saved, setSaved] = useState({});
 
   useEffect(() => {
     loadSeries();
@@ -231,14 +234,23 @@ const BettingPage = ({ currentUser }) => {
     }
   };
 
-  const handlePrediction = async (seriesId, teamId) => {
-    if (!currentUser) {
-      alert('Please login to make predictions');
-      return;
-    }
+  const selectTeam = (seriesId, teamId) => {
+    setPicks(prev => ({ ...prev, [seriesId]: { ...prev[seriesId], teamId } }));
+  };
+
+  const selectGames = (seriesId, games) => {
+    setPicks(prev => ({ ...prev, [seriesId]: { ...prev[seriesId], games } }));
+  };
+
+  const handleSave = async (seriesId) => {
+    if (!currentUser) { alert('Please login to make predictions'); return; }
+    const pick = picks[seriesId];
+    if (!pick?.teamId) { alert('Please pick a winner first'); return; }
+    if (!pick?.games) { alert('Please pick number of games'); return; }
     try {
-      await api.makePrediction(currentUser.user_id, seriesId, teamId);
-      alert('Prediction saved!');
+      await api.makePrediction(currentUser.user_id, seriesId, pick.teamId, pick.games);
+      setSaved(prev => ({ ...prev, [seriesId]: true }));
+      setTimeout(() => setSaved(prev => ({ ...prev, [seriesId]: false })), 2000);
     } catch (err) {
       alert('Error: ' + (err.response?.data?.detail || 'Unknown error'));
     }
@@ -262,51 +274,82 @@ const BettingPage = ({ currentUser }) => {
         </div>
       ) : series.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {series.map((s) => (
-            <Card key={s.id} className="p-6">
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-xs font-bold text-orange-400 uppercase">{s.conference} Conference</span>
-                <span className="text-xs text-slate-400">{s.round}</span>
-              </div>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <img
-                      src={s.home_team.logo_url}
-                      alt={s.home_team.name}
-                      className="w-10 h-10"
-                      onError={(e) => e.target.src = `https://via.placeholder.com/40?text=${s.home_team.abbreviation}`}
-                    />
-                    <div>
-                      <p className="font-bold text-white">{s.home_team.name}</p>
-                      <p className="text-xs text-slate-400">Seed {s.home_team.seed} • Wins: {s.home_wins}</p>
+          {series.map((s) => {
+            const pick = picks[s.id] || {};
+            return (
+              <Card key={s.id} className="p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <span className="text-xs font-bold text-orange-400 uppercase">{s.conference} Conference</span>
+                  <span className="text-xs text-slate-400">{s.round}</span>
+                </div>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <img src={s.home_team.logo_url} alt={s.home_team.name} className="w-10 h-10"
+                        onError={(e) => e.target.src = `https://via.placeholder.com/40?text=${s.home_team.abbreviation}`} />
+                      <div>
+                        <p className="font-bold text-white">{s.home_team.name}</p>
+                        <p className="text-xs text-slate-400">Seed {s.home_team.seed}</p>
+                      </div>
+                    </div>
+                    <div className="text-slate-600 font-black text-xl">VS</div>
+                    <div className="flex items-center space-x-3">
+                      <div className="text-right">
+                        <p className="font-bold text-white">{s.away_team.name}</p>
+                        <p className="text-xs text-slate-400">Seed {s.away_team.seed}</p>
+                      </div>
+                      <img src={s.away_team.logo_url} alt={s.away_team.name} className="w-10 h-10"
+                        onError={(e) => e.target.src = `https://via.placeholder.com/40?text=${s.away_team.abbreviation}`} />
                     </div>
                   </div>
-                  <div className="text-slate-600 font-black text-xl">VS</div>
-                  <div className="flex items-center space-x-3">
-                    <div className="text-right">
-                      <p className="font-bold text-white">{s.away_team.name}</p>
-                      <p className="text-xs text-slate-400">Seed {s.away_team.seed} • Wins: {s.away_wins}</p>
+
+                  {/* Pick winner */}
+                  <div>
+                    <p className="text-xs text-slate-400 mb-2 uppercase font-bold">Pick Winner</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        onClick={() => selectTeam(s.id, s.home_team.id)}
+                        variant={pick.teamId === s.home_team.id ? 'default' : 'outline'}
+                      >
+                        {s.home_team.abbreviation}
+                      </Button>
+                      <Button
+                        onClick={() => selectTeam(s.id, s.away_team.id)}
+                        variant={pick.teamId === s.away_team.id ? 'default' : 'outline'}
+                      >
+                        {s.away_team.abbreviation}
+                      </Button>
                     </div>
-                    <img
-                      src={s.away_team.logo_url}
-                      alt={s.away_team.name}
-                      className="w-10 h-10"
-                      onError={(e) => e.target.src = `https://via.placeholder.com/40?text=${s.away_team.abbreviation}`}
-                    />
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <Button onClick={() => handlePrediction(s.id, s.home_team.id)}>
-                    Pick {s.home_team.abbreviation}
+
+                  {/* Pick series length */}
+                  <div>
+                    <p className="text-xs text-slate-400 mb-2 uppercase font-bold">Series Length</p>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[4, 5, 6, 7].map(g => (
+                        <Button
+                          key={g}
+                          onClick={() => selectGames(s.id, g)}
+                          variant={pick.games === g ? 'default' : 'outline'}
+                          className="text-center"
+                        >
+                          {g} Games
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={() => handleSave(s.id)}
+                    className="w-full"
+                    disabled={!pick.teamId || !pick.games}
+                  >
+                    {saved[s.id] ? 'Saved!' : 'Save Prediction'}
                   </Button>
-                  <Button onClick={() => handlePrediction(s.id, s.away_team.id)}>
-                    Pick {s.away_team.abbreviation}
-                  </Button>
                 </div>
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       ) : (
         <Card className="p-8 text-center">
@@ -317,7 +360,7 @@ const BettingPage = ({ currentUser }) => {
   );
 };
 
-const LeaderboardPage = () => {
+const LeaderboardPage = ({ onUserClick }) => {
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -346,14 +389,18 @@ const LeaderboardPage = () => {
       ) : (
         <div className="space-y-3">
           {leaderboard.map((user) => (
-            <Card key={user.rank} className="p-4">
+            <Card
+              key={user.rank}
+              className="p-4 cursor-pointer hover:bg-slate-800/50 transition-all"
+              onClick={() => onUserClick(user)}
+            >
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-4">
                   <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-full flex items-center justify-center text-white font-bold">
                     {user.rank}
                   </div>
                   <div>
-                    <p className="font-bold text-white">{user.username}</p>
+                    <p className="font-bold text-white hover:text-orange-400 transition-colors">{user.username}</p>
                     <p className="text-xs text-slate-400">
                       {user.correct_predictions}/{user.total_predictions} correct • {user.accuracy}% accuracy
                     </p>
@@ -376,6 +423,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState('home');
   const [currentUser, setCurrentUser] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
 
   useEffect(() => {
     const stored = localStorage.getItem('nba_user');
@@ -397,6 +445,13 @@ function App() {
   const navigate = (page) => {
     setCurrentPage(page);
     setMobileMenuOpen(false);
+    if (page !== 'user-predictions') setSelectedUser(null);
+  };
+
+  const handleUserClick = (user) => {
+    setSelectedUser(user);
+    setCurrentPage('user-predictions');
+    setMobileMenuOpen(false);
   };
 
   const navItems = [
@@ -417,8 +472,9 @@ function App() {
       case 'playin': return <PlayInPage currentUser={currentUser} />;
       case 'teams': return <TeamsPage />;
       case 'betting': return <BettingPage currentUser={currentUser} />;
-      case 'leaderboard': return <LeaderboardPage />;
+      case 'leaderboard': return <LeaderboardPage onUserClick={handleUserClick} />;
       case 'mypredictions': return <MyPredictionsPage currentUser={currentUser} />;
+      case 'user-predictions': return selectedUser ? <UserPredictionsPage userId={selectedUser.user_id} username={selectedUser.username} onBack={() => navigate('leaderboard')} /> : null;
       default: return <HomePage {...props} />;
     }
   };

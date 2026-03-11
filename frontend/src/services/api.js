@@ -56,10 +56,11 @@ export const getSeries = async (season = '2026', status = null) => {
 };
 
 // Predictions
-export const makePrediction = async (userId, seriesId, predictedWinnerId) => {
+export const makePrediction = async (userId, seriesId, predictedWinnerId, predictedGames = null) => {
   const response = await api.post(`/api/predictions?user_id=${userId}`, {
     series_id: seriesId,
     predicted_winner_id: predictedWinnerId,
+    predicted_games: predictedGames,
   });
   return response.data;
 };

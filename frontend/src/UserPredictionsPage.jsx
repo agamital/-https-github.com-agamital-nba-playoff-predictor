@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Trophy, CheckCircle, XCircle, Clock, ArrowLeft } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className }) => (
@@ -8,42 +8,37 @@ const Card = ({ children, className }) => (
   </div>
 );
 
-const MyPredictionsPage = ({ currentUser }) => {
+const UserPredictionsPage = ({ userId, username, onBack }) => {
   const [predictions, setPredictions] = useState({ playoff_predictions: [], playin_predictions: [], total_predictions: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (currentUser) {
-      loadPredictions();
-    }
-  }, [currentUser]);
-
-  const loadPredictions = async () => {
-    setLoading(true);
-    try {
-      const data = await api.getMyPredictions(currentUser.user_id, '2026');
-      setPredictions(data);
-    } catch (err) {
-      console.error('Error loading predictions:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (!currentUser) {
-    return (
-      <div className="max-w-4xl mx-auto px-4 py-12 text-center">
-        <h2 className="text-3xl font-bold text-white mb-4">Please Login</h2>
-        <p className="text-slate-400">You need to be logged in to view your predictions</p>
-      </div>
-    );
-  }
+    const load = async () => {
+      setLoading(true);
+      try {
+        const data = await api.getMyPredictions(userId, '2026');
+        setPredictions(data);
+      } catch (err) {
+        console.error('Error loading predictions:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [userId]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="mb-8">
-        <h1 className="text-4xl font-black text-white mb-2">My Predictions</h1>
-        <p className="text-slate-400">Track all your playoff picks</p>
+        <button
+          onClick={onBack}
+          className="flex items-center text-slate-400 hover:text-white mb-4 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4 mr-1" />
+          Back to Leaderboard
+        </button>
+        <h1 className="text-4xl font-black text-white mb-1">{username}'s Predictions</h1>
+        <p className="text-slate-400">All picks for the 2026 season</p>
       </div>
 
       {loading ? (
@@ -83,9 +78,7 @@ const MyPredictionsPage = ({ currentUser }) => {
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
                         <p className="text-xs text-slate-400 mb-1">{pred.conference} • {pred.game_type}</p>
-                        <p className="text-sm text-white">
-                          {pred.team1.name} vs {pred.team2.name}
-                        </p>
+                        <p className="text-sm text-white">{pred.team1.name} vs {pred.team2.name}</p>
                       </div>
                       <div className="text-right">
                         <div className="px-3 py-1 rounded bg-orange-500/20 text-orange-400 text-sm font-bold">
@@ -114,16 +107,12 @@ const MyPredictionsPage = ({ currentUser }) => {
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex-1">
                         <p className="text-xs text-slate-400 mb-1">{pred.conference} • {pred.round}</p>
-                        <p className="text-sm text-white">
-                          {pred.home_team.name} vs {pred.away_team.name}
-                        </p>
+                        <p className="text-sm text-white">{pred.home_team.name} vs {pred.away_team.name}</p>
                       </div>
                       {pred.is_correct !== null && (
-                        pred.is_correct === 1 ? (
-                          <CheckCircle className="w-6 h-6 text-green-400" />
-                        ) : (
-                          <XCircle className="w-6 h-6 text-red-400" />
-                        )
+                        pred.is_correct === 1
+                          ? <CheckCircle className="w-6 h-6 text-green-400" />
+                          : <XCircle className="w-6 h-6 text-red-400" />
                       )}
                     </div>
                     <div className="flex items-center justify-between flex-wrap gap-2">
@@ -153,8 +142,7 @@ const MyPredictionsPage = ({ currentUser }) => {
           {predictions.total_predictions === 0 && (
             <Card className="p-12 text-center">
               <Clock className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-              <p className="text-xl text-slate-400 mb-2">No predictions yet!</p>
-              <p className="text-slate-500">Make your first prediction in the Play-In or Playoffs pages</p>
+              <p className="text-xl text-slate-400">{username} hasn't made any predictions yet</p>
             </Card>
           )}
         </>
@@ -163,4 +151,4 @@ const MyPredictionsPage = ({ currentUser }) => {
   );
 };
 
-export default MyPredictionsPage;
+export default UserPredictionsPage;

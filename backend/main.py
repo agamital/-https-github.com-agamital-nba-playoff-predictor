@@ -3,9 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
-from datetime import datetime
+from datetime import datetime, timedelta
 import sqlite3
 from pathlib import Path
+
+_standings_cache = {"data": None, "expires": None}
 
 try:
     from nba_api.stats.static import teams as nba_teams_api
@@ -38,6 +40,7 @@ class UserLogin(BaseModel):
 class Prediction(BaseModel):
     series_id: int
     predicted_winner_id: int
+    predicted_games: Optional[int] = None
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -85,8 +88,14 @@ def init_db():
         predicted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_correct INTEGER,
         points_earned INTEGER DEFAULT 0,
+        predicted_games INTEGER,
         UNIQUE(user_id, series_id)
     )''')
+    # Add predicted_games column if it doesn't exist (for existing DBs)
+    try:
+        c.execute('ALTER TABLE predictions ADD COLUMN predicted_games INTEGER')
+    except:
+        pass
     
     c.execute('''CREATE TABLE IF NOT EXISTS playin_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,9 +148,13 @@ def sync_teams():
 def get_standings():
     if not NBA_API_AVAILABLE:
         return []
-    
+
+    now = datetime.now()
+    if _standings_cache["data"] and _standings_cache["expires"] and now < _standings_cache["expires"]:
+        return _standings_cache["data"]
+
     try:
-        api = leaguestandingsv3.LeagueStandingsV3(season='2024-25')
+        api = leaguestandingsv3.LeagueStandingsV3(season='2025-26')
         data = api.get_dict()
         
         standings = []
@@ -167,10 +180,12 @@ def get_standings():
                 team['conf_rank'] = idx
                 team['playoff_rank'] = idx
         
+        _standings_cache["data"] = standings
+        _standings_cache["expires"] = now + timedelta(minutes=10)
         return standings
     except Exception as e:
         print(f"Error: {e}")
-        return []
+        return _standings_cache["data"] or []
 
 def generate_matchups():
     standings = get_standings()
@@ -372,10 +387,11 @@ async def api_playin(season: str = "2026"):
 async def make_pred(prediction: Prediction, user_id: int):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''INSERT INTO predictions (user_id, series_id, predicted_winner_id)
-                 VALUES (?, ?, ?) ON CONFLICT(user_id, series_id) 
-                 DO UPDATE SET predicted_winner_id = ?''',
-              (user_id, prediction.series_id, prediction.predicted_winner_id, prediction.predicted_winner_id))
+    c.execute('''INSERT INTO predictions (user_id, series_id, predicted_winner_id, predicted_games)
+                 VALUES (?, ?, ?, ?) ON CONFLICT(user_id, series_id)
+                 DO UPDATE SET predicted_winner_id = ?, predicted_games = ?''',
+              (user_id, prediction.series_id, prediction.predicted_winner_id, prediction.predicted_games,
+               prediction.predicted_winner_id, prediction.predicted_games))
     conn.commit()
     conn.close()
     return {"message": "Saved"}
@@ -396,15 +412,15 @@ async def playin_pred(game_id: int, predicted_winner_id: int, user_id: int):
 async def leaderboard(season: str = "2026"):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''SELECT u.username, u.points, COUNT(p.id), 
+    c.execute('''SELECT u.id, u.username, u.points, COUNT(p.id),
                  SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END)
                  FROM users u LEFT JOIN predictions p ON u.id = p.user_id
                  GROUP BY u.id ORDER BY u.points DESC LIMIT 100''')
     
     board = []
     for idx, row in enumerate(c.fetchall(), 1):
-        total, correct = row[2] or 0, row[3] or 0
-        board.append({'rank': idx, 'username': row[0], 'points': row[1],
+        total, correct = row[3] or 0, row[4] or 0
+        board.append({'rank': idx, 'user_id': row[0], 'username': row[1], 'points': row[2],
                      'total_predictions': total, 'correct_predictions': correct,
                      'accuracy': round((correct/total*100) if total > 0 else 0, 1)})
     
@@ -435,11 +451,12 @@ async def my_predictions(user_id: int, season: str = "2026"):
         playoff_preds.append({
             'id': row[0],
             'series_id': row[2],
-            'round': row[7],
-            'conference': row[8],
-            'home_team': {'name': row[9], 'abbreviation': row[10], 'logo_url': row[11]},
-            'away_team': {'name': row[12], 'abbreviation': row[13], 'logo_url': row[14]},
-            'predicted_winner': {'name': row[15], 'abbreviation': row[16]},
+            'predicted_games': row[7],
+            'round': row[8],
+            'conference': row[9],
+            'home_team': {'name': row[10], 'abbreviation': row[11], 'logo_url': row[12]},
+            'away_team': {'name': row[13], 'abbreviation': row[14], 'logo_url': row[15]},
+            'predicted_winner': {'name': row[16], 'abbreviation': row[17]},
             'predicted_at': row[4],
             'is_correct': row[5],
             'points_earned': row[6]
