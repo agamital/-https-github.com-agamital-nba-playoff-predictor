@@ -112,4 +112,29 @@ export const getMyPredictions = async (userId, season = '2026') => {
   return response.data;
 };
 
+// Admin
+export const getAdminSeries = async (season = '2026') => {
+  const response = await api.get('/api/admin/series', { params: { season } });
+  return response.data;
+};
+
+export const setSeriesResult = async (seriesId, winnerTeamId, actualGames) => {
+  const response = await api.post(`/api/admin/series/${seriesId}/result`, null, {
+    params: { winner_team_id: winnerTeamId, actual_games: actualGames }
+  });
+  return response.data;
+};
+
+export const getAdminPlayin = async (season = '2026') => {
+  const response = await api.get('/api/admin/playin', { params: { season } });
+  return response.data;
+};
+
+export const setPlayinResult = async (gameId, winnerId) => {
+  const response = await api.post(`/api/admin/playin/${gameId}/result`, null, {
+    params: { winner_id: winnerId }
+  });
+  return response.data;
+};
+
 export default api;

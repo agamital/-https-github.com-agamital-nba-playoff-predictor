@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, Users, Target, BarChart3, Home as HomeIcon, LogOut, Menu, X, RefreshCw, Lock } from 'lucide-react';
+import { Trophy, Users, Target, BarChart3, Home as HomeIcon, LogOut, Menu, X, RefreshCw, Lock, Shield } from 'lucide-react';
 import * as api from './services/api';
 import StandingsPage from './StandingsPage';
 import PlayInPage from './PlayInPage';
 import './index.css';
 import MyPredictionsPage from './MyPredictionsPage';
 import UserPredictionsPage from './UserPredictionsPage';
+import AdminPage from './AdminPage';
 
 const Button = ({ children, onClick, className, variant = 'default', ...props }) => {
   const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-all';
@@ -461,7 +462,8 @@ function App() {
     { id: 'betting', label: 'Playoffs', icon: Target },
     { id: 'leaderboard', label: 'Leaderboard', icon: Users },
     { id: 'teams', label: 'Teams', icon: BarChart3 },
-{ id: 'mypredictions', label: 'My Picks', icon: Target },
+    { id: 'mypredictions', label: 'My Picks', icon: Target },
+    ...(currentUser?.role === 'admin' ? [{ id: 'admin', label: 'Admin', icon: Shield }] : []),
   ];
 
   const renderPage = () => {
@@ -475,6 +477,7 @@ function App() {
       case 'leaderboard': return <LeaderboardPage onUserClick={handleUserClick} />;
       case 'mypredictions': return <MyPredictionsPage currentUser={currentUser} />;
       case 'user-predictions': return selectedUser ? <UserPredictionsPage userId={selectedUser.user_id} username={selectedUser.username} onBack={() => navigate('leaderboard')} /> : null;
+      case 'admin': return <AdminPage currentUser={currentUser} />;
       default: return <HomePage {...props} />;
     }
   };

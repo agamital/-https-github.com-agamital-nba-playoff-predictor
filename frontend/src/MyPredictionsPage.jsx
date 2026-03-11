@@ -113,10 +113,14 @@ const MyPredictionsPage = ({ currentUser }) => {
                   <Card key={pred.id} className="p-4">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex-1">
-                        <p className="text-xs text-slate-400 mb-1">{pred.conference} • {pred.round}</p>
-                        <p className="text-sm text-white">
-                          {pred.home_team.name} vs {pred.away_team.name}
-                        </p>
+                        <p className="text-xs text-slate-400 mb-2">{pred.conference} • {pred.round}</p>
+                        <div className="flex items-center gap-2">
+                          <img src={pred.home_team.logo_url} alt="" className="w-7 h-7" onError={(e) => e.target.style.display='none'} />
+                          <span className="text-xs text-slate-300 font-bold">{pred.home_team.abbreviation}</span>
+                          <span className="text-slate-600 text-xs">vs</span>
+                          <img src={pred.away_team.logo_url} alt="" className="w-7 h-7" onError={(e) => e.target.style.display='none'} />
+                          <span className="text-xs text-slate-300 font-bold">{pred.away_team.abbreviation}</span>
+                        </div>
                       </div>
                       {pred.is_correct !== null && (
                         pred.is_correct === 1 ? (

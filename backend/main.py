@@ -97,6 +97,11 @@ def init_db():
         c.execute('ALTER TABLE predictions ADD COLUMN predicted_games INTEGER')
     except:
         pass
+    # Add actual_games column to series if it doesn't exist
+    try:
+        c.execute('ALTER TABLE series ADD COLUMN actual_games INTEGER')
+    except:
+        pass
     
     c.execute('''CREATE TABLE IF NOT EXISTS playin_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -502,6 +507,107 @@ async def my_predictions(user_id: int, season: str = "2026"):
         'playin_predictions': playin_preds,
         'total_predictions': len(playoff_preds) + len(playin_preds)
     }
+
+@app.get("/api/admin/series")
+async def admin_get_series(season: str = "2026"):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''SELECT s.id, s.round, s.conference, s.status, s.winner_team_id, s.actual_games,
+                 ht.id, ht.name, ht.abbreviation, ht.logo_url,
+                 at.id, at.name, at.abbreviation, at.logo_url,
+                 wt.name, wt.abbreviation,
+                 COUNT(p.id)
+                 FROM series s
+                 JOIN teams ht ON s.home_team_id = ht.id
+                 JOIN teams at ON s.away_team_id = at.id
+                 LEFT JOIN teams wt ON s.winner_team_id = wt.id
+                 LEFT JOIN predictions p ON s.id = p.series_id
+                 WHERE s.season = ? GROUP BY s.id''', (season,))
+    result = []
+    for row in c.fetchall():
+        result.append({
+            'id': row[0], 'round': row[1], 'conference': row[2],
+            'status': row[3], 'winner_team_id': row[4], 'actual_games': row[5],
+            'home_team': {'id': row[6], 'name': row[7], 'abbreviation': row[8], 'logo_url': row[9]},
+            'away_team': {'id': row[10], 'name': row[11], 'abbreviation': row[12], 'logo_url': row[13]},
+            'winner_name': row[14], 'winner_abbreviation': row[15],
+            'prediction_count': row[16]
+        })
+    conn.close()
+    return result
+
+@app.post("/api/admin/series/{series_id}/result")
+async def set_series_result(series_id: int, winner_team_id: int, actual_games: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # Update series
+    c.execute('UPDATE series SET winner_team_id = ?, actual_games = ?, status = ? WHERE id = ?',
+              (winner_team_id, actual_games, 'completed', series_id))
+    # Score predictions: 2pts correct winner, +1 bonus for correct games
+    c.execute('''UPDATE predictions SET
+                 is_correct = CASE WHEN predicted_winner_id = ? THEN 1 ELSE 0 END,
+                 points_earned = CASE
+                     WHEN predicted_winner_id = ? AND predicted_games = ? THEN 3
+                     WHEN predicted_winner_id = ? THEN 2
+                     ELSE 0 END
+                 WHERE series_id = ?''',
+              (winner_team_id, winner_team_id, actual_games, winner_team_id, series_id))
+    # Recalculate user points
+    c.execute('''UPDATE users SET points = (
+                 SELECT COALESCE(SUM(p.points_earned),0) FROM predictions p WHERE p.user_id = users.id
+                 ) + (
+                 SELECT COALESCE(SUM(pp.points_earned),0) FROM playin_predictions pp WHERE pp.user_id = users.id
+                 )''')
+    conn.commit()
+    conn.close()
+    return {"message": "Result set and scores updated"}
+
+@app.get("/api/admin/playin")
+async def admin_get_playin(season: str = "2026"):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''SELECT p.id, p.conference, p.game_type, p.winner_id, p.status,
+                 t1.id, t1.name, t1.abbreviation, t1.logo_url,
+                 t2.id, t2.name, t2.abbreviation, t2.logo_url,
+                 wt.name, wt.abbreviation,
+                 COUNT(pp.id)
+                 FROM playin_games p
+                 JOIN teams t1 ON p.team1_id = t1.id
+                 JOIN teams t2 ON p.team2_id = t2.id
+                 LEFT JOIN teams wt ON p.winner_id = wt.id
+                 LEFT JOIN playin_predictions pp ON p.id = pp.game_id
+                 WHERE p.season = ? GROUP BY p.id''', (season,))
+    result = []
+    for row in c.fetchall():
+        result.append({
+            'id': row[0], 'conference': row[1], 'game_type': row[2],
+            'winner_id': row[3], 'status': row[4],
+            'team1': {'id': row[5], 'name': row[6], 'abbreviation': row[7], 'logo_url': row[8]},
+            'team2': {'id': row[9], 'name': row[10], 'abbreviation': row[11], 'logo_url': row[12]},
+            'winner_name': row[13], 'winner_abbreviation': row[14],
+            'prediction_count': row[15]
+        })
+    conn.close()
+    return result
+
+@app.post("/api/admin/playin/{game_id}/result")
+async def set_playin_result(game_id: int, winner_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE playin_games SET winner_id = ?, status = ? WHERE id = ?',
+              (winner_id, 'completed', game_id))
+    c.execute('''UPDATE playin_predictions SET
+                 is_correct = CASE WHEN predicted_winner_id = ? THEN 1 ELSE 0 END,
+                 points_earned = CASE WHEN predicted_winner_id = ? THEN 1 ELSE 0 END
+                 WHERE game_id = ?''', (winner_id, winner_id, game_id))
+    c.execute('''UPDATE users SET points = (
+                 SELECT COALESCE(SUM(p.points_earned),0) FROM predictions p WHERE p.user_id = users.id
+                 ) + (
+                 SELECT COALESCE(SUM(pp.points_earned),0) FROM playin_predictions pp WHERE pp.user_id = users.id
+                 )''')
+    conn.commit()
+    conn.close()
+    return {"message": "Play-in result set"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
