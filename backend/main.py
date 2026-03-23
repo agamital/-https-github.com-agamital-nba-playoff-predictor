@@ -35,7 +35,7 @@ try:
     from nba_api.stats.static import teams as nba_teams_api
     from nba_api.stats.endpoints import leaguestandingsv3
     NBA_API_AVAILABLE = True
-except ImportError:
+except Exception:
     NBA_API_AVAILABLE = False
 
 app = FastAPI(title="NBA Predictor API")
