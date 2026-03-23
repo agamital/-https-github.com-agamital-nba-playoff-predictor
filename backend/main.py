@@ -42,20 +42,10 @@ app = FastAPI(title="NBA Predictor API")
 
 import os
 _FRONTEND_ORIGIN = os.environ.get("FRONTEND_URL", "")
-_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "https://nba-playoff-predictor.vercel.app",
-    "https://https-github-com-agamital-nba-playo.vercel.app",
-]
-if _FRONTEND_ORIGIN and _FRONTEND_ORIGIN not in _ALLOWED_ORIGINS:
-    _ALLOWED_ORIGINS.append(_FRONTEND_ORIGIN)
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
