@@ -2,11 +2,11 @@
 
 import axios from 'axios';
 
-// In dev, use relative URLs so Vite proxy handles routing (works from mobile too).
-// In production, VITE_API_URL is set to the Railway backend URL.
-// Fallback is hardcoded so the app works even if the env var is missing from the Vercel build.
-const PROD_API = 'https://nba-playoff-predictor-production.up.railway.app';
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '' : PROD_API);
+// Dev: empty string so Vite proxy routes /api/* to localhost:8000
+// Production: always use the Railway URL directly
+const API_BASE_URL = import.meta.env.DEV
+  ? ''
+  : 'https://nba-playoff-predictor-production.up.railway.app';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
