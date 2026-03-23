@@ -1,5 +1,9 @@
 # NBA Playoff Predictor 2026 — Deployment Guide
 
+## Live URLs
+- **Backend (Railway):** https://nba-playoff-predictor-production.up.railway.app
+- **Frontend (Vercel):** https://https-github-com-agamital-nba-playo.vercel.app
+
 ## Deploy in ~15 minutes: Railway (backend) + Vercel (frontend)
 
 ---
