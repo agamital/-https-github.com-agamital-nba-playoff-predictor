@@ -200,7 +200,6 @@ def init_db():
 def sync_teams():
     if not NBA_API_AVAILABLE:
         return
-    
     teams = nba_teams_api.get_teams()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -448,26 +447,47 @@ def ensure_admin_users():
 
 @app.on_event("startup")
 async def startup():
-    init_db()
-    sync_teams()
-    ensure_admin_users()
+    # Each step is wrapped so a failure in one never prevents the server from starting.
+    try:
+        init_db()
+        print("DB initialised")
+    except Exception as e:
+        print(f"ERROR init_db: {e}")
 
-    # Step 1: immediately load DB-seeded standings into memory cache (instant, no API call)
-    db_standings = _load_standings_from_db()
-    if db_standings:
-        now = datetime.now()
-        _standings_cache["data"]       = db_standings
-        _standings_cache["fetched_at"] = now
-        _standings_cache["expires"]    = now + timedelta(hours=1)
-        print(f"Pre-loaded {len(db_standings)} teams from DB standings cache")
+    try:
+        ensure_admin_users()
+    except Exception as e:
+        print(f"ERROR ensure_admin_users: {e}")
 
-    # Step 2: run matchup generation in background (uses DB standings if API is down)
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, generate_matchups)
+    # Load DB-seeded standings into memory cache immediately (no network call)
+    try:
+        db_standings = _load_standings_from_db()
+        if db_standings:
+            now = datetime.now()
+            _standings_cache["data"]       = db_standings
+            _standings_cache["fetched_at"] = now
+            _standings_cache["expires"]    = now + timedelta(hours=1)
+            print(f"Pre-loaded {len(db_standings)} teams from DB standings cache")
+    except Exception as e:
+        print(f"ERROR loading DB standings: {e}")
 
-    # Step 3: start background thread that tries live NBA API every 6 hours
-    t = threading.Thread(target=_background_standings_loop, daemon=True)
-    t.start()
+    # Run heavyweight / network-dependent tasks in background threads so they
+    # never block the server from binding to its port.
+    def _background_init():
+        try:
+            sync_teams()
+        except Exception as e:
+            print(f"ERROR sync_teams: {e}")
+        try:
+            generate_matchups()
+        except Exception as e:
+            print(f"ERROR generate_matchups: {e}")
+
+    threading.Thread(target=_background_init, daemon=True).start()
+
+    # Background thread that refreshes standings from NBA API every 6 hours
+    threading.Thread(target=_background_standings_loop, daemon=True).start()
+    print("Server startup complete")
 
 @app.get("/")
 async def root():
