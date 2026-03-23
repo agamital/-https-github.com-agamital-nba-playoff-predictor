@@ -6,9 +6,30 @@ import uvicorn
 from datetime import datetime, timedelta
 import sqlite3
 import asyncio
+import time
+import threading
 from pathlib import Path
 
-_standings_cache = {"data": None, "expires": None}
+_standings_cache = {"data": None, "expires": None, "fetched_at": None}
+
+# Headers that NBA stats.nba.com requires to not block requests
+_NBA_HEADERS = {
+    'Host': 'stats.nba.com',
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/120.0.0.0 Safari/537.36'
+    ),
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'x-nba-stats-origin': 'stats',
+    'x-nba-stats-token': 'true',
+    'Origin': 'https://www.nba.com',
+    'Referer': 'https://www.nba.com/',
+    'Connection': 'keep-alive',
+}
+_NBA_TIMEOUT = 60  # seconds
 
 try:
     from nba_api.stats.static import teams as nba_teams_api
@@ -19,9 +40,20 @@ except ImportError:
 
 app = FastAPI(title="NBA Predictor API")
 
+import os
+_FRONTEND_ORIGIN = os.environ.get("FRONTEND_URL", "")
+_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://nba-playoff-predictor.vercel.app",
+]
+if _FRONTEND_ORIGIN and _FRONTEND_ORIGIN not in _ALLOWED_ORIGINS:
+    _ALLOWED_ORIGINS.append(_FRONTEND_ORIGIN)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -126,7 +158,46 @@ def init_db():
         points_earned INTEGER DEFAULT 0,
         UNIQUE(user_id, game_id)
     )''')
-    
+
+    c.execute('''CREATE TABLE IF NOT EXISTS cached_standings (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_id      INTEGER NOT NULL,
+        team_name    TEXT    NOT NULL,
+        abbreviation TEXT    NOT NULL,
+        conference   TEXT    NOT NULL,
+        wins         INTEGER NOT NULL,
+        losses       INTEGER NOT NULL,
+        win_pct      REAL    NOT NULL,
+        conf_rank    INTEGER NOT NULL,
+        season       TEXT    DEFAULT '2026',
+        updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(abbreviation, season)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS site_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS futures_predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        season TEXT DEFAULT '2026',
+        champion_team_id INTEGER,
+        west_champ_team_id INTEGER,
+        east_champ_team_id INTEGER,
+        finals_mvp TEXT,
+        west_finals_mvp TEXT,
+        east_finals_mvp TEXT,
+        locked BOOLEAN DEFAULT 0,
+        predicted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_correct_champion INTEGER,
+        is_correct_west INTEGER,
+        is_correct_east INTEGER,
+        points_earned INTEGER DEFAULT 0,
+        UNIQUE(user_id, season)
+    )''')
+
     conn.commit()
     conn.close()
     print("Database initialized")
@@ -151,116 +222,278 @@ def sync_teams():
     conn.close()
     print(f"Synced {len(teams)} teams")
 
-def get_standings():
+def _fetch_standings_from_api():
+    """
+    Single attempt to hit stats.nba.com with proper headers and timeout.
+    Returns parsed standings list, or raises on failure.
+    """
+    standings_api = leaguestandingsv3.LeagueStandingsV3(
+        season='2025-26',
+        headers=_NBA_HEADERS,
+        timeout=_NBA_TIMEOUT,
+    )
+    raw = standings_api.get_dict()
+
+    result_set = raw['resultSets'][0]
+    col_headers = result_set['headers']
+    rows        = result_set['rowSet']
+
+    def col(row, name):
+        return row[col_headers.index(name)]
+
+    standings = []
+    for row in rows:
+        standings.append({
+            'team_id':    col(row, 'TeamID'),
+            'team_name':  f"{col(row, 'TeamCity')} {col(row, 'TeamName')}",
+            'conference': col(row, 'Conference'),   # 'East' or 'West'
+            'wins':       int(col(row, 'WINS')),
+            'losses':     int(col(row, 'LOSSES')),
+            'win_pct':    float(col(row, 'WinPCT')),
+            'conf_rank':  99,
+            'playoff_rank': 99,
+        })
+
+    # Recompute ranks by win_pct, ties broken by wins
+    for conf in ['East', 'West']:
+        conf_teams = sorted(
+            [t for t in standings if t['conference'] == conf],
+            key=lambda x: (-x['win_pct'], -x['wins'])
+        )
+        for idx, team in enumerate(conf_teams, 1):
+            team['conf_rank'] = idx
+            team['playoff_rank'] = idx
+
+    return standings
+
+
+def _refresh_standings_cache(force=False):
+    """
+    Fetch fresh standings with up to 2 attempts (retry once after 5s delay).
+    Updates _standings_cache on success; keeps old data on failure.
+    """
     if not NBA_API_AVAILABLE:
-        return []
+        return
 
     now = datetime.now()
-    if _standings_cache["data"] and _standings_cache["expires"] and now < _standings_cache["expires"]:
+    cache_valid = (
+        _standings_cache["data"] is not None and
+        _standings_cache["expires"] is not None and
+        now < _standings_cache["expires"]
+    )
+    if cache_valid and not force:
+        return  # Still fresh, nothing to do
+
+    last_error = None
+    for attempt in range(1, 3):          # attempt 1, then retry (attempt 2)
+        try:
+            print(f"Standings fetch attempt {attempt}…")
+            standings = _fetch_standings_from_api()
+            now = datetime.now()
+            _standings_cache["data"]       = standings
+            _standings_cache["fetched_at"] = now
+            _standings_cache["expires"]    = now + timedelta(minutes=5)
+            print(f"Standings refreshed at {now.strftime('%H:%M:%S')} — {len(standings)} teams")
+            return
+        except Exception as e:
+            last_error = e
+            print(f"Standings attempt {attempt} failed: {e}")
+            if attempt < 2:
+                print("Retrying in 5 s…")
+                time.sleep(5)
+
+    # Both attempts failed — keep stale cache, just log
+    print(f"Standings unavailable after 2 attempts. Keeping cached data. Last error: {last_error}")
+
+
+def _load_standings_from_db():
+    """Read manually-seeded standings from the cached_standings DB table."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''SELECT team_id, team_name, conference, wins, losses, win_pct, conf_rank
+                     FROM cached_standings WHERE season = '2026' ORDER BY conference, conf_rank''')
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            return []
+        return [
+            {'team_id': r[0], 'team_name': r[1], 'conference': r[2],
+             'wins': r[3], 'losses': r[4], 'win_pct': r[5],
+             'conf_rank': r[6], 'playoff_rank': r[6]}
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"DB standings load error: {e}")
+        return []
+
+
+def get_standings(force_refresh=False):
+    """
+    Returns standings. Priority:
+      1. In-memory cache (if still fresh and not forced)
+      2. Live NBA API fetch (with retry)
+      3. DB-stored manual standings (seed_standings.py fallback)
+    """
+    _refresh_standings_cache(force=force_refresh)
+
+    if _standings_cache["data"]:
         return _standings_cache["data"]
 
-    try:
-        api = leaguestandingsv3.LeagueStandingsV3(season='2025-26')
-        data = api.get_dict()
-        
-        standings = []
-        rows = data['resultSets'][0]['rowSet']
-        
-        for row in rows:
-            standings.append({
-                'team_id': row[2],
-                'team_name': f"{row[3]} {row[4]}",
-                'conference': row[6],
-                'wins': row[13],
-                'losses': row[14],
-                'win_pct': float(row[15]),
-                'conf_rank': row[8] if row[8] else 99,
-                'playoff_rank': row[8] if row[8] else 99
-            })
-        
-        # Fix ranks
-        for conf in ['East', 'West']:
-            conf_teams = sorted([t for t in standings if t['conference'] == conf], 
-                              key=lambda x: -x['win_pct'])
-            for idx, team in enumerate(conf_teams, 1):
-                team['conf_rank'] = idx
-                team['playoff_rank'] = idx
-        
-        _standings_cache["data"] = standings
-        _standings_cache["expires"] = now + timedelta(minutes=10)
-        return standings
-    except Exception as e:
-        print(f"Error: {e}")
-        return _standings_cache["data"] or []
+    # API failed — fall back to DB-seeded standings
+    db_data = _load_standings_from_db()
+    if db_data:
+        print("Using DB-seeded standings (NBA API unavailable)")
+        # Populate cache so subsequent calls don't hit DB every time
+        now = datetime.now()
+        _standings_cache["data"]       = db_data
+        _standings_cache["fetched_at"] = now
+        _standings_cache["expires"]    = now + timedelta(hours=1)
+    return db_data
 
-def generate_matchups():
-    # Skip if matchups already exist for this season
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT COUNT(*) FROM series WHERE season = ?', ('2026',))
-    if c.fetchone()[0] > 0:
-        conn.close()
-        print("Matchups already exist, skipping generation")
-        return
-    conn.close()
 
+def _background_standings_loop():
+    """
+    Background thread: tries to refresh standings from NBA API every 6 hours.
+    Starts with a jitter delay so it doesn't block startup.
+    Falls back to DB data if API is unavailable — the main cache already has DB data.
+    """
+    import random
+    delay = random.uniform(10, 40)
+    print(f"Background NBA API standings refresh starts in {delay:.0f}s")
+    time.sleep(delay)
+
+    while True:
+        try:
+            print("Background: attempting live standings fetch…")
+            fresh = _fetch_standings_from_api()
+            now = datetime.now()
+            _standings_cache["data"]       = fresh
+            _standings_cache["fetched_at"] = now
+            _standings_cache["expires"]    = now + timedelta(minutes=5)
+            print(f"Background: standings updated from NBA API — {len(fresh)} teams")
+        except Exception as e:
+            print(f"Background: NBA API unavailable ({e}), keeping current standings")
+        time.sleep(6 * 60 * 60)
+
+def generate_matchups(force_conference=None):
     standings = get_standings()
     if not standings:
+        print("No standings data, skipping matchup generation")
         return
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
-    
+
     for conf_short in ['East', 'West']:
         conf_full = 'Eastern' if conf_short == 'East' else 'Western'
-        teams = sorted([t for t in standings if t['conference'] == conf_short], 
-                      key=lambda x: x['conf_rank'])[:10]
-        
-        if len(teams) >= 10:
-            # Playoff matchups (3v6, 4v5)
-            matchups = [
-                (teams[2], teams[5]),
-                (teams[3], teams[4])
-            ]
-            
+
+        # If forcing a specific conference, skip others
+        if force_conference and conf_full != force_conference:
+            continue
+
+        # Check what already exists for this conference
+        c.execute('SELECT COUNT(*) FROM series WHERE season = ? AND conference = ?', ('2026', conf_full))
+        series_count = c.fetchone()[0]
+        c.execute('SELECT COUNT(*) FROM playin_games WHERE season = ? AND conference = ?', ('2026', conf_full))
+        playin_count = c.fetchone()[0]
+
+        print(f"{conf_full}: found {series_count} series, {playin_count} play-in games in DB")
+        if series_count >= 2 and playin_count >= 2 and not force_conference:
+            print(f"  -> {conf_full} already complete, skipping")
+            continue
+
+        teams = sorted([t for t in standings if t['conference'] == conf_short],
+                       key=lambda x: x['conf_rank'])[:10]
+
+        if len(teams) < 6:
+            print(f"Not enough {conf_full} teams ({len(teams)}), skipping")
+            continue
+
+        # Create playoff series (3v6, 4v5) — replace if forcing
+        if series_count < 2 or force_conference:
+            c.execute('DELETE FROM series WHERE season = ? AND conference = ?', ('2026', conf_full))
+            matchups = [(teams[2], teams[5]), (teams[3], teams[4])]
             for home, away in matchups:
-                c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id, 
+                c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
                             home_seed, away_seed, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
                          ('2026', 'First Round', conf_full, home['team_id'], away['team_id'],
                           home['conf_rank'], away['conf_rank'], 'active'))
-            
-            # Play-in
-            c.execute('''INSERT INTO playin_games (season, conference, game_type, team1_id, team1_seed,
-                        team2_id, team2_seed, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                     ('2026', conf_full, '7v8', teams[6]['team_id'], 7, teams[7]['team_id'], 8, 'active'))
-            
-            c.execute('''INSERT INTO playin_games (season, conference, game_type, team1_id, team1_seed,
-                        team2_id, team2_seed, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                     ('2026', conf_full, '9v10', teams[8]['team_id'], 9, teams[9]['team_id'], 10, 'active'))
-    
+                print(f"  -> #{home['conf_rank']} {home['team_name']} vs #{away['conf_rank']} {away['team_name']}")
+            print(f"  Created {conf_full} R1 series (3v6, 4v5)")
+
+        # Create play-in games (7v8, 9v10) — replace if forcing
+        if len(teams) >= 10 and (playin_count < 2 or force_conference):
+            c.execute('DELETE FROM playin_games WHERE season = ? AND conference = ?', ('2026', conf_full))
+            for game_type, idx1, idx2 in [('7v8', 6, 7), ('9v10', 8, 9)]:
+                c.execute('''INSERT INTO playin_games (season, conference, game_type, team1_id, team1_seed,
+                            team2_id, team2_seed, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                         ('2026', conf_full, game_type,
+                          teams[idx1]['team_id'], teams[idx1]['conf_rank'],
+                          teams[idx2]['team_id'], teams[idx2]['conf_rank'], 'active'))
+                print(f"  -> Play-In {game_type}: #{teams[idx1]['conf_rank']} {teams[idx1]['team_name']} vs #{teams[idx2]['conf_rank']} {teams[idx2]['team_name']}")
+            print(f"  Created {conf_full} play-in games")
+
     conn.commit()
     conn.close()
-    print("Generated matchups")
+    print("generate_matchups complete")
+
+_ADMIN_EMAILS = {"agamital@gmail.com"}
+
+def ensure_admin_users():
+    """Promote known admin emails to role='admin' on every startup."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    for email in _ADMIN_EMAILS:
+        c.execute("UPDATE users SET role='admin' WHERE email=? AND role != 'admin'", (email,))
+        if c.rowcount:
+            print(f"Promoted {email} to admin")
+    conn.commit()
+    conn.close()
 
 @app.on_event("startup")
 async def startup():
     init_db()
     sync_teams()
-    # Run NBA API call in background so server starts immediately
+    ensure_admin_users()
+
+    # Step 1: immediately load DB-seeded standings into memory cache (instant, no API call)
+    db_standings = _load_standings_from_db()
+    if db_standings:
+        now = datetime.now()
+        _standings_cache["data"]       = db_standings
+        _standings_cache["fetched_at"] = now
+        _standings_cache["expires"]    = now + timedelta(hours=1)
+        print(f"Pre-loaded {len(db_standings)} teams from DB standings cache")
+
+    # Step 2: run matchup generation in background (uses DB standings if API is down)
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, generate_matchups)
+
+    # Step 3: start background thread that tries live NBA API every 6 hours
+    t = threading.Thread(target=_background_standings_loop, daemon=True)
+    t.start()
 
 @app.get("/")
 async def root():
     return {"message": "NBA Predictor API", "version": "2.0", "nba_api": NBA_API_AVAILABLE}
 
 @app.get("/api/standings")
-async def api_standings():
-    standings = get_standings()
-    eastern = [t for t in standings if t['conference'] == 'East']
-    western = [t for t in standings if t['conference'] == 'West']
-    return {"eastern": eastern, "western": western, "last_updated": datetime.now().isoformat()}
+async def api_standings(force_refresh: bool = False):
+    standings = get_standings(force_refresh=force_refresh)
+    eastern = sorted([t for t in standings if t['conference'] == 'East'], key=lambda x: x['conf_rank'])
+    western = sorted([t for t in standings if t['conference'] == 'West'], key=lambda x: x['conf_rank'])
+    fetched_at = _standings_cache.get("fetched_at")
+    cache_age_minutes = None
+    if fetched_at:
+        cache_age_minutes = round((datetime.now() - fetched_at).total_seconds() / 60, 1)
+    return {
+        "eastern": eastern,
+        "western": western,
+        "last_updated": fetched_at.isoformat() if fetched_at else None,
+        "cache_age_minutes": cache_age_minutes,
+        "cache_expires": _standings_cache["expires"].isoformat() if _standings_cache.get("expires") else None,
+    }
 
 @app.get("/api/teams")
 async def api_teams(conference: Optional[str] = None):
@@ -511,13 +744,57 @@ async def my_predictions(user_id: int, season: str = "2026"):
             'predicted_at': row[4]
         })
     
+    # Get futures prediction
+    c.execute('''
+        SELECT f.*,
+               tc.name, tc.abbreviation, tc.logo_url,
+               tw.name, tw.abbreviation, tw.logo_url,
+               te.name, te.abbreviation, te.logo_url
+        FROM futures_predictions f
+        LEFT JOIN teams tc ON f.champion_team_id = tc.id
+        LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
+        LEFT JOIN teams te ON f.east_champ_team_id = te.id
+        WHERE f.user_id = ? AND f.season = ?
+    ''', (user_id, season))
+    frow = c.fetchone()
+    futures_pred = None
+    if frow:
+        futures_pred = {
+            'champion_team':   {'name': frow[15], 'abbreviation': frow[16], 'logo_url': frow[17]} if frow[15] else None,
+            'west_champ_team': {'name': frow[18], 'abbreviation': frow[19], 'logo_url': frow[20]} if frow[18] else None,
+            'east_champ_team': {'name': frow[21], 'abbreviation': frow[22], 'logo_url': frow[23]} if frow[21] else None,
+            'finals_mvp':      frow[6],
+            'west_finals_mvp': frow[7],
+            'east_finals_mvp': frow[8],
+            'locked':          bool(frow[9]),
+            'predicted_at':    frow[10],
+            'is_correct_champion': frow[11],
+            'is_correct_west':     frow[12],
+            'is_correct_east':     frow[13],
+            'points_earned':       frow[14] or 0,
+        }
+
     conn.close()
-    
+
     return {
         'playoff_predictions': playoff_preds,
         'playin_predictions': playin_preds,
+        'futures_prediction': futures_pred,
         'total_predictions': len(playoff_preds) + len(playin_preds)
     }
+
+@app.post("/api/admin/regenerate-matchups")
+async def admin_regenerate_matchups(conference: str = None, season: str = '2026'):
+    """Force regenerate matchups for one or both conferences"""
+    generate_matchups(force_conference=conference)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM series WHERE season = ?', (season,))
+    series = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) FROM playin_games WHERE season = ?', (season,))
+    playin = c.fetchone()[0]
+    conn.close()
+    return {"message": "Done", "series_count": series, "playin_count": playin}
 
 @app.get("/api/admin/series")
 async def admin_get_series(season: str = "2026"):
@@ -619,6 +896,369 @@ async def set_playin_result(game_id: int, winner_id: int):
     conn.commit()
     conn.close()
     return {"message": "Play-in result set"}
+
+def _get_futures_lock() -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT value FROM site_settings WHERE key = 'futures_locked'")
+    row = c.fetchone()
+    conn.close()
+    return row is not None and row[0] == '1'
+
+
+@app.get("/api/futures/lock-status")
+async def futures_lock_status():
+    return {"locked": _get_futures_lock()}
+
+
+@app.post("/api/admin/futures/lock")
+async def admin_futures_lock(locked: bool):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO site_settings (key, value) VALUES ('futures_locked', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        ('1' if locked else '0',)
+    )
+    conn.commit()
+    conn.close()
+    return {"locked": locked, "message": f"Futures {'locked' if locked else 'unlocked'}"}
+
+
+@app.get("/api/futures")
+async def get_futures(user_id: int, season: str = "2026"):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''SELECT f.*,
+                 tc.name, tc.abbreviation, tc.logo_url,
+                 tw.name, tw.abbreviation, tw.logo_url,
+                 te.name, te.abbreviation, te.logo_url
+                 FROM futures_predictions f
+                 LEFT JOIN teams tc ON f.champion_team_id = tc.id
+                 LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
+                 LEFT JOIN teams te ON f.east_champ_team_id = te.id
+                 WHERE f.user_id = ? AND f.season = ?''', (user_id, season))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return {"has_prediction": False}
+    return {
+        "has_prediction": True,
+        "champion_team_id": row[2],
+        "west_champ_team_id": row[3],
+        "east_champ_team_id": row[4],
+        "finals_mvp": row[5],
+        "west_finals_mvp": row[6],
+        "east_finals_mvp": row[7],
+        "locked": bool(row[8]),
+        "points_earned": row[14],
+        "champion_team": {"name": row[15], "abbreviation": row[16], "logo_url": row[17]} if row[15] else None,
+        "west_champ_team": {"name": row[18], "abbreviation": row[19], "logo_url": row[20]} if row[18] else None,
+        "east_champ_team": {"name": row[21], "abbreviation": row[22], "logo_url": row[23]} if row[21] else None,
+    }
+
+@app.post("/api/futures")
+async def save_futures(user_id: int, season: str = "2026",
+                       champion_team_id: int = None, west_champ_team_id: int = None,
+                       east_champ_team_id: int = None, finals_mvp: str = None,
+                       west_finals_mvp: str = None, east_finals_mvp: str = None):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # Check global lock first
+    if _get_futures_lock():
+        conn.close()
+        raise HTTPException(status_code=400, detail="Futures predictions are locked by admin")
+    # Check per-user lock
+    c.execute('SELECT locked FROM futures_predictions WHERE user_id = ? AND season = ?', (user_id, season))
+    existing = c.fetchone()
+    if existing and existing[0]:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Predictions are locked")
+    c.execute('''INSERT INTO futures_predictions
+                 (user_id, season, champion_team_id, west_champ_team_id, east_champ_team_id,
+                  finals_mvp, west_finals_mvp, east_finals_mvp, predicted_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                 ON CONFLICT(user_id, season) DO UPDATE SET
+                 champion_team_id = excluded.champion_team_id,
+                 west_champ_team_id = excluded.west_champ_team_id,
+                 east_champ_team_id = excluded.east_champ_team_id,
+                 finals_mvp = excluded.finals_mvp,
+                 west_finals_mvp = excluded.west_finals_mvp,
+                 east_finals_mvp = excluded.east_finals_mvp,
+                 predicted_at = CURRENT_TIMESTAMP''',
+              (user_id, season, champion_team_id, west_champ_team_id, east_champ_team_id,
+               finals_mvp, west_finals_mvp, east_finals_mvp))
+    conn.commit()
+    conn.close()
+    return {"message": "Saved"}
+
+@app.get("/api/futures/leaderboard")
+async def futures_leaderboard(season: str = "2026"):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''SELECT u.username, f.points_earned,
+                 f.is_correct_champion, f.is_correct_west, f.is_correct_east,
+                 tc.name, tc.logo_url, tw.name, tw.logo_url, te.name, te.logo_url
+                 FROM futures_predictions f
+                 JOIN users u ON f.user_id = u.id
+                 LEFT JOIN teams tc ON f.champion_team_id = tc.id
+                 LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
+                 LEFT JOIN teams te ON f.east_champ_team_id = te.id
+                 WHERE f.season = ?
+                 ORDER BY f.points_earned DESC''', (season,))
+    results = []
+    for row in c.fetchall():
+        results.append({
+            "username": row[0],
+            "points_earned": row[1] or 0,
+            "correct_champion": row[2],
+            "correct_west": row[3],
+            "correct_east": row[4],
+            "champion": {"name": row[5], "logo_url": row[6]} if row[5] else None,
+            "west_champ": {"name": row[7], "logo_url": row[8]} if row[7] else None,
+            "east_champ": {"name": row[9], "logo_url": row[10]} if row[9] else None,
+        })
+    conn.close()
+    return results
+
+@app.get("/api/futures/all")
+async def futures_all(season: str = "2026"):
+    """All users' futures picks with aggregate stats per category."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute('''
+        SELECT u.username,
+               f.finals_mvp, f.west_finals_mvp, f.east_finals_mvp,
+               f.is_correct_champion, f.is_correct_west, f.is_correct_east, f.points_earned,
+               tc.name, tc.abbreviation, tc.logo_url,
+               tw.name, tw.abbreviation, tw.logo_url,
+               te.name, te.abbreviation, te.logo_url
+        FROM futures_predictions f
+        JOIN users u ON f.user_id = u.id
+        LEFT JOIN teams tc ON f.champion_team_id = tc.id
+        LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
+        LEFT JOIN teams te ON f.east_champ_team_id = te.id
+        WHERE f.season = ?
+        ORDER BY f.predicted_at DESC
+    ''', (season,))
+
+    rows = c.fetchall()
+    conn.close()
+
+    entries = []
+    champ_counts, west_counts, east_counts = {}, {}, {}
+    mvp_counts, west_mvp_counts, east_mvp_counts = {}, {}, {}
+
+    for row in rows:
+        username     = row[0]
+        finals_mvp   = row[1]
+        west_mvp     = row[2]
+        east_mvp     = row[3]
+        champ  = {'name': row[8],  'abbreviation': row[9],  'logo_url': row[10]}  if row[8]  else None
+        west_t = {'name': row[11], 'abbreviation': row[12], 'logo_url': row[13]}  if row[11] else None
+        east_t = {'name': row[14], 'abbreviation': row[15], 'logo_url': row[16]}  if row[14] else None
+
+        entries.append({
+            'username':          username,
+            'champion_team':     champ,
+            'west_champ_team':   west_t,
+            'east_champ_team':   east_t,
+            'finals_mvp':        finals_mvp,
+            'west_finals_mvp':   west_mvp,
+            'east_finals_mvp':   east_mvp,
+            'is_correct_champion': row[4],
+            'is_correct_west':     row[5],
+            'is_correct_east':     row[6],
+            'points_earned':       row[7] or 0,
+        })
+
+        # Tally team picks
+        if champ:
+            k = champ['abbreviation']
+            champ_counts[k] = champ_counts.get(k, {'team': champ, 'count': 0})
+            champ_counts[k]['count'] += 1
+        if west_t:
+            k = west_t['abbreviation']
+            west_counts[k] = west_counts.get(k, {'team': west_t, 'count': 0})
+            west_counts[k]['count'] += 1
+        if east_t:
+            k = east_t['abbreviation']
+            east_counts[k] = east_counts.get(k, {'team': east_t, 'count': 0})
+            east_counts[k]['count'] += 1
+        # Tally MVP picks
+        for name, bucket in [(finals_mvp, mvp_counts), (west_mvp, west_mvp_counts), (east_mvp, east_mvp_counts)]:
+            if name:
+                bucket[name] = bucket.get(name, {'name': name, 'count': 0})
+                bucket[name]['count'] += 1
+
+    total = len(entries)
+
+    def pct(count): return round(count / total * 100, 1) if total else 0
+
+    def rank_teams(d):
+        lst = sorted(d.values(), key=lambda x: -x['count'])
+        for item in lst:
+            item['pct'] = pct(item['count'])
+        return lst
+
+    def rank_players(d):
+        lst = sorted(d.values(), key=lambda x: -x['count'])
+        for item in lst:
+            item['pct'] = pct(item['count'])
+        return lst
+
+    return {
+        'total_entries': total,
+        'champion':       rank_teams(champ_counts),
+        'west_champ':     rank_teams(west_counts),
+        'east_champ':     rank_teams(east_counts),
+        'finals_mvp':     rank_players(mvp_counts),
+        'west_finals_mvp': rank_players(west_mvp_counts),
+        'east_finals_mvp': rank_players(east_mvp_counts),
+        'entries':        entries,
+    }
+
+
+@app.get("/api/teams/{team_id}/roster")
+async def get_team_roster(team_id: int):
+    """Get team roster from nba_api with caching.
+    team_id in our DB equals the NBA API team ID, so no DB lookup needed."""
+    import time
+    cache_key = f"roster_{team_id}"
+    if not hasattr(get_team_roster, '_cache'):
+        get_team_roster._cache = {}
+    cached = get_team_roster._cache.get(cache_key)
+    if cached and time.time() - cached['ts'] < 3600:
+        return cached['data']
+
+    if not NBA_API_AVAILABLE:
+        return {"players": [], "error": "NBA API not available on this server"}
+
+    try:
+        from nba_api.stats.endpoints import commonteamroster
+
+        # Our DB team_id IS the NBA API team_id — no DB lookup needed
+        roster_df = None
+        for season_try in ['2025-26', '2024-25']:
+            try:
+                roster_data = commonteamroster.CommonTeamRoster(team_id=team_id, season=season_try)
+                roster_df = roster_data.get_data_frames()[0]
+                if not roster_df.empty:
+                    break
+            except Exception:
+                continue
+
+        if roster_df is None or roster_df.empty:
+            return {"players": [], "error": "Roster not available from NBA API"}
+
+        players = []
+        for _, p in roster_df.iterrows():
+            players.append({
+                "id": int(p['PLAYER_ID']),
+                "name": str(p['PLAYER']),
+                "number": str(p.get('NUM', '')),
+                "position": str(p.get('POSITION', '')),
+                "height": str(p.get('HEIGHT', '')),
+                "weight": str(p.get('WEIGHT', '')),
+                "age": str(p.get('AGE', '')),
+                "photo_url": f"https://cdn.nba.com/headshots/nba/latest/1040x760/{int(p['PLAYER_ID'])}.png"
+            })
+        result = {"players": players}
+        get_team_roster._cache[cache_key] = {'data': result, 'ts': time.time()}
+        return result
+    except Exception as e:
+        print(f"Roster error for team {team_id}: {e}")
+        return {"players": [], "error": "Roster temporarily unavailable"}
+
+
+@app.get("/api/players/{player_id}/stats")
+async def get_player_stats(player_id: int):
+    """Get player stats from nba_api with caching"""
+    import time
+    cache_key = f"stats_{player_id}"
+    if not hasattr(get_player_stats, '_cache'):
+        get_player_stats._cache = {}
+    cached = get_player_stats._cache.get(cache_key)
+    if cached and time.time() - cached['ts'] < 3600:
+        return cached['data']
+
+    try:
+        from nba_api.stats.endpoints import playercareerstats, commonplayerinfo
+
+        career = playercareerstats.PlayerCareerStats(player_id=player_id)
+        career_df = career.get_data_frames()[0]
+
+        info = commonplayerinfo.CommonPlayerInfo(player_id=player_id)
+        info_df = info.get_data_frames()[0]
+
+        # Get most recent season stats
+        if career_df.empty:
+            return {"error": "No stats found"}
+
+        # Try to get 2024-25 season first, fallback to latest
+        season_df = career_df[career_df['SEASON_ID'] == '2024-25']
+        if season_df.empty:
+            season_df = career_df.tail(1)
+        row = season_df.iloc[-1]
+
+        player_info = info_df.iloc[0]
+
+        gp = int(row.get('GP', 0)) or 1
+        result = {
+            "name": str(player_info.get('DISPLAY_FIRST_LAST', '')),
+            "position": str(player_info.get('POSITION', '')),
+            "team": str(player_info.get('TEAM_ABBREVIATION', '')),
+            "jersey": str(player_info.get('JERSEY', '')),
+            "height": str(player_info.get('HEIGHT', '')),
+            "weight": str(player_info.get('WEIGHT', '')),
+            "country": str(player_info.get('COUNTRY', '')),
+            "season": str(row.get('SEASON_ID', '')),
+            "gp": int(row.get('GP', 0)),
+            "ppg": round(float(row.get('PTS', 0)) / gp, 1),
+            "rpg": round(float(row.get('REB', 0)) / gp, 1),
+            "apg": round(float(row.get('AST', 0)) / gp, 1),
+            "spg": round(float(row.get('STL', 0)) / gp, 1),
+            "bpg": round(float(row.get('BLK', 0)) / gp, 1),
+            "fg_pct": round(float(row.get('FG_PCT', 0)) * 100, 1),
+            "fg3_pct": round(float(row.get('FG3_PCT', 0)) * 100, 1),
+            "ft_pct": round(float(row.get('FT_PCT', 0)) * 100, 1),
+            "photo_url": f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
+        }
+        get_player_stats._cache[cache_key] = {'data': result, 'ts': time.time()}
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/debug/standings-raw")
+async def debug_standings_raw():
+    """Returns the raw column headers + top 6 rows from the NBA API.
+    Use this to verify the API is returning current data and column names are correct."""
+    if not NBA_API_AVAILABLE:
+        return {"error": "nba_api not installed"}
+    try:
+        standings_api = leaguestandingsv3.LeagueStandingsV3(season='2025-26')
+        raw = standings_api.get_dict()
+        result_set = raw['resultSets'][0]
+        headers = result_set['headers']
+        rows = result_set['rowSet']
+
+        # Return headers + a sample of rows as dicts for easy inspection
+        sample = [dict(zip(headers, row)) for row in rows[:6]]
+        return {
+            "fetched_at": datetime.now().isoformat(),
+            "total_rows": len(rows),
+            "headers": headers,
+            "sample_rows": sample,
+            "cache_info": {
+                "fetched_at": _standings_cache.get("fetched_at", None) and _standings_cache["fetched_at"].isoformat(),
+                "expires": _standings_cache.get("expires", None) and _standings_cache["expires"].isoformat(),
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

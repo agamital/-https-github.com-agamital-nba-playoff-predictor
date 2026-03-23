@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { Trophy, Users, Target, BarChart3, Home as HomeIcon, LogOut, Menu, X, RefreshCw, Lock, Shield } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Trophy, Users, Target, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X } from 'lucide-react';
 import * as api from './services/api';
 import StandingsPage from './StandingsPage';
-import PlayInPage from './PlayInPage';
 import './index.css';
 import MyPredictionsPage from './MyPredictionsPage';
 import UserPredictionsPage from './UserPredictionsPage';
 import AdminPage from './AdminPage';
 import BracketPage from './BracketPage';
+import FuturesPage from './FuturesPage';
 
 const Button = ({ children, onClick, className, variant = 'default', ...props }) => {
   const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-all';
@@ -92,6 +92,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             <div className="text-slate-400">Accuracy</div>
           </Card>
         </div>
+        <FuturesPage currentUser={currentUser} />
       </div>
     );
   }
@@ -152,68 +153,6 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
   );
 };
 
-const TeamsPage = () => {
-  const [teams, setTeams] = useState([]);
-  const [filter, setFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadTeams();
-  }, [filter]);
-
-  const loadTeams = async () => {
-    setLoading(true);
-    try {
-      const data = await api.getTeams(filter === 'all' ? null : filter);
-      setTeams(data);
-    } catch (err) {
-      console.error('Error loading teams:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      <h1 className="text-4xl font-black text-white mb-6">NBA Teams</h1>
-      <div className="flex gap-3 mb-6">
-        <Button onClick={() => setFilter('all')} variant={filter === 'all' ? 'default' : 'outline'}>
-          All Teams
-        </Button>
-        <Button onClick={() => setFilter('Eastern')} variant={filter === 'Eastern' ? 'default' : 'outline'}>
-          Eastern
-        </Button>
-        <Button onClick={() => setFilter('Western')} variant={filter === 'Western' ? 'default' : 'outline'}>
-          Western
-        </Button>
-      </div>
-      {loading ? (
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent"></div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {teams.map((team) => (
-            <Card key={team.id} className="p-4 hover:bg-slate-800/50 transition-all cursor-pointer">
-              <div className="flex items-center space-x-3">
-                <img
-                  src={team.logo_url}
-                  alt={team.name}
-                  className="w-12 h-12"
-                  onError={(e) => e.target.src = 'https://via.placeholder.com/48?text=' + team.abbreviation}
-                />
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-bold text-white truncate">{team.name}</h3>
-                  <p className="text-sm text-slate-400">{team.conference}</p>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
 
 const BettingPage = ({ currentUser }) => {
   const [series, setSeries] = useState([]);
@@ -421,6 +360,81 @@ const LeaderboardPage = ({ onUserClick }) => {
   );
 };
 
+// ── PWA Install Prompt ────────────────────────────────────────────────────────
+const InstallBanner = () => {
+  const [show, setShow] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const deferredPrompt = useRef(null);
+
+  useEffect(() => {
+    // Already installed or dismissed
+    if (localStorage.getItem('pwa_dismissed')) return;
+    // Already running as standalone
+    if (window.matchMedia('(display-mode: standalone)').matches) return;
+
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+    setIsIOS(ios);
+
+    if (ios) {
+      // On iOS show a manual guide
+      setShow(true);
+      return;
+    }
+
+    // Android/Chrome: capture beforeinstallprompt
+    const handler = (e) => {
+      e.preventDefault();
+      deferredPrompt.current = e;
+      setShow(true);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (deferredPrompt.current) {
+      deferredPrompt.current.prompt();
+      const { outcome } = await deferredPrompt.current.userChoice;
+      deferredPrompt.current = null;
+      if (outcome === 'accepted') setShow(false);
+    }
+  };
+
+  const handleDismiss = () => {
+    setShow(false);
+    localStorage.setItem('pwa_dismissed', '1');
+  };
+
+  if (!show) return null;
+
+  return (
+    <div className="fixed bottom-20 md:bottom-6 left-3 right-3 md:left-auto md:right-6 md:max-w-sm z-50 bg-slate-900 border border-orange-500/40 rounded-2xl shadow-2xl shadow-orange-500/10 p-4 flex items-start gap-3">
+      <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center shrink-0">
+        <Trophy className="w-5 h-5 text-white" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-black text-white">Install NBA Picks</p>
+        {isIOS ? (
+          <p className="text-xs text-slate-400 mt-0.5">
+            Tap <span className="font-bold text-slate-300">Share</span> → <span className="font-bold text-slate-300">Add to Home Screen</span>
+          </p>
+        ) : (
+          <p className="text-xs text-slate-400 mt-0.5">Add to home screen for a native app experience</p>
+        )}
+        {!isIOS && (
+          <button onClick={handleInstall}
+            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-black hover:bg-orange-400 transition-colors">
+            <Download className="w-3 h-3" /> Install App
+          </button>
+        )}
+      </div>
+      <button onClick={handleDismiss} className="text-slate-500 hover:text-slate-300 shrink-0 transition-colors">
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  );
+};
+
 function App() {
   const [currentPage, setCurrentPage] = useState('home');
   const [currentUser, setCurrentUser] = useState(null);
@@ -466,38 +480,39 @@ function App() {
   };
 
   const navItems = [
-    { id: 'home', label: 'Home', icon: HomeIcon },
-    { id: 'standings', label: 'Standings', icon: BarChart3 },
-    { id: 'playin', label: 'Play-In', icon: Trophy },
-    { id: 'betting', label: 'Playoffs', icon: Target },
-    { id: 'leaderboard', label: 'Leaderboard', icon: Users },
-    { id: 'teams', label: 'Teams', icon: BarChart3 },
-    { id: 'mypredictions', label: 'My Picks', icon: Target },
+    { id: 'home',          label: 'Home',       icon: HomeIcon  },
+    { id: 'standings',     label: 'Standings',  icon: BarChart3 },
+    { id: 'betting',       label: 'Playoffs',   icon: Trophy    },
+    { id: 'leaderboard',   label: 'Leaderboard',icon: Users     },
+    { id: 'mypredictions', label: 'My Picks',   icon: Star      },
     ...(currentUser?.role === 'admin' ? [{ id: 'admin', label: 'Admin', icon: Shield }] : []),
   ];
 
   const renderPage = () => {
     const props = { currentUser, onNavigate: navigate, onLogin: handleLogin };
     switch (currentPage) {
-      case 'home': return <HomePage {...props} />;
-      case 'standings': return <StandingsPage currentUser={currentUser} />;
-      case 'playin': return <PlayInPage currentUser={currentUser} />;
-      case 'teams': return <TeamsPage />;
-      case 'betting': return <BracketPage currentUser={currentUser} />;
-      case 'leaderboard': return <LeaderboardPage onUserClick={handleUserClick} />;
-      case 'mypredictions': return <MyPredictionsPage currentUser={currentUser} />;
+      case 'home':             return <HomePage {...props} />;
+      case 'standings':        return <StandingsPage currentUser={currentUser} />;
+      case 'betting':          return <BracketPage currentUser={currentUser} />;
+      case 'leaderboard':      return <LeaderboardPage onUserClick={handleUserClick} />;
+      case 'mypredictions':    return <MyPredictionsPage currentUser={currentUser} />;
       case 'user-predictions': return selectedUser ? <UserPredictionsPage userId={selectedUser.user_id} username={selectedUser.username} onBack={() => navigate('leaderboard')} /> : null;
-      case 'admin': return <AdminPage currentUser={currentUser} />;
-      default: return <HomePage {...props} />;
+      case 'admin':            return <AdminPage currentUser={currentUser} />;
+      default:                 return <HomePage {...props} />;
     }
   };
 
+  // Only show bottom nav items that fit well on mobile (max 5)
+  const bottomNavItems = navItems.filter(i => i.id !== 'admin').slice(0, 5);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900">
-      <aside className="hidden md:fixed md:inset-y-0 md:flex md:w-64 md:flex-col">
+
+      {/* ── DESKTOP SIDEBAR ── */}
+      <aside className="hidden md:fixed md:inset-y-0 md:flex md:w-64 md:flex-col z-40">
         <div className="flex flex-col flex-grow pt-5 bg-slate-900/50 backdrop-blur-xl border-r border-blue-500/20">
           <div className="flex items-center px-4 mb-8">
-            <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center mr-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center mr-3 shrink-0">
               <Trophy className="w-7 h-7 text-white" />
             </div>
             <div>
@@ -511,9 +526,11 @@ function App() {
               return (
                 <button key={item.id} onClick={() => navigate(item.id)}
                   className={`group flex items-center w-full px-3 py-3 text-sm font-semibold rounded-xl transition-all ${
-                    currentPage === item.id ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg' : 'text-slate-300 hover:bg-slate-800/50'
+                    currentPage === item.id
+                      ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
+                      : 'text-slate-300 hover:bg-slate-800/50'
                   }`}>
-                  <Icon className="mr-3 h-5 w-5" />
+                  <Icon className="mr-3 h-5 w-5 shrink-0" />
                   {item.label}
                 </button>
               );
@@ -522,7 +539,7 @@ function App() {
           {currentUser && (
             <div className="p-4 border-t border-blue-500/20">
               <div className="flex items-center mb-3 px-2">
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold mr-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold mr-3 shrink-0">
                   {currentUser.username[0].toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -538,49 +555,61 @@ function App() {
           )}
         </div>
       </aside>
+
+      {/* ── MOBILE TOP BAR (brand only, no hamburger) ── */}
       <div className="md:hidden sticky top-0 z-50 bg-slate-900/95 backdrop-blur-xl border-b border-blue-500/20">
         <div className="flex items-center justify-between px-4 py-3">
-          <div className="flex items-center space-x-2">
-            <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg flex items-center justify-center">
-              <Trophy className="w-6 h-6 text-white" />
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg flex items-center justify-center shrink-0">
+              <Trophy className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-black text-white">NBA PLAYOFF</h1>
+              <h1 className="text-base font-black text-white leading-none">NBA PLAYOFF</h1>
               <p className="text-[10px] font-bold text-orange-400">PREDICTOR 2026</p>
             </div>
           </div>
-          <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2 rounded-lg bg-slate-800/50 text-white">
-            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-          </button>
+          {currentUser && (
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-sm font-black">
+                {currentUser.username[0].toUpperCase()}
+              </div>
+              <span className="text-xs text-slate-400 font-bold">{currentUser.points || 0}pts</span>
+            </div>
+          )}
         </div>
-        {mobileMenuOpen && (
-          <div className="bg-slate-900/98 border-b border-blue-500/20 p-2">
-            <nav className="space-y-1">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button key={item.id} onClick={() => navigate(item.id)}
-                    className={`flex items-center w-full px-3 py-3 rounded-xl ${
-                      currentPage === item.id ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white' : 'text-slate-300'
-                    }`}>
-                    <Icon className="mr-3 h-5 w-5" />
-                    {item.label}
-                  </button>
-                );
-              })}
-              {currentUser && (
-                <button onClick={handleLogout} className="flex items-center w-full px-3 py-3 text-red-400">
-                  <LogOut className="mr-3 h-5 w-5" />
-                  Logout
-                </button>
-              )}
-            </nav>
-          </div>
-        )}
       </div>
-      <main className="md:pl-64 min-h-screen">
+
+      {/* ── MAIN CONTENT ── */}
+      {/* pb-20 on mobile to clear the bottom nav bar */}
+      <main className="md:pl-64 min-h-screen pb-20 md:pb-0">
         {renderPage()}
       </main>
+
+      {/* ── PWA INSTALL BANNER ── */}
+      <InstallBanner />
+
+      {/* ── MOBILE BOTTOM NAV BAR ── */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 flex">
+        {bottomNavItems.map((item) => {
+          const Icon = item.icon;
+          const active = currentPage === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => navigate(item.id)}
+              className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 min-h-[56px] transition-colors active:bg-slate-800/60 ${
+                active ? 'text-orange-400' : 'text-slate-500'
+              }`}
+            >
+              <Icon className={`w-5 h-5 ${active ? 'text-orange-400' : 'text-slate-500'}`} />
+              <span className={`text-[10px] font-bold leading-none ${active ? 'text-orange-400' : 'text-slate-500'}`}>
+                {item.label}
+              </span>
+              {active && <div className="absolute bottom-0 h-0.5 w-8 bg-orange-400 rounded-full" />}
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }

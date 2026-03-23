@@ -2,7 +2,9 @@
 
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// In dev, use relative URLs so Vite proxy handles routing (works from mobile too).
+// In production, VITE_API_URL is set to the Railway backend URL.
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -79,8 +81,8 @@ export const getLeaderboard = async (season = '2026', limit = 100) => {
 };
 
 // Standings
-export const getStandings = async () => {
-  const response = await api.get('/api/standings');
+export const getStandings = async (forceRefresh = false) => {
+  const response = await api.get('/api/standings', { params: forceRefresh ? { force_refresh: true } : {} });
   return response.data;
 };
 
@@ -93,16 +95,22 @@ export const getPlayInGames = async (season = '2026', conference = null) => {
 };
 
 export const makePlayInPrediction = async (userId, gameId, predictedWinnerId) => {
-  const response = await api.post(`/api/playin-predictions?user_id=${userId}`, {
-    game_id: gameId,
-    predicted_winner_id: predictedWinnerId,
-  });
+  const response = await api.post(
+    `/api/playin-predictions?user_id=${userId}&game_id=${gameId}&predicted_winner_id=${predictedWinnerId}`
+  );
   return response.data;
 };
 
 // Admin Functions
 export const generateMatchups = async (season = '2026') => {
-  const response = await api.post(`/api/admin/generate-matchups?season=${season}`);
+  const response = await api.post(`/api/admin/regenerate-matchups?season=${season}`);
+  return response.data;
+};
+
+export const regenerateMatchups = async (conference = null, season = '2026') => {
+  const params = new URLSearchParams({ season });
+  if (conference) params.append('conference', conference);
+  const response = await api.post(`/api/admin/regenerate-matchups?${params}`);
   return response.data;
 };
 
@@ -139,6 +147,54 @@ export const setPlayinResult = async (gameId, winnerId) => {
   const response = await api.post(`/api/admin/playin/${gameId}/result`, null, {
     params: { winner_id: winnerId }
   });
+  return response.data;
+};
+
+// Futures Predictions
+export const getFutures = async (userId, season = '2026') => {
+  const response = await api.get(`/api/futures?user_id=${userId}&season=${season}`);
+  return response.data;
+};
+
+export const saveFutures = async (userId, data, season = '2026') => {
+  const params = new URLSearchParams({ user_id: userId, season });
+  if (data.champion_team_id) params.append('champion_team_id', data.champion_team_id);
+  if (data.west_champ_team_id) params.append('west_champ_team_id', data.west_champ_team_id);
+  if (data.east_champ_team_id) params.append('east_champ_team_id', data.east_champ_team_id);
+  if (data.finals_mvp) params.append('finals_mvp', data.finals_mvp);
+  if (data.west_finals_mvp) params.append('west_finals_mvp', data.west_finals_mvp);
+  if (data.east_finals_mvp) params.append('east_finals_mvp', data.east_finals_mvp);
+  const response = await api.post(`/api/futures?${params.toString()}`);
+  return response.data;
+};
+
+export const getFuturesLockStatus = async () => {
+  const response = await api.get('/api/futures/lock-status');
+  return response.data;
+};
+
+export const setFuturesLock = async (locked) => {
+  const response = await api.post('/api/admin/futures/lock', null, { params: { locked } });
+  return response.data;
+};
+
+export const getFuturesLeaderboard = async (season = '2026') => {
+  const response = await api.get(`/api/futures/leaderboard?season=${season}`);
+  return response.data;
+};
+
+export const getFuturesAll = async (season = '2026') => {
+  const response = await api.get(`/api/futures/all?season=${season}`);
+  return response.data;
+};
+
+export const getTeamRoster = async (teamId) => {
+  const response = await api.get(`/api/teams/${teamId}/roster`);
+  return response.data;
+};
+
+export const getPlayerStats = async (playerId) => {
+  const response = await api.get(`/api/players/${playerId}/stats`);
   return response.data;
 };
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, CheckCircle, Trophy, RefreshCw } from 'lucide-react';
+import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className }) => (
@@ -203,6 +203,99 @@ const PlayinCard = ({ game, onSave }) => {
   );
 };
 
+const FuturesLockCard = () => {
+  const [locked, setLocked] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.getFuturesLockStatus().then(s => setLocked(s.locked)).catch(() => {});
+  }, []);
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const res = await api.setFuturesLock(!locked);
+      setLocked(res.locked);
+    } catch (e) {
+      alert('Error: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="p-5 mb-4">
+      <div className="flex items-center gap-2 mb-3">
+        {locked ? <Lock className="w-5 h-5 text-red-400" /> : <Unlock className="w-5 h-5 text-green-400" />}
+        <h2 className="text-lg font-black text-white">Futures Picks</h2>
+        {locked !== null && (
+          <span className={`ml-auto px-2 py-0.5 rounded-full text-xs font-black ${locked ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
+            {locked ? 'LOCKED' : 'OPEN'}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-slate-400 mb-4">
+        {locked ? 'Users cannot edit their futures picks.' : 'Users can still edit their futures picks.'}
+      </p>
+      <button
+        onClick={toggle}
+        disabled={busy || locked === null}
+        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 ${
+          locked
+            ? 'bg-green-500/20 border border-green-500/40 text-green-400 hover:bg-green-500/30'
+            : 'bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30'
+        }`}
+      >
+        {busy ? 'Updating…' : locked ? '🔓 Unlock Futures' : '🔒 Lock Futures'}
+      </button>
+    </Card>
+  );
+};
+
+const RegenerateMatchupsCard = ({ onDone }) => {
+  const [status, setStatus] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const run = async (conference) => {
+    setBusy(true);
+    setStatus('Generating…');
+    try {
+      const res = await api.regenerateMatchups(conference);
+      setStatus(`Done! ${res.series_count} series, ${res.playin_count} play-in games`);
+      onDone();
+    } catch (e) {
+      setStatus('Error: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="p-5 mb-8">
+      <div className="flex items-center gap-2 mb-3">
+        <Zap className="w-5 h-5 text-yellow-400" />
+        <h2 className="text-lg font-black text-white">Regenerate Matchups</h2>
+      </div>
+      <p className="text-xs text-slate-400 mb-4">If seeds 3-6 are missing, use these buttons to create the missing playoff series and play-in games from live standings.</p>
+      <div className="flex gap-2 flex-wrap">
+        <button onClick={() => run('Western')} disabled={busy}
+          className="px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30 text-sm font-bold transition-all disabled:opacity-50">
+          Regenerate West
+        </button>
+        <button onClick={() => run('Eastern')} disabled={busy}
+          className="px-4 py-2 rounded-lg bg-blue-500/20 border border-blue-500/40 text-blue-400 hover:bg-blue-500/30 text-sm font-bold transition-all disabled:opacity-50">
+          Regenerate East
+        </button>
+        <button onClick={() => run(null)} disabled={busy}
+          className="px-4 py-2 rounded-lg bg-orange-500/20 border border-orange-500/40 text-orange-400 hover:bg-orange-500/30 text-sm font-bold transition-all disabled:opacity-50">
+          Regenerate All
+        </button>
+      </div>
+      {status && <p className="mt-3 text-xs text-slate-300 font-bold">{status}</p>}
+    </Card>
+  );
+};
+
 const AdminPage = ({ currentUser }) => {
   const [series, setSeries] = useState([]);
   const [playin, setPlayin] = useState([]);
@@ -262,6 +355,9 @@ const AdminPage = ({ currentUser }) => {
           Refresh
         </button>
       </div>
+
+      <FuturesLockCard />
+      <RegenerateMatchupsCard onDone={load} />
 
       {loading ? (
         <div className="text-center py-12">

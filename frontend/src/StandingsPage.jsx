@@ -1,159 +1,226 @@
-import React, { useState, useEffect } from 'react';
-import { RefreshCw, Trophy } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { RefreshCw, Trophy, Wifi, WifiOff } from 'lucide-react';
 import * as api from './services/api';
 
-const Card = ({ children, className }) => (
-  <div className={`bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur-sm ${className}`}>
-    {children}
-  </div>
-);
+const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
 
-const Button = ({ children, onClick, className, variant = 'default', disabled, ...props }) => {
-  const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-all';
-  const variants = {
-    default: 'bg-orange-500 hover:bg-orange-600 text-white',
-    outline: 'border-2 border-slate-700 bg-slate-800/50 text-white hover:bg-slate-700',
-  };
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`${baseClass} ${variants[variant]} ${className} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-};
+function useTimeSince(isoString) {
+  const [text, setText] = useState('');
+  useEffect(() => {
+    if (!isoString) return;
+    const update = () => {
+      const secs = Math.floor((Date.now() - new Date(isoString)) / 1000);
+      if (secs < 60) setText(`${secs}s ago`);
+      else if (secs < 3600) setText(`${Math.floor(secs / 60)}m ago`);
+      else setText(`${Math.floor(secs / 3600)}h ago`);
+    };
+    update();
+    const id = setInterval(update, 10000);
+    return () => clearInterval(id);
+  }, [isoString]);
+  return text;
+}
 
-const StandingsPage = ({ currentUser }) => {
+const StandingsPage = () => {
   const [standings, setStandings] = useState({ eastern: [], western: [] });
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [error, setError] = useState(null);
+  const [nextRefreshIn, setNextRefreshIn] = useState(AUTO_REFRESH_MS / 1000);
+  const intervalRef = useRef(null);
+  const countdownRef = useRef(null);
+  const timeSince = useTimeSince(lastUpdated);
 
-  useEffect(() => {
-    loadStandings();
-  }, []);
-
-  const loadStandings = async () => {
-    setLoading(true);
+  const loadStandings = useCallback(async (force = false) => {
+    if (force) setRefreshing(true);
+    else if (standings.eastern.length === 0) setLoading(true);
+    setError(null);
     try {
-      const data = await api.getStandings();
+      const data = await api.getStandings(force);
       setStandings(data);
       setLastUpdated(data.last_updated);
+      setNextRefreshIn(AUTO_REFRESH_MS / 1000);
+      if (data.cache_age_minutes !== null && data.cache_age_minutes !== undefined) {
+        console.log(`Standings cache age: ${data.cache_age_minutes} min`);
+      }
     } catch (err) {
       console.error('Error loading standings:', err);
+      setError('Could not reach server. Showing last known data.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  }, []); // eslint-disable-line
+
+  // Auto-refresh every 5 min
+  useEffect(() => {
+    loadStandings();
+
+    intervalRef.current = setInterval(() => loadStandings(), AUTO_REFRESH_MS);
+
+    // Countdown ticker
+    countdownRef.current = setInterval(() => {
+      setNextRefreshIn(prev => {
+        if (prev <= 1) return AUTO_REFRESH_MS / 1000;
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(intervalRef.current);
+      clearInterval(countdownRef.current);
+    };
+  }, [loadStandings]);
+
+  const formatCountdown = (secs) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
   };
 
-  const StandingsTable = ({ teams, conference }) => (
-    <Card className="overflow-hidden">
-      <div className="bg-gradient-to-r from-orange-500 to-red-600 px-6 py-4">
-        <h2 className="text-2xl font-black text-white flex items-center">
-          <Trophy className="w-6 h-6 mr-2" />
-          {conference} Conference
-        </h2>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-slate-800/50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Rank</th>
-              <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Team</th>
-              <th className="px-4 py-3 text-center text-xs font-bold text-slate-400 uppercase">W</th>
-              <th className="px-4 py-3 text-center text-xs font-bold text-slate-400 uppercase">L</th>
-              <th className="px-4 py-3 text-center text-xs font-bold text-slate-400 uppercase">Win%</th>
-              <th className="px-4 py-3 text-center text-xs font-bold text-slate-400 uppercase">Seed</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800">
-            {teams.map((team, idx) => {
-              const isPlayoff = idx < 6;
-              const isPlayIn = idx >= 6 && idx < 10;
-              
-              return (
-                <tr
-                  key={team.team_id}
-                  className={`hover:bg-slate-800/30 transition-colors ${
-                    isPlayoff ? 'bg-green-500/5' : isPlayIn ? 'bg-yellow-500/5' : ''
-                  }`}
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center">
-                      <span className={`font-bold ${isPlayoff ? 'text-green-400' : isPlayIn ? 'text-yellow-400' : 'text-slate-500'}`}>
-                        {team.conf_rank}
-                      </span>
-                      {isPlayoff && <span className="ml-2 text-xs text-green-400">●</span>}
-                      {isPlayIn && <span className="ml-2 text-xs text-yellow-400">●</span>}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center space-x-3">
-                      <img
-                        src={`https://cdn.nba.com/logos/nba/${team.team_id}/primary/L/logo.svg`}
-                        alt={team.team_name}
-                        className="w-10 h-10"
-                        onError={(e) => e.target.style.display = 'none'}
-                      />
-                      <span className="font-semibold text-white">{team.team_name}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-center font-bold text-white">{team.wins}</td>
-                  <td className="px-4 py-3 text-center font-bold text-slate-400">{team.losses}</td>
-                  <td className="px-4 py-3 text-center text-slate-300">{(team.win_pct * 100).toFixed(1)}%</td>
-                  <td className="px-4 py-3 text-center">
-                    {isPlayoff && <span className="px-2 py-1 rounded bg-green-500/20 text-green-400 text-xs font-bold">{idx + 1}</span>}
-                    {isPlayIn && <span className="px-2 py-1 rounded bg-yellow-500/20 text-yellow-400 text-xs font-bold">PI</span>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <div className="px-6 py-4 bg-slate-800/30 border-t border-slate-800 text-xs text-slate-400">
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center">
-            <span className="w-3 h-3 rounded-full bg-green-500/30 mr-2"></span>
-            <span>Playoff Bound (1-6)</span>
-          </div>
-          <div className="flex items-center">
-            <span className="w-3 h-3 rounded-full bg-yellow-500/30 mr-2"></span>
-            <span>Play-In (7-10)</span>
-          </div>
+  const isLive = lastUpdated && (Date.now() - new Date(lastUpdated)) < 6 * 60 * 1000;
+
+  const StandingsTable = ({ teams, conference }) => {
+    const color = conference === 'Eastern' ? 'from-blue-600 to-blue-800' : 'from-red-600 to-red-800';
+    return (
+      <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden">
+        <div className={`bg-gradient-to-r ${color} px-5 py-4`}>
+          <h2 className="text-xl font-black text-white flex items-center gap-2">
+            <Trophy className="w-5 h-5" />
+            {conference} Conference
+          </h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-slate-800/50">
+              <tr>
+                <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase w-10">#</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase">Team</th>
+                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">W</th>
+                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">L</th>
+                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">PCT</th>
+                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60">
+              {teams.map((team, idx) => {
+                const isPlayoff = idx < 6;
+                const isPlayIn = idx >= 6 && idx < 10;
+                return (
+                  <tr key={team.team_id}
+                    className={`transition-colors hover:bg-slate-800/40 ${
+                      isPlayoff ? 'bg-green-500/5' : isPlayIn ? 'bg-yellow-500/5' : ''
+                    }`}>
+                    <td className="px-4 py-3">
+                      <span className={`text-sm font-black ${
+                        isPlayoff ? 'text-green-400' : isPlayIn ? 'text-yellow-400' : 'text-slate-500'
+                      }`}>{team.conf_rank}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={`https://cdn.nba.com/logos/nba/${team.team_id}/primary/L/logo.svg`}
+                          alt=""
+                          className="w-9 h-9 shrink-0"
+                          onError={e => e.target.style.display = 'none'}
+                        />
+                        <span className="font-bold text-white text-sm">{team.team_name}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-center font-black text-white text-sm">{team.wins}</td>
+                    <td className="px-3 py-3 text-center font-bold text-slate-400 text-sm">{team.losses}</td>
+                    <td className="px-3 py-3 text-center text-slate-300 text-sm">
+                      {(team.win_pct * 100).toFixed(1)}%
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      {isPlayoff && (
+                        <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] font-black">
+                          Playoff
+                        </span>
+                      )}
+                      {isPlayIn && (
+                        <span className="px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-black">
+                          Play-In
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="px-5 py-3 bg-slate-800/30 border-t border-slate-800 flex items-center gap-4 text-[11px] text-slate-500">
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500/60" />Playoff (1–6)</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500/60" />Play-In (7–10)</span>
         </div>
       </div>
-    </Card>
-  );
+    );
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="flex justify-between items-center mb-8">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-4xl font-black text-white mb-2">Live NBA Standings</h1>
-          {lastUpdated && (
-            <p className="text-sm text-slate-400">
-              Last updated: {new Date(lastUpdated).toLocaleString()}
+          <h1 className="text-2xl md:text-4xl font-black text-white mb-1">NBA Standings</h1>
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Live indicator */}
+            <div className="flex items-center gap-1.5">
+              {isLive ? (
+                <>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                  </span>
+                  <span className="text-xs text-green-400 font-bold">Live</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3 h-3 text-slate-500" />
+                  <span className="text-xs text-slate-500 font-bold">Stale</span>
+                </>
+              )}
+            </div>
+
+            {lastUpdated && (
+              <span className="text-xs text-slate-400">Updated {timeSince}</span>
+            )}
+
+            {!loading && (
+              <span className="text-xs text-slate-600">
+                · Auto-refresh in {formatCountdown(nextRefreshIn)}
+              </span>
+            )}
+          </div>
+
+          {error && (
+            <p className="text-xs text-yellow-400 mt-1 flex items-center gap-1">
+              <WifiOff className="w-3 h-3" /> {error}
             </p>
           )}
         </div>
-        <Button onClick={loadStandings} variant="outline" disabled={loading}>
-          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+
+        <button
+          onClick={() => loadStandings(true)}
+          disabled={loading || refreshing}
+          className="flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-xl border border-slate-700 bg-slate-900/60 text-slate-300 hover:border-orange-500/50 hover:text-orange-400 transition-all text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <RefreshCw className={`w-4 h-4 ${(loading || refreshing) ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Refreshing…' : 'Force Refresh'}
+        </button>
       </div>
 
       {loading ? (
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent"></div>
-          <p className="text-slate-400 mt-4">Loading standings...</p>
+        <div className="flex flex-col items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent mb-4" />
+          <p className="text-slate-400 text-sm">Fetching live standings…</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <StandingsTable teams={standings.eastern} conference="Eastern" />
-          <StandingsTable teams={standings.western} conference="Western" />
+          <StandingsTable teams={standings.eastern || []} conference="Eastern" />
+          <StandingsTable teams={standings.western || []} conference="Western" />
         </div>
       )}
     </div>
