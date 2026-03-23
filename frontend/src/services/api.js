@@ -41,6 +41,11 @@ export const register = async (username, email, password) => {
   return response.data;
 };
 
+export const resetPassword = async (username, newPassword) => {
+  const response = await api.post(`/api/auth/reset-password?username=${encodeURIComponent(username)}&new_password=${encodeURIComponent(newPassword)}`);
+  return response.data;
+};
+
 export const getMe = async (userId) => {
   const response = await api.get(`/api/auth/me?user_id=${userId}`);
   return response.data;

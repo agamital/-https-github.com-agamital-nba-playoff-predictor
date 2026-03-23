@@ -29,22 +29,29 @@ const Card = ({ children, className, onClick }) => (
 );
 
 const HomePage = ({ currentUser, onNavigate, onLogin }) => {
-  const [loginMode, setLoginMode] = useState(true);
-  const [formData, setFormData] = useState({ username: '', email: '', password: '' });
+  const [mode, setMode] = useState('login'); // 'login' | 'register' | 'reset'
+  const [formData, setFormData] = useState({ username: '', email: '', password: '', newPassword: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setSuccess('');
     try {
-      if (loginMode) {
+      if (mode === 'login') {
         const user = await api.login(formData.username, formData.password);
         onLogin(user);
-      } else {
+      } else if (mode === 'register') {
         const user = await api.register(formData.username, formData.email, formData.password);
         onLogin(user);
+      } else if (mode === 'reset') {
+        await api.resetPassword(formData.username, formData.newPassword);
+        setSuccess('Password updated! You can now log in.');
+        setMode('login');
+        setFormData(f => ({ ...f, password: '' }));
       }
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'Could not reach server — check your connection');
@@ -97,15 +104,14 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
     );
   }
 
+  const titles = { login: 'Welcome Back', register: 'Join Now', reset: 'Reset Password' };
+  const subtitles = { login: 'Login to your account', register: 'Create your account', reset: 'Enter your username and a new password' };
+
   return (
     <div className="max-w-md mx-auto px-4 py-12">
       <div className="text-center mb-8">
-        <h1 className="text-4xl font-black text-white mb-2">
-          {loginMode ? 'Welcome Back' : 'Join Now'}
-        </h1>
-        <p className="text-slate-400">
-          {loginMode ? 'Login to your account' : 'Create your account'}
-        </p>
+        <h1 className="text-4xl font-black text-white mb-2">{titles[mode]}</h1>
+        <p className="text-slate-400">{subtitles[mode]}</p>
       </div>
       <Card className="p-6">
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -117,7 +123,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white"
             required
           />
-          {!loginMode && (
+          {mode === 'register' && (
             <input
               type="email"
               placeholder="Email"
@@ -127,26 +133,48 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
               required
             />
           )}
-          <input
-            type="password"
-            placeholder="Password"
-            value={formData.password}
-            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-            className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white"
-            required
-          />
+          {mode !== 'reset' && (
+            <input
+              type="password"
+              placeholder="Password"
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white"
+              required
+            />
+          )}
+          {mode === 'reset' && (
+            <input
+              type="password"
+              placeholder="New Password"
+              value={formData.newPassword}
+              onChange={(e) => setFormData({ ...formData, newPassword: e.target.value })}
+              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white"
+              required
+            />
+          )}
           {error && <p className="text-red-400 text-sm">{error}</p>}
+          {success && <p className="text-green-400 text-sm">{success}</p>}
           <Button type="submit" className="w-full py-3" disabled={loading}>
-            {loading ? 'Loading...' : loginMode ? 'Login' : 'Sign Up'}
+            {loading ? 'Loading...' : mode === 'login' ? 'Login' : mode === 'register' ? 'Sign Up' : 'Reset Password'}
           </Button>
         </form>
-        <div className="mt-4 text-center">
-          <button
-            onClick={() => setLoginMode(!loginMode)}
-            className="text-orange-400 hover:text-orange-300 text-sm"
-          >
-            {loginMode ? "Don't have an account? Sign up" : 'Already have an account? Login'}
-          </button>
+        <div className="mt-4 text-center space-y-2">
+          {mode !== 'login' && (
+            <button onClick={() => setMode('login')} className="block w-full text-orange-400 hover:text-orange-300 text-sm">
+              Already have an account? Login
+            </button>
+          )}
+          {mode !== 'register' && (
+            <button onClick={() => setMode('register')} className="block w-full text-orange-400 hover:text-orange-300 text-sm">
+              Don't have an account? Sign up
+            </button>
+          )}
+          {mode !== 'reset' && (
+            <button onClick={() => setMode('reset')} className="block w-full text-slate-400 hover:text-slate-300 text-sm">
+              Forgot password?
+            </button>
+          )}
         </div>
       </Card>
     </div>

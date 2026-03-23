@@ -540,6 +540,42 @@ async def get_me(user_id: int):
         raise HTTPException(404, "User not found")
     return {"user_id": row[0], "username": row[1], "email": row[2], "role": row[4], "points": row[5]}
 
+@app.post("/api/auth/reset-password")
+async def reset_password(username: str, new_password: str):
+    if not username or not new_password:
+        raise HTTPException(400, "Username and new password are required")
+    if len(new_password) < 4:
+        raise HTTPException(400, "Password must be at least 4 characters")
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE users SET password = ? WHERE username = ?', (new_password, username))
+    if c.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    conn.commit()
+    conn.close()
+    return {"message": "Password updated"}
+
+# Secret-key protected bootstrap: sets role and/or password by email.
+# Usage: POST /api/admin/bootstrap?secret=XXX&email=YYY&new_password=ZZZ&role=admin
+@app.post("/api/admin/bootstrap")
+async def bootstrap_admin(secret: str, email: str, new_password: Optional[str] = None, role: Optional[str] = None):
+    expected = os.environ.get("ADMIN_SECRET", "")
+    if not expected or secret != expected:
+        raise HTTPException(403, "Invalid secret")
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    if role:
+        c.execute('UPDATE users SET role = ? WHERE email = ?', (role, email))
+    if new_password:
+        c.execute('UPDATE users SET password = ? WHERE email = ?', (new_password, email))
+    if c.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    conn.commit()
+    conn.close()
+    return {"message": f"User {email} updated"}
+
 @app.post("/api/auth/login")
 async def login(creds: UserLogin):
     conn = sqlite3.connect(DB_PATH)
