@@ -46,6 +46,7 @@ _ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
     "https://nba-playoff-predictor.vercel.app",
+    "https://https-github-com-agamital-nba-playo.vercel.app",
 ]
 if _FRONTEND_ORIGIN and _FRONTEND_ORIGIN not in _ALLOWED_ORIGINS:
     _ALLOWED_ORIGINS.append(_FRONTEND_ORIGIN)

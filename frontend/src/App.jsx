@@ -47,7 +47,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
         onLogin(user);
       }
     } catch (err) {
-      setError(err.response?.data?.detail || 'An error occurred');
+      setError(err.response?.data?.detail || err.message || 'Could not reach server — check your connection');
     } finally {
       setLoading(false);
     }
