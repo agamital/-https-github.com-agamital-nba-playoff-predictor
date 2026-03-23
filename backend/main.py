@@ -61,6 +61,10 @@ class UserLogin(BaseModel):
     username: str
     password: str
 
+class PasswordReset(BaseModel):
+    username: str
+    new_password: str
+
 class Prediction(BaseModel):
     series_id: int
     predicted_winner_id: int
@@ -531,14 +535,12 @@ async def get_me(user_id: int):
     return {"user_id": row[0], "username": row[1], "email": row[2], "role": row[4], "points": row[5]}
 
 @app.post("/api/auth/reset-password")
-async def reset_password(username: str, new_password: str):
-    if not username or not new_password:
-        raise HTTPException(400, "Username and new password are required")
-    if len(new_password) < 4:
+async def reset_password(data: PasswordReset):
+    if len(data.new_password) < 4:
         raise HTTPException(400, "Password must be at least 4 characters")
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('UPDATE users SET password = ? WHERE username = ?', (new_password, username))
+    c.execute('UPDATE users SET password = ? WHERE username = ?', (data.new_password, data.username))
     if c.rowcount == 0:
         conn.close()
         raise HTTPException(404, "User not found")

@@ -44,7 +44,7 @@ export const register = async (username, email, password) => {
 };
 
 export const resetPassword = async (username, newPassword) => {
-  const response = await api.post(`/api/auth/reset-password?username=${encodeURIComponent(username)}&new_password=${encodeURIComponent(newPassword)}`);
+  const response = await api.post('/api/auth/reset-password', { username, new_password: newPassword });
   return response.data;
 };
 
