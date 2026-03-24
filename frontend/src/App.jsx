@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings } from 'lucide-react';
+import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info } from 'lucide-react';
 import * as api from './services/api';
 import { supabase } from './lib/supabase';
 import StandingsPage from './StandingsPage';
@@ -9,6 +9,7 @@ import UserPredictionsPage from './UserPredictionsPage';
 import AdminPage from './AdminPage';
 import BracketPage from './BracketPage';
 import FuturesPage from './FuturesPage';
+import ScoringGuide from './ScoringGuide';
 import UserProfilePage from './UserProfilePage';
 import AccountPage from './AccountPage';
 
@@ -136,7 +137,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             <div className="text-slate-400 text-xs md:text-sm">Accuracy</div>
           </Card>
         </div>
-        <FuturesPage currentUser={currentUser} />
+        <FuturesPage currentUser={currentUser} onNavigate={onNavigate} />
       </div>
     );
   }
@@ -624,11 +625,12 @@ function App() {
   };
 
   const navItems = [
-    { id: 'home',        label: 'Home',        icon: HomeIcon  },
-    { id: 'standings',   label: 'Standings',   icon: BarChart3 },
-    { id: 'betting',     label: 'Playoffs',    icon: Trophy    },
-    { id: 'leaderboard', label: 'Leaderboard', icon: Users     },
-    { id: 'profile',     label: 'My Profile',  icon: Star      },
+    { id: 'home',        label: 'Home',             icon: HomeIcon  },
+    { id: 'standings',   label: 'Standings',        icon: BarChart3 },
+    { id: 'betting',     label: 'Playoffs',         icon: Trophy    },
+    { id: 'leaderboard', label: 'Leaderboard',      icon: Users     },
+    { id: 'profile',     label: 'My Profile',       icon: Star      },
+    { id: 'scoring',     label: 'How Scoring Works',icon: Info      },
     ...(currentUser?.role === 'admin' ? [{ id: 'admin', label: 'Admin', icon: Shield }] : []),
   ];
 
@@ -637,13 +639,14 @@ function App() {
     switch (currentPage) {
       case 'home':             return <HomePage {...props} />;
       case 'standings':        return <StandingsPage currentUser={currentUser} />;
-      case 'betting':          return <BracketPage currentUser={currentUser} />;
+      case 'betting':          return <BracketPage currentUser={currentUser} onNavigate={navigate} />;
       case 'leaderboard':      return <LeaderboardPage onUserClick={handleUserClick} />;
       case 'mypredictions':    return <MyPredictionsPage currentUser={currentUser} />;
       case 'profile':          return <UserProfilePage username={profileUsername || currentUser?.username} currentUser={currentUser} />;
       case 'account':          return <AccountPage currentUser={currentUser} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
       case 'user-predictions': return selectedUser ? <UserPredictionsPage userId={selectedUser.user_id} username={selectedUser.username} onBack={() => navigate('leaderboard')} /> : null;
       case 'admin':            return <AdminPage currentUser={currentUser} />;
+      case 'scoring':          return <ScoringGuide />;
       default:                 return <HomePage {...props} />;
     }
   };

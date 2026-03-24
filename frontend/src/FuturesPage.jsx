@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, Lock, CheckCircle, Star, User, X, BarChart2 } from 'lucide-react';
+import { Trophy, Lock, CheckCircle, Star, User, X, BarChart2, Info } from 'lucide-react';
 import * as api from './services/api';
+import { FUTURES_BASE_POINTS, LEADERS_POINTS } from './scoringConstants';
 
 // ── All known playoff-eligible players (search suggestions) ──────────────────
 const ALL_PLAYERS = [
@@ -139,21 +140,31 @@ const TeamGrid = ({ teams, selectedId, onSelect, locked }) => (
   </div>
 );
 
-const Section = ({ title, icon, color, children }) => (
-  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-    <h3 className={`text-base font-black uppercase tracking-wider mb-4 flex items-center gap-2 ${color}`}>
-      {icon}
-      {title}
-    </h3>
-    {children}
-  </div>
-);
+const Section = ({ title, icon, color, children, pts, oddsMult }) => {
+  const finalPts = pts ? Math.floor(pts * (oddsMult || 1)) : null;
+  const showMult = oddsMult && oddsMult !== 1 && pts;
+  return (
+    <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+      <div className={`flex items-center gap-2 mb-4 ${color}`}>
+        {icon}
+        <h3 className="text-base font-black uppercase tracking-wider flex-1">{title}</h3>
+        {finalPts != null && (
+          <span className="ml-auto text-xs font-black text-green-400 shrink-0">
+            {showMult ? `${pts} × ${oddsMult} = ${finalPts} pts` : `${finalPts} pts`}
+          </span>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+};
 
-const FuturesPage = ({ currentUser }) => {
+const FuturesPage = ({ currentUser, onNavigate }) => {
   const [teams, setTeams] = useState([]);
   const [westTeams, setWestTeams] = useState([]);
   const [eastTeams, setEastTeams] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [odds, setOdds] = useState({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [existing, setExisting] = useState(null);
@@ -180,6 +191,7 @@ const FuturesPage = ({ currentUser }) => {
   useEffect(() => {
     const load = async () => {
       try {
+        api.getAdminOdds().then(setOdds).catch(() => {});
         const [allTeams, west, east, lockStatus] = await Promise.all([
           api.getTeams(),
           api.getTeams('Western'),
@@ -287,7 +299,7 @@ const FuturesPage = ({ currentUser }) => {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6 mt-2">
+      <div className="flex items-center justify-between mb-4 mt-2">
         <div className="flex items-center gap-2">
           <Star className="w-5 h-5 text-yellow-400" />
           <h2 className="text-xl font-black text-white uppercase tracking-wide">Futures Predictions</h2>
@@ -304,6 +316,16 @@ const FuturesPage = ({ currentUser }) => {
             <span className="text-green-400 text-sm font-bold">Picks Saved — Edit Anytime</span>
           </div>
         )}
+      </div>
+
+      {/* Scoring info button */}
+      <div className="flex justify-start mb-5">
+        <button
+          onClick={() => onNavigate && onNavigate('scoring')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 text-xs font-bold transition-all"
+        >
+          <Info className="w-3.5 h-3.5" /> How scoring works
+        </button>
       </div>
 
       {/* Current picks summary */}
@@ -330,30 +352,30 @@ const FuturesPage = ({ currentUser }) => {
 
       <div className="space-y-6">
         {/* NBA Champion */}
-        <Section title="NBA Champion" color="text-yellow-400" icon={<Trophy className="w-5 h-5" />}>
+        <Section title="NBA Champion" color="text-yellow-400" icon={<Trophy className="w-5 h-5" />} pts={FUTURES_BASE_POINTS.champion} oddsMult={odds.champion}>
           <TeamGrid teams={teams} selectedId={champion} onSelect={setChampion} locked={locked} />
         </Section>
 
         {/* Conference Champions */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Section title="West Champion" color="text-red-400" icon={<Trophy className="w-4 h-4" />}>
+          <Section title="West Champion" color="text-red-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_champ} oddsMult={odds.west_champ}>
             <TeamGrid teams={westTeams} selectedId={westChamp} onSelect={setWestChamp} locked={locked} />
           </Section>
-          <Section title="East Champion" color="text-blue-400" icon={<Trophy className="w-4 h-4" />}>
+          <Section title="East Champion" color="text-blue-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_champ} oddsMult={odds.east_champ}>
             <TeamGrid teams={eastTeams} selectedId={eastChamp} onSelect={setEastChamp} locked={locked} />
           </Section>
         </div>
 
         {/* MVPs */}
-        <Section title="Finals MVP" color="text-orange-400" icon={<Star className="w-4 h-4" />}>
+        <Section title="Finals MVP" color="text-orange-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.finals_mvp} oddsMult={odds.finals_mvp}>
           <PlayerSearchPicker value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Search any player…" />
         </Section>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Section title="West Finals MVP" color="text-red-400" icon={<Star className="w-4 h-4" />}>
+          <Section title="West Finals MVP" color="text-red-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_finals_mvp} oddsMult={odds.west_finals_mvp}>
             <PlayerSearchPicker value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Search any player…" />
           </Section>
-          <Section title="East Finals MVP" color="text-blue-400" icon={<Star className="w-4 h-4" />}>
+          <Section title="East Finals MVP" color="text-blue-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_finals_mvp} oddsMult={odds.east_finals_mvp}>
             <PlayerSearchPicker value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Search any player…" />
           </Section>
         </div>
@@ -377,28 +399,15 @@ const FuturesPage = ({ currentUser }) => {
 
         {/* ── Playoff Leaders Section ── */}
         <div className="mt-4">
-          <div className="flex items-center gap-2 mb-5">
+          <div className="flex items-center gap-2 mb-2">
             <BarChart2 className="w-5 h-5 text-cyan-400" />
             <h2 className="text-xl font-black text-white uppercase tracking-wide">Playoff Leaders</h2>
             <span className="ml-2 px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 text-[10px] font-black uppercase tracking-wider">New</span>
           </div>
-          <p className="text-slate-400 text-sm mb-5">
+          <p className="text-slate-400 text-sm mb-1">
             Predict which player will lead the entire playoffs in each statistical category.
-            Exact match required to earn points.
           </p>
-
-          {/* Points guide */}
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-6">
-            {LEADER_CATEGORIES.map(cat => (
-              <div key={cat.key} className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5 text-center">
-                <div className="text-lg mb-0.5">{cat.icon}</div>
-                <div className={`text-[10px] font-black uppercase ${cat.color}`}>{cat.pts}pts</div>
-                <div className="text-[9px] text-slate-500 font-bold leading-tight mt-0.5">
-                  {cat.label.replace('Most ', '').replace(' Made', '')}
-                </div>
-              </div>
-            ))}
-          </div>
+          <p className="text-slate-500 text-xs mb-5 font-bold">Exact match required. Picks lock with Futures.</p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {LEADER_CATEGORIES.map(cat => {
@@ -410,13 +419,16 @@ const FuturesPage = ({ currentUser }) => {
                     isCorrect === 0 ? 'border-red-500/40' :
                     'border-slate-800'
                   }`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xl">{cat.icon}</span>
-                    <div>
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex-1 min-w-0">
                       <p className={`text-xs font-black uppercase tracking-wider ${cat.color}`}>{cat.label}</p>
-                      <p className="text-[10px] text-slate-500">Worth {cat.pts} pts</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className={`text-xl font-black ${cat.color}`}>{cat.pts}</span>
+                        <span className="text-slate-500 text-xs font-bold">pts</span>
+                        <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">exact match</span>
+                      </div>
                     </div>
-                    {isCorrect === 1 && <CheckCircle className="ml-auto w-4 h-4 text-green-400" />}
+                    {isCorrect === 1 && <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />}
                   </div>
                   <PlayerSearchPicker
                     value={leaders[cat.key]}

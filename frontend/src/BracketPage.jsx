@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info } from 'lucide-react';
 import * as api from './services/api';
+import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS } from './scoringConstants';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const BH = 640;   // bracket total height
@@ -130,9 +131,10 @@ const PlayInCard = ({ game, pick, onTeamClick }) => {
 
   return (
     <div style={{ height: CH }}
-      className={`w-40 border-2 rounded-xl flex flex-col overflow-hidden transition-all cursor-pointer bg-slate-900/80 ${
+      className={`w-40 border-2 rounded-xl flex flex-col overflow-hidden transition-all cursor-pointer bg-slate-900/80 relative ${
         (p1 || p2) ? 'border-orange-500/40 shadow-md shadow-orange-500/10' : 'border-slate-700/60 hover:border-slate-600'
       }`}>
+      <span className="absolute top-1 right-1.5 text-[9px] font-black text-cyan-400/70 z-10">+{PLAYIN_PTS}pts</span>
       {teamRow(team1, p1, () => onTeamClick(game, team1?.id))}
       <div className="h-px bg-slate-800" />
       {teamRow(team2, p2, () => onTeamClick(game, team2?.id))}
@@ -142,32 +144,66 @@ const PlayInCard = ({ game, pick, onTeamClick }) => {
 
 // ── Inline pickers ────────────────────────────────────────────────────────────
 
-const InlinePicker = ({ seriesId, pick, onGamesSelect, onSave, saved }) => (
-  <div className="w-44 bg-slate-950/80 border border-orange-500/20 rounded-xl px-3 py-2 space-y-2 shadow-lg shadow-orange-500/5">
-    <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest text-center">Series length</p>
-    <div className="grid grid-cols-4 gap-1">
-      {[4, 5, 6, 7].map(g => (
-        <button key={g} onClick={() => onGamesSelect(seriesId, g)}
-          className={`py-1.5 rounded-lg text-sm font-black transition-all border ${
-            pick?.games === g
-              ? 'border-orange-500 bg-orange-500/25 text-orange-400'
-              : 'border-slate-800 bg-slate-900 text-slate-400 hover:border-orange-500/40 hover:text-white'
-          }`}>{g}</button>
-      ))}
+const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onSave, saved }) => {
+  const homeSeed   = series?.home_seed   ?? series?.home_team?.seed   ?? null;
+  const awaySeed   = series?.away_seed   ?? series?.away_team?.seed   ?? null;
+  const roundName  = series?.round ?? 'First Round';
+  const pickedTeamId = pick?.teamId;
+  const pickedSeed = pickedTeamId === series?.home_team?.id ? homeSeed
+                   : pickedTeamId === series?.away_team?.id ? awaySeed
+                   : null;
+  const { winnerPts, gamesPts, totalPts } = calcSeriesPts(roundName, homeSeed, awaySeed, pickedSeed);
+  const roundMult  = getRoundMult(roundName);
+  const underdogMult = getUnderdogMult(roundName, homeSeed, awaySeed, pickedSeed);
+  const isUnderdog = underdogMult > 1.0;
+
+  return (
+    <div className="w-44 bg-slate-950/80 border border-orange-500/20 rounded-xl px-3 py-2 space-y-1.5 shadow-lg shadow-orange-500/5">
+      {/* Scoring hint */}
+      <div className="flex items-center justify-between gap-1">
+        {roundMult > 1 && (
+          <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">
+            Round {roundMult}x
+          </span>
+        )}
+        {isUnderdog && (
+          <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">
+            Underdog!
+          </span>
+        )}
+        {!roundMult || roundMult <= 1 && !isUnderdog ? (
+          <span className="text-[9px] text-slate-600 font-bold">Round 1x</span>
+        ) : null}
+      </div>
+      <p className="text-[9px] text-slate-600 font-bold text-center">
+        +{winnerPts} winner / +{gamesPts} games
+      </p>
+      <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest text-center">Series length</p>
+      <div className="grid grid-cols-4 gap-1">
+        {[4, 5, 6, 7].map(g => (
+          <button key={g} onClick={() => onGamesSelect(seriesId, g)}
+            className={`py-1.5 rounded-lg text-sm font-black transition-all border ${
+              pick?.games === g
+                ? 'border-orange-500 bg-orange-500/25 text-orange-400'
+                : 'border-slate-800 bg-slate-900 text-slate-400 hover:border-orange-500/40 hover:text-white'
+            }`}>{g}</button>
+        ))}
+      </div>
+      <button onClick={() => onSave(seriesId)} disabled={!pick?.games}
+        className={`w-full py-1.5 rounded-lg text-[10px] font-black tracking-wide transition-all ${
+          saved ? 'bg-green-500/20 border border-green-500/40 text-green-400' :
+          !pick?.games ? 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed' :
+          'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-500/30'
+        }`}>
+        {saved ? '✓ Saved!' : `Save Pick • ${totalPts} pts max`}
+      </button>
     </div>
-    <button onClick={() => onSave(seriesId)} disabled={!pick?.games}
-      className={`w-full py-1.5 rounded-lg text-xs font-black tracking-wide transition-all ${
-        saved ? 'bg-green-500/20 border border-green-500/40 text-green-400' :
-        !pick?.games ? 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed' :
-        'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-500/30'
-      }`}>
-      {saved ? '✓ Saved!' : 'Save Pick'}
-    </button>
-  </div>
-);
+  );
+};
 
 const PlayInPicker = ({ gameId, pick, onSave, saved }) => (
-  <div className="w-40 bg-slate-950/80 border border-orange-500/20 rounded-xl px-2 py-2 shadow-lg">
+  <div className="w-40 bg-slate-950/80 border border-orange-500/20 rounded-xl px-2 py-2 space-y-1.5 shadow-lg">
+    <p className="text-[9px] text-cyan-400/80 font-black text-center">+{PLAYIN_PTS} pts if correct</p>
     <button onClick={() => onSave(gameId)} disabled={!pick?.teamId}
       className={`w-full py-1.5 rounded-lg text-xs font-black tracking-wide transition-all ${
         saved ? 'bg-green-500/20 border border-green-500/40 text-green-400' :
@@ -266,7 +302,7 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onSave, saved,
                 <MatchCard series={s} pick={picks[s.id]} onTeamClick={onTeamClick} />
                 {picks[s.id]?.teamId && s.status === 'active' && (
                   <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
-                    <InlinePicker seriesId={s.id} pick={picks[s.id]} onGamesSelect={onGamesSelect} onSave={onSave} saved={saved[s.id]} />
+                    <InlinePicker seriesId={s.id} series={s} pick={picks[s.id]} onGamesSelect={onGamesSelect} onSave={onSave} saved={saved[s.id]} />
                   </div>
                 )}
               </div>
@@ -325,6 +361,10 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved }) => {
 
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-2">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Play-In</span>
+        <span className="text-[10px] font-black text-cyan-400/80">+{PLAYIN_PTS} pts if correct</span>
+      </div>
       {teamBtn(team1, p1, () => onTeamClick(game, team1?.id))}
       <div className="text-center text-xs text-slate-600 font-bold">VS</div>
       {teamBtn(team2, p2, () => onTeamClick(game, team2?.id))}
@@ -369,22 +409,55 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
     </button>
   );
 
+  const homeSeed   = series.home_seed   ?? h.seed ?? null;
+  const awaySeed   = series.away_seed   ?? a.seed ?? null;
+  const roundMult  = getRoundMult(series.round);
+  const pickedSeed = hp ? homeSeed : ap ? awaySeed : null;
+  const underdogMult = getUnderdogMult(series.round, homeSeed, awaySeed, pickedSeed);
+  const { winnerPts, gamesPts, totalPts } = calcSeriesPts(series.round, homeSeed, awaySeed, pickedSeed);
+  const isHUnderdog = hp && getUnderdogMult(series.round, homeSeed, awaySeed, homeSeed) > 1.0;
+  const isAUnderdog = ap && getUnderdogMult(series.round, homeSeed, awaySeed, awaySeed) > 1.0;
+
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{series.round}</span>
+        <div>
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{series.round}</span>
+          {series.status === 'active' && (
+            <span className="ml-2 text-[10px] font-black text-slate-500">
+              Round {roundMult}x | Up to <span className="text-green-400">{calcSeriesPts(series.round, homeSeed, awaySeed, null).totalPts}+ pts</span>
+            </span>
+          )}
+        </div>
         {series.status === 'completed' && <span className="text-xs font-bold text-green-400 flex items-center gap-1">✓ Complete</span>}
         {series.status === 'locked' && <span className="text-xs font-bold text-yellow-400 flex items-center gap-1">🔒 Locked</span>}
         {series.status === 'active' && <span className="text-xs font-bold text-blue-400">Predictions Open</span>}
       </div>
       <div className="space-y-2">
-        {teamBtn(h, hp, hWon, () => onTeamClick(series, h.id))}
+        <div className="relative">
+          {teamBtn(h, hp, hWon, () => onTeamClick(series, h.id))}
+          {isHUnderdog && (
+            <span className="absolute top-1 right-1 text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5 pointer-events-none">
+              Underdog!
+            </span>
+          )}
+        </div>
         <div className="text-center text-xs text-slate-600 font-bold">VS</div>
-        {teamBtn(a, ap, aWon, () => onTeamClick(series, a.id))}
+        <div className="relative">
+          {teamBtn(a, ap, aWon, () => onTeamClick(series, a.id))}
+          {isAUnderdog && (
+            <span className="absolute top-1 right-1 text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5 pointer-events-none">
+              Underdog!
+            </span>
+          )}
+        </div>
       </div>
       {picked && !isCompleted && !isLocked && (
         <div className="pt-2 border-t border-slate-800 space-y-3">
-          <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Series Length</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Series Length</p>
+            <p className="text-[10px] text-slate-500 font-bold">+{winnerPts} winner / +{gamesPts} games</p>
+          </div>
           <div className="grid grid-cols-4 gap-2">
             {[4, 5, 6, 7].map(g => (
               <button key={g} onClick={() => onGamesSelect(series.id, g)}
@@ -399,7 +472,7 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
               !pick?.games ? 'bg-slate-800 text-slate-600 cursor-not-allowed' :
               'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg shadow-orange-500/25'
             }`}>
-            {saved ? '✓ Saved!' : 'Save Prediction'}
+            {saved ? '✓ Saved!' : `Save Prediction • ${totalPts} pts max`}
           </button>
         </div>
       )}
@@ -409,7 +482,7 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-const BracketPage = ({ currentUser }) => {
+const BracketPage = ({ currentUser, onNavigate }) => {
   const [series, setSeries]           = useState([]);
   const [playInGames, setPlayInGames] = useState([]);
   const [allTeams, setAllTeams]       = useState([]);
@@ -550,12 +623,20 @@ const BracketPage = ({ currentUser }) => {
   return (
     <div className="px-4 py-8">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6 justify-center">
+      <div className="flex items-center gap-3 mb-4 justify-center">
         <Trophy className="w-9 h-9 text-orange-400" />
         <div>
           <h1 className="text-2xl md:text-5xl font-black text-white leading-none">2026 NBA Playoffs</h1>
           <p className="text-slate-400 text-sm mt-1">Click any matchup to make your prediction</p>
         </div>
+      </div>
+      <div className="flex justify-center mb-5">
+        <button
+          onClick={() => onNavigate && onNavigate('scoring')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 text-xs font-bold transition-all"
+        >
+          <Info className="w-3.5 h-3.5" /> How scoring works
+        </button>
       </div>
 
       {/* Missing matchups banner */}
