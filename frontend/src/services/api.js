@@ -117,6 +117,12 @@ export const makePrediction = async (userId, seriesId, predictedWinnerId, predic
   return response.data;
 };
 
+// Dashboard (lightweight counts for home page)
+export const getDashboard = async (userId, season = '2026') => {
+  const response = await api.get(`/api/dashboard?user_id=${userId}&season=${season}`);
+  return response.data;
+};
+
 // Leaderboard
 export const getLeaderboard = async (season = '2026', limit = 100) => {
   const response = await api.get('/api/leaderboard', {
@@ -241,12 +247,14 @@ export const getLeadersPrediction = async (userId, season = '2026') => {
 
 export const saveLeadersPrediction = async (userId, data, season = '2026') => {
   const params = new URLSearchParams({ user_id: userId, season });
-  if (data.top_scorer)   params.append('top_scorer',   data.top_scorer);
-  if (data.top_assists)  params.append('top_assists',  data.top_assists);
-  if (data.top_rebounds) params.append('top_rebounds', data.top_rebounds);
-  if (data.top_threes)   params.append('top_threes',   data.top_threes);
-  if (data.top_steals)   params.append('top_steals',   data.top_steals);
-  if (data.top_blocks)   params.append('top_blocks',   data.top_blocks);
+  // Only append positive integer values
+  const intVal = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : null; };
+  const ts = intVal(data.top_scorer);   if (ts)  params.append('top_scorer',   ts);
+  const ta = intVal(data.top_assists);  if (ta)  params.append('top_assists',  ta);
+  const tr = intVal(data.top_rebounds); if (tr)  params.append('top_rebounds', tr);
+  const tt = intVal(data.top_threes);   if (tt)  params.append('top_threes',   tt);
+  const tst = intVal(data.top_steals);  if (tst) params.append('top_steals',   tst);
+  const tb = intVal(data.top_blocks);   if (tb)  params.append('top_blocks',   tb);
   const response = await api.post(`/api/leaders?${params.toString()}`);
   return response.data;
 };
@@ -258,12 +266,13 @@ export const getAdminLeadersResults = async (season = '2026') => {
 
 export const setAdminLeadersResults = async (data, season = '2026') => {
   const params = new URLSearchParams({ season });
-  if (data.top_scorer)   params.append('top_scorer',   data.top_scorer);
-  if (data.top_assists)  params.append('top_assists',  data.top_assists);
-  if (data.top_rebounds) params.append('top_rebounds', data.top_rebounds);
-  if (data.top_threes)   params.append('top_threes',   data.top_threes);
-  if (data.top_steals)   params.append('top_steals',   data.top_steals);
-  if (data.top_blocks)   params.append('top_blocks',   data.top_blocks);
+  const intVal = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : null; };
+  const ts = intVal(data.top_scorer);   if (ts)  params.append('top_scorer',   ts);
+  const ta = intVal(data.top_assists);  if (ta)  params.append('top_assists',  ta);
+  const tr = intVal(data.top_rebounds); if (tr)  params.append('top_rebounds', tr);
+  const tt = intVal(data.top_threes);   if (tt)  params.append('top_threes',   tt);
+  const tst = intVal(data.top_steals);  if (tst) params.append('top_steals',   tst);
+  const tb = intVal(data.top_blocks);   if (tb)  params.append('top_blocks',   tb);
   const response = await api.post(`/api/admin/leaders/results?${params.toString()}`);
   return response.data;
 };

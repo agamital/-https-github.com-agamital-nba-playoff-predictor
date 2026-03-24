@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { RefreshCw, Trophy, Wifi, WifiOff } from 'lucide-react';
+import { RefreshCw, Trophy, WifiOff } from 'lucide-react';
 import * as api from './services/api';
 
 const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
@@ -27,9 +27,7 @@ const StandingsPage = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError] = useState(null);
-  const [nextRefreshIn, setNextRefreshIn] = useState(AUTO_REFRESH_MS / 1000);
   const intervalRef = useRef(null);
-  const countdownRef = useRef(null);
   const timeSince = useTimeSince(lastUpdated);
 
   const loadStandings = useCallback(async (force = false) => {
@@ -40,7 +38,6 @@ const StandingsPage = () => {
       const data = await api.getStandings(force);
       setStandings(data);
       setLastUpdated(data.last_updated);
-      setNextRefreshIn(AUTO_REFRESH_MS / 1000);
       if (data.cache_age_minutes !== null && data.cache_age_minutes !== undefined) {
         console.log(`Standings cache age: ${data.cache_age_minutes} min`);
       }
@@ -59,25 +56,10 @@ const StandingsPage = () => {
 
     intervalRef.current = setInterval(() => loadStandings(), AUTO_REFRESH_MS);
 
-    // Countdown ticker
-    countdownRef.current = setInterval(() => {
-      setNextRefreshIn(prev => {
-        if (prev <= 1) return AUTO_REFRESH_MS / 1000;
-        return prev - 1;
-      });
-    }, 1000);
-
     return () => {
       clearInterval(intervalRef.current);
-      clearInterval(countdownRef.current);
     };
   }, [loadStandings]);
-
-  const formatCountdown = (secs) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m}:${String(s).padStart(2, '0')}`;
-  };
 
   const isLive = lastUpdated && (Date.now() - new Date(lastUpdated)) < 6 * 60 * 1000;
 
@@ -186,12 +168,6 @@ const StandingsPage = () => {
 
             {lastUpdated && (
               <span className="text-xs text-slate-400">Updated {timeSince}</span>
-            )}
-
-            {!loading && (
-              <span className="text-xs text-slate-600">
-                · Auto-refresh in {formatCountdown(nextRefreshIn)}
-              </span>
             )}
           </div>
 

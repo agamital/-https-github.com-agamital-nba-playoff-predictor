@@ -74,25 +74,46 @@ const MatchCard = ({ series, pick, onTeamClick }) => {
   const hWon = winner_team_id === h.id;
   const aWon = winner_team_id === a.id;
 
-  const teamRow = (team, picked, won, onClick) => (
+  const homeSeed = series.home_seed ?? h.seed ?? null;
+  const awaySeed = series.away_seed ?? a.seed ?? null;
+  const underdogSeed = (homeSeed != null && awaySeed != null) ? Math.max(homeSeed, awaySeed) : null;
+  const hIsUnderdog = underdogSeed != null && homeSeed === underdogSeed;
+  const aIsUnderdog = underdogSeed != null && awaySeed === underdogSeed;
+  const pickedUnderdog = (hp && hIsUnderdog) || (ap && aIsUnderdog);
+
+  const teamRow = (team, picked, won, isUnderdog, onClick) => (
     <button
       onClick={isCompleted || isLocked ? undefined : onClick}
       className={`flex-1 flex items-center gap-2 px-3 w-full transition-all ${
         won ? 'bg-green-500/20' :
-        picked && !isCompleted ? 'bg-orange-500/25' :
+        picked && !isCompleted ? (isUnderdog ? 'bg-amber-500/20' : 'bg-orange-500/25') :
         isCompleted && !won ? 'opacity-40' :
         isLocked ? '' :
+        isUnderdog && !isCompleted ? 'hover:bg-amber-500/10' :
         'hover:bg-slate-800/70'
       }`}
       style={{ cursor: isCompleted || isLocked ? 'default' : 'pointer' }}
     >
       <span className="text-xs text-slate-500 w-4 shrink-0 font-bold">{team.seed}</span>
+      {isUnderdog && !isCompleted && (
+        <span className="text-[7px] font-black text-amber-400/60 shrink-0 uppercase tracking-tight">DOG</span>
+      )}
       <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
-      <span className={`text-sm font-bold truncate ${won ? 'text-green-400' : picked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>
+      <span className={`text-sm font-bold truncate ${
+        won ? 'text-green-400' :
+        picked && !isCompleted ? (isUnderdog ? 'text-amber-400' : 'text-orange-400') :
+        'text-white'
+      }`}>
         {team.abbreviation}
       </span>
       {won && actual_games && <span className="ml-auto text-[10px] text-green-400 font-black shrink-0">in {actual_games}</span>}
-      {picked && !isCompleted && !isLocked && <ChevronRight className="ml-auto w-4 h-4 text-orange-400 shrink-0" />}
+      {picked && !isCompleted && !isLocked && (
+        <span className={`ml-auto text-[7px] font-black shrink-0 px-1 py-0.5 rounded ${
+          isUnderdog ? 'text-amber-400 bg-amber-500/15' : 'text-orange-400/70'
+        }`}>
+          {isUnderdog ? 'RISKY' : 'SAFE'}
+        </span>
+      )}
     </button>
   );
 
@@ -101,12 +122,13 @@ const MatchCard = ({ series, pick, onTeamClick }) => {
       className={`w-44 border-2 rounded-xl flex flex-col overflow-hidden transition-all ${
         isCompleted ? 'border-green-500/40 shadow-md shadow-green-500/10' :
         isLocked ? 'border-yellow-500/30 opacity-75' :
+        pickedUnderdog && !isCompleted ? 'border-amber-400/60 underdog-glow' :
         (hp || ap) ? 'border-orange-500/40 shadow-md shadow-orange-500/10 cursor-pointer' :
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
       } bg-slate-900/80`}>
-      {teamRow(h, hp, hWon, () => onTeamClick(series, h.id))}
+      {teamRow(h, hp, hWon, hIsUnderdog, () => onTeamClick(series, h.id))}
       <div className="h-px bg-slate-800" />
-      {teamRow(a, ap, aWon, () => onTeamClick(series, a.id))}
+      {teamRow(a, ap, aWon, aIsUnderdog, () => onTeamClick(series, a.id))}
     </div>
   );
 };
@@ -158,23 +180,34 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onSave, saved }) 
   const isUnderdog = underdogMult > 1.0;
 
   return (
-    <div className="w-44 bg-slate-950/80 border border-orange-500/20 rounded-xl px-3 py-2 space-y-1.5 shadow-lg shadow-orange-500/5">
-      {/* Scoring hint */}
+    <div className={`w-44 rounded-xl px-3 py-2 space-y-1.5 shadow-lg transition-all ${
+      isUnderdog
+        ? 'bg-slate-950/90 border border-amber-500/30 shadow-amber-500/10 underdog-glow'
+        : 'bg-slate-950/80 border border-orange-500/20 shadow-orange-500/5'
+    }`}>
+      {/* Risk / Reward header */}
       <div className="flex items-center justify-between gap-1">
+        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${
+          isUnderdog
+            ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+            : 'text-slate-400 bg-slate-800 border-slate-700'
+        }`}>
+          {isUnderdog ? '🔥 RISKY' : '🛡️ SAFE'}
+        </span>
         {roundMult > 1 && (
           <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">
-            Round {roundMult}x
+            ×{roundMult}
           </span>
         )}
-        {isUnderdog && (
-          <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">
-            Underdog!
-          </span>
-        )}
-        {!roundMult || roundMult <= 1 && !isUnderdog ? (
-          <span className="text-[9px] text-slate-600 font-bold">Round 1x</span>
-        ) : null}
       </div>
+
+      {/* Bonus pop for underdog */}
+      {isUnderdog && (
+        <p key={pickedSeed} className="bonus-pop text-[9px] font-black text-amber-400 text-center bg-amber-500/10 rounded py-0.5">
+          +{totalPts - Math.floor(20 * roundMult) - Math.floor(40 * roundMult)} bonus pts vs fav
+        </p>
+      )}
+
       <p className="text-[9px] text-slate-600 font-bold text-center">
         +{winnerPts} winner / +{gamesPts} games
       </p>
@@ -184,7 +217,7 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onSave, saved }) 
           <button key={g} onClick={() => onGamesSelect(seriesId, g)}
             className={`py-1.5 rounded-lg text-sm font-black transition-all border ${
               pick?.games === g
-                ? 'border-orange-500 bg-orange-500/25 text-orange-400'
+                ? (isUnderdog ? 'border-amber-500 bg-amber-500/25 text-amber-400' : 'border-orange-500 bg-orange-500/25 text-orange-400')
                 : 'border-slate-800 bg-slate-900 text-slate-400 hover:border-orange-500/40 hover:text-white'
             }`}>{g}</button>
         ))}
@@ -193,6 +226,7 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onSave, saved }) 
         className={`w-full py-1.5 rounded-lg text-[10px] font-black tracking-wide transition-all ${
           saved ? 'bg-green-500/20 border border-green-500/40 text-green-400' :
           !pick?.games ? 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed' :
+          isUnderdog ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md shadow-amber-500/30' :
           'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-500/30'
         }`}>
         {saved ? '✓ Saved!' : `Save Pick • ${totalPts} pts max`}
@@ -390,27 +424,38 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
   const hWon = series.winner_team_id === h.id;
   const aWon = series.winner_team_id === a.id;
 
-  const teamBtn = (team, isPicked, isWon, onClick) => (
+  const homeSeed   = series.home_seed   ?? h.seed ?? null;
+  const awaySeed   = series.away_seed   ?? a.seed ?? null;
+  const underdogSeed2 = (homeSeed != null && awaySeed != null) ? Math.max(homeSeed, awaySeed) : null;
+  const hIsUnderdog2 = underdogSeed2 != null && homeSeed === underdogSeed2;
+  const aIsUnderdog2 = underdogSeed2 != null && awaySeed === underdogSeed2;
+
+  const teamBtn = (team, isPicked, isWon, isTeamUnderdog, onClick) => (
     <button onClick={isCompleted || isLocked ? undefined : onClick}
       className={`flex items-center gap-3 p-4 rounded-xl border-2 transition-all w-full ${
         isWon ? 'border-green-500 bg-green-500/15' :
+        isPicked && !isCompleted && isTeamUnderdog ? 'border-amber-500 bg-amber-500/15 underdog-glow' :
         isPicked && !isCompleted ? 'border-orange-500 bg-orange-500/15' :
         isCompleted && !isWon ? 'border-slate-700 bg-slate-900/60 opacity-40' :
+        !isWon && !isPicked && !isCompleted && isTeamUnderdog ? 'border-amber-500/20 bg-amber-500/5 hover:border-amber-400/40' :
         'border-slate-700 bg-slate-900/60 hover:border-slate-600'
       }`}>
-      <span className={`text-xs font-black w-5 ${isWon ? 'text-green-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-slate-500'}`}>{team.seed}</span>
+      <span className={`text-xs font-black w-5 shrink-0 ${isWon ? 'text-green-400' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-slate-500'}`}>{team.seed}</span>
       <img src={team.logo_url} alt="" className="w-10 h-10 shrink-0" onError={e => e.target.style.display = 'none'} />
-      <div className="text-left flex-1">
-        <p className={`font-black text-base leading-tight ${isWon ? 'text-green-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>{team.name}</p>
-        <p className="text-xs text-slate-500">{isWon && series.actual_games ? `Won in ${series.actual_games}` : `Seed #${team.seed}`}</p>
+      <div className="text-left flex-1 min-w-0">
+        <p className={`font-black text-base leading-tight truncate ${isWon ? 'text-green-400' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>{team.name}</p>
+        <p className="text-xs text-slate-500">{isWon && series.actual_games ? `Won in ${series.actual_games}` : isTeamUnderdog && !isCompleted ? '🔥 Underdog — higher reward' : `Seed #${team.seed}`}</p>
       </div>
+      {!isCompleted && !isLocked && !isPicked && (
+        <span className={`text-[8px] font-black shrink-0 px-1.5 py-0.5 rounded border ${
+          isTeamUnderdog ? 'text-amber-400 bg-amber-500/10 border-amber-500/25' : 'text-slate-500 bg-slate-800 border-slate-700'
+        }`}>{isTeamUnderdog ? 'RISKY' : 'SAFE'}</span>
+      )}
       {isWon && <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shrink-0"><span className="text-white text-xs font-black">✓</span></div>}
-      {isPicked && !isCompleted && !isWon && <div className="w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center shrink-0"><span className="text-white text-xs font-black">✓</span></div>}
+      {isPicked && !isCompleted && !isWon && <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isTeamUnderdog ? 'bg-amber-500' : 'bg-orange-500'}`}><span className="text-white text-xs font-black">✓</span></div>}
     </button>
   );
 
-  const homeSeed   = series.home_seed   ?? h.seed ?? null;
-  const awaySeed   = series.away_seed   ?? a.seed ?? null;
   const roundMult  = getRoundMult(series.round);
   const pickedSeed = hp ? homeSeed : ap ? awaySeed : null;
   const underdogMult = getUnderdogMult(series.round, homeSeed, awaySeed, pickedSeed);
@@ -434,24 +479,17 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
         {series.status === 'active' && <span className="text-xs font-bold text-blue-400">Predictions Open</span>}
       </div>
       <div className="space-y-2">
-        <div className="relative">
-          {teamBtn(h, hp, hWon, () => onTeamClick(series, h.id))}
-          {isHUnderdog && (
-            <span className="absolute top-1 right-1 text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5 pointer-events-none">
-              Underdog!
-            </span>
-          )}
-        </div>
+        {teamBtn(h, hp, hWon, hIsUnderdog2, () => onTeamClick(series, h.id))}
         <div className="text-center text-xs text-slate-600 font-bold">VS</div>
-        <div className="relative">
-          {teamBtn(a, ap, aWon, () => onTeamClick(series, a.id))}
-          {isAUnderdog && (
-            <span className="absolute top-1 right-1 text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5 pointer-events-none">
-              Underdog!
-            </span>
-          )}
-        </div>
+        {teamBtn(a, ap, aWon, aIsUnderdog2, () => onTeamClick(series, a.id))}
       </div>
+      {/* Underdog bonus callout */}
+      {(isHUnderdog || isAUnderdog) && !isCompleted && !isLocked && (
+        <div className="bonus-pop flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
+          <span className="text-amber-400 text-xs font-black">🔥 Bold pick!</span>
+          <span className="text-amber-400/70 text-xs font-bold">{totalPts} pts max · higher risk = higher reward</span>
+        </div>
+      )}
       {picked && !isCompleted && !isLocked && (
         <div className="pt-2 border-t border-slate-800 space-y-3">
           <div className="flex items-center justify-between">
@@ -462,7 +500,9 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
             {[4, 5, 6, 7].map(g => (
               <button key={g} onClick={() => onGamesSelect(series.id, g)}
                 className={`py-3 rounded-xl font-black text-sm transition-all border-2 ${
-                  pick?.games === g ? 'border-orange-500 bg-orange-500/20 text-white' : 'border-slate-700 bg-slate-800/60 text-slate-400'
+                  pick?.games === g
+                    ? (isHUnderdog || isAUnderdog ? 'border-amber-500 bg-amber-500/20 text-amber-400' : 'border-orange-500 bg-orange-500/20 text-white')
+                    : 'border-slate-700 bg-slate-800/60 text-slate-400'
                 }`}>{g}</button>
             ))}
           </div>
@@ -470,6 +510,7 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
             className={`w-full py-3.5 rounded-xl font-black text-sm transition-all ${
               saved ? 'bg-green-500 text-white' :
               !pick?.games ? 'bg-slate-800 text-slate-600 cursor-not-allowed' :
+              (isHUnderdog || isAUnderdog) ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/25' :
               'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg shadow-orange-500/25'
             }`}>
             {saved ? '✓ Saved!' : `Save Prediction • ${totalPts} pts max`}
@@ -495,6 +536,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const [showFull, setShowFull]       = useState(() => {
     try { return localStorage.getItem('bracketShowFull') === 'true'; } catch { return false; }
   });
+  const [saveError, setSaveError]     = useState('');
 
   const toggleShowFull = () => {
     setShowFull(v => {
@@ -506,8 +548,12 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
   const loadData = () => {
     setLoading(true);
+    console.time('[bracket] initial load');
     Promise.all([api.getSeries('2026'), api.getPlayInGames('2026'), api.getTeams(), api.getStandings()])
-      .then(([s, pi, t, st]) => { setSeries(s); setPlayInGames(pi); setAllTeams(t); setStandings(st || { eastern: [], western: [] }); })
+      .then(([s, pi, t, st]) => {
+        console.timeEnd('[bracket] initial load');
+        setSeries(s); setPlayInGames(pi); setAllTeams(t); setStandings(st || { eastern: [], western: [] });
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   };
@@ -579,7 +625,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
       await api.makePrediction(currentUser.user_id, seriesId, pick.teamId, pick.games);
       setSaved(p => ({ ...p, [seriesId]: true }));
       setTimeout(() => setSaved(p => ({ ...p, [seriesId]: false })), 2000);
-    } catch (err) { alert('Error: ' + (err.response?.data?.detail || 'Unknown')); }
+    } catch (err) { setSaveError(err.response?.data?.detail || 'Failed to save prediction. Try again.'); }
   };
 
   // Play-In handlers
@@ -595,7 +641,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
       await api.makePlayInPrediction(currentUser.user_id, gameId, pick.teamId);
       setPiSaved(p => ({ ...p, [gameId]: true }));
       setTimeout(() => setPiSaved(p => ({ ...p, [gameId]: false })), 2000);
-    } catch (err) { alert('Error: ' + (err.response?.data?.detail || 'Unknown')); }
+    } catch (err) { setSaveError(err.response?.data?.detail || 'Failed to save prediction. Try again.'); }
   };
 
   if (!currentUser) {
@@ -630,7 +676,15 @@ const BracketPage = ({ currentUser, onNavigate }) => {
           <p className="text-slate-400 text-sm mt-1">Click any matchup to make your prediction</p>
         </div>
       </div>
-      <div className="flex justify-center mb-5">
+      <div className="flex flex-col items-center gap-2 mb-5">
+        {/* Strategy hint */}
+        <div className="flex items-center gap-3 px-4 py-2 rounded-full bg-slate-800/60 border border-slate-700/60 text-xs font-bold text-slate-400">
+          <span className="text-slate-300">🛡️ Safe = favorites</span>
+          <span className="text-slate-600">·</span>
+          <span className="text-amber-400">🔥 Risky = underdogs</span>
+          <span className="text-slate-600">·</span>
+          <span className="text-slate-500">Higher risk = higher reward</span>
+        </div>
         <button
           onClick={() => onNavigate && onNavigate('scoring')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 text-xs font-bold transition-all"
@@ -638,6 +692,14 @@ const BracketPage = ({ currentUser, onNavigate }) => {
           <Info className="w-3.5 h-3.5" /> How scoring works
         </button>
       </div>
+
+      {/* Save error banner */}
+      {saveError && (
+        <div className="max-w-2xl mx-auto mb-4 flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500/15 border border-red-500/30">
+          <span className="text-red-400 text-sm font-bold flex-1">⚠ {saveError}</span>
+          <button onClick={() => setSaveError('')} className="text-red-400/60 hover:text-red-400 font-bold text-lg leading-none transition-colors">×</button>
+        </div>
+      )}
 
       {/* Missing matchups banner */}
       {missingAny && (

@@ -1,17 +1,27 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info } from 'lucide-react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown } from 'lucide-react';
 import * as api from './services/api';
 import { supabase } from './lib/supabase';
-import StandingsPage from './StandingsPage';
 import './index.css';
-import MyPredictionsPage from './MyPredictionsPage';
-import UserPredictionsPage from './UserPredictionsPage';
-import AdminPage from './AdminPage';
-import BracketPage from './BracketPage';
-import FuturesPage from './FuturesPage';
+
+// Eagerly-loaded small pages
+import StandingsPage from './StandingsPage';
 import ScoringGuide from './ScoringGuide';
-import UserProfilePage from './UserProfilePage';
-import AccountPage from './AccountPage';
+
+// Lazy-loaded heavy pages (split into separate chunks)
+const MyPredictionsPage  = lazy(() => import('./MyPredictionsPage'));
+const UserPredictionsPage = lazy(() => import('./UserPredictionsPage'));
+const AdminPage          = lazy(() => import('./AdminPage'));
+const BracketPage        = lazy(() => import('./BracketPage'));
+const FuturesPage        = lazy(() => import('./FuturesPage'));
+const UserProfilePage    = lazy(() => import('./UserProfilePage'));
+const AccountPage        = lazy(() => import('./AccountPage'));
+
+const PageSpinner = () => (
+  <div className="flex items-center justify-center py-24">
+    <div className="animate-spin rounded-full h-10 w-10 border-4 border-orange-500 border-t-transparent" />
+  </div>
+);
 
 const Button = ({ children, onClick, className, variant = 'default', ...props }) => {
   const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-all';
@@ -49,6 +59,25 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  // Dashboard data when logged in
+  const [dashLoading, setDashLoading] = useState(false);
+  const [dashData, setDashData] = useState(null);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    setDashLoading(true);
+    console.time('[dash] dashboard fetch');
+    api.getDashboard(currentUser.user_id).then(data => {
+      console.timeEnd('[dash] dashboard fetch');
+      setDashData({
+        seriesPredicted: data.series_predicted,
+        totalSeries:     data.total_series,
+        futuresDone:     data.futures_done,
+        leadersDone:     data.leaders_done,
+      });
+    }).catch(console.error).finally(() => setDashLoading(false));
+  }, [currentUser?.user_id]);
 
   const handleGoogleLogin = async () => {
     if (!supabase) {
@@ -99,44 +128,176 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
   };
 
   if (currentUser) {
+    const stepsComplete = dashData ? [
+      dashData.seriesPredicted > 0,
+      dashData.futuresDone,
+      dashData.leadersDone,
+    ].filter(Boolean).length : 0;
+
+    const progressSteps = dashData ? [
+      {
+        num: 1,
+        label: 'Playoffs',
+        icon: '🏀',
+        status: dashData.seriesPredicted > 0
+          ? `${dashData.seriesPredicted}/${dashData.totalSeries} series predicted`
+          : 'No picks yet — get started!',
+        done: dashData.seriesPredicted > 0 && dashData.seriesPredicted >= dashData.totalSeries,
+        partial: dashData.seriesPredicted > 0 && dashData.seriesPredicted < dashData.totalSeries,
+        onClick: () => onNavigate('betting'),
+        actionLabel: dashData.seriesPredicted === 0 ? 'Start →' : 'Continue →',
+      },
+      {
+        num: 2,
+        label: 'Futures',
+        icon: '⭐',
+        status: dashData.futuresDone ? 'Picks submitted' : 'Not completed — scroll down',
+        done: !!dashData.futuresDone,
+        partial: false,
+        onClick: null,
+        actionLabel: null,
+      },
+      {
+        num: 3,
+        label: 'Leaders',
+        icon: '📊',
+        status: dashData.leadersDone ? 'Picks submitted' : 'Not completed — scroll down',
+        done: !!dashData.leadersDone,
+        partial: false,
+        onClick: null,
+        actionLabel: null,
+      },
+    ] : null;
+
     return (
-      <div className="max-w-7xl mx-auto px-4 py-8 md:py-12">
-        <div className="text-center mb-10 md:mb-16">
-          <div className="inline-flex items-center px-3 py-1.5 rounded-full bg-orange-500/20 border border-orange-500/30 mb-4 md:mb-6">
-            <span className="text-xs md:text-sm font-bold text-orange-400">✨ 2026 PLAYOFFS</span>
+      <div className="max-w-2xl mx-auto px-4 py-8 md:py-10">
+        {/* Hero */}
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center px-3 py-1.5 rounded-full bg-orange-500/20 border border-orange-500/30 mb-4">
+            <span className="text-xs font-bold text-orange-400">✨ 2026 PLAYOFFS</span>
           </div>
-          <h1 className="text-4xl md:text-6xl font-black text-white mb-4 md:mb-6">
+          <h1 className="text-3xl md:text-5xl font-black text-white mb-2 leading-tight">
             NBA PLAYOFF<br />
-            <span className="bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">
-              PREDICTOR
-            </span>
+            <span className="bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">PREDICTOR</span>
           </h1>
-          <p className="text-lg md:text-xl text-slate-300 mb-7 md:mb-10">
-            Welcome back, <strong>{currentUser.username}</strong>!
+          <p className="text-slate-300 text-base mt-3">
+            Welcome back, <strong className="text-white">{currentUser.username}</strong>!
           </p>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Button onClick={() => onNavigate('betting')} className="px-6 py-3.5 text-base md:px-8 md:py-4 md:text-lg">
-              Make Predictions →
-            </Button>
-            <Button onClick={() => onNavigate('leaderboard')} variant="outline" className="px-6 py-3.5 text-base md:px-8 md:py-4 md:text-lg">
-              View Leaderboard
-            </Button>
-          </div>
+          <p className="text-slate-500 text-sm mt-1">
+            Predict playoff results, earn points, and compete on the leaderboard.
+          </p>
         </div>
-        <div className="grid grid-cols-3 gap-3 md:gap-6">
-          <Card className="p-4 md:p-6 text-center">
-            <div className="text-3xl md:text-4xl font-black text-orange-400 mb-1 md:mb-2">{currentUser.points || 0}</div>
-            <div className="text-slate-400 text-xs md:text-sm">Points</div>
+
+        {/* CTA Buttons */}
+        <div className="flex gap-3 justify-center mb-7">
+          <button
+            onClick={() => onNavigate('betting')}
+            className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white font-black text-sm transition-all shadow-lg shadow-orange-500/25 active:scale-95"
+          >
+            🏀 Start Predicting
+          </button>
+          <button
+            onClick={() => onNavigate('leaderboard')}
+            className="px-6 py-3.5 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white font-bold text-sm transition-all active:scale-95"
+          >
+            View Leaderboard
+          </button>
+        </div>
+
+        {/* Stats row */}
+        <div className="grid grid-cols-3 gap-3 mb-6">
+          <Card className="p-4 text-center">
+            <div className="text-3xl font-black text-orange-400 mb-1">{currentUser.points || 0}</div>
+            <div className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Points</div>
           </Card>
-          <Card className="p-4 md:p-6 text-center">
-            <div className="text-3xl md:text-4xl font-black text-blue-400 mb-1 md:mb-2">0</div>
-            <div className="text-slate-400 text-xs md:text-sm">Predictions</div>
+          <Card className="p-4 text-center">
+            <div className="text-3xl font-black text-blue-400 mb-1">
+              {dashLoading ? <span className="text-slate-600 text-xl">—</span> : (dashData?.seriesPredicted ?? 0)}
+            </div>
+            <div className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Picks Made</div>
           </Card>
-          <Card className="p-4 md:p-6 text-center">
-            <div className="text-3xl md:text-4xl font-black text-green-400 mb-1 md:mb-2">0%</div>
-            <div className="text-slate-400 text-xs md:text-sm">Accuracy</div>
+          <Card className="p-4 text-center">
+            <div className="text-3xl font-black text-green-400 mb-1">
+              {dashLoading ? <span className="text-slate-600 text-xl">—</span> : `${stepsComplete}/3`}
+            </div>
+            <div className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Steps Done</div>
           </Card>
         </div>
+
+        {/* Prediction Progress */}
+        {progressSteps && (
+          <Card className="p-5 mb-8">
+            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">Your Prediction Progress</h3>
+            <div className="space-y-2.5">
+              {progressSteps.map(step => (
+                <div
+                  key={step.num}
+                  className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                    step.done   ? 'bg-green-500/10 border-green-500/20' :
+                    step.partial? 'bg-orange-500/10 border-orange-500/20' :
+                                  'bg-slate-800/40 border-slate-700/50'
+                  }`}
+                >
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center font-black text-xs shrink-0 ${
+                    step.done   ? 'bg-green-500 text-white' :
+                    step.partial? 'bg-orange-500 text-white' :
+                                  'bg-slate-700 text-slate-400'
+                  }`}>
+                    {step.done ? '✓' : step.num}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-black ${
+                      step.done ? 'text-green-400' : step.partial ? 'text-orange-400' : 'text-white'
+                    }`}>
+                      {step.icon} {step.label}
+                    </p>
+                    <p className={`text-xs ${
+                      step.done ? 'text-green-500/70' : step.partial ? 'text-orange-500/70' : 'text-slate-500'
+                    }`}>
+                      {step.status}
+                    </p>
+                  </div>
+                  {step.onClick && (
+                    <button
+                      onClick={step.onClick}
+                      className={`text-xs font-black px-3 py-1.5 rounded-lg shrink-0 transition-all ${
+                        step.done   ? 'text-green-400 bg-green-500/10 hover:bg-green-500/20' :
+                        step.partial? 'text-orange-400 bg-orange-500/10 hover:bg-orange-500/20' :
+                                      'text-white bg-orange-500 hover:bg-orange-600'
+                      }`}
+                    >
+                      {step.actionLabel}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* Loading skeleton for progress */}
+        {dashLoading && (
+          <Card className="p-5 mb-8">
+            <div className="h-3 w-40 bg-slate-800 rounded mb-4 animate-pulse" />
+            {[1, 2, 3].map(i => (
+              <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-slate-800/40 border border-slate-700/50 mb-2.5 animate-pulse">
+                <div className="w-7 h-7 rounded-full bg-slate-700 shrink-0" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3 w-20 bg-slate-700 rounded" />
+                  <div className="h-2.5 w-32 bg-slate-800 rounded" />
+                </div>
+              </div>
+            ))}
+          </Card>
+        )}
+
+        {/* Divider before Futures/Leaders */}
+        <div className="flex items-center gap-3 mb-6">
+          <div className="h-px flex-1 bg-slate-800" />
+          <span className="text-[10px] text-slate-600 font-black uppercase tracking-widest">Futures & Leaders Picks</span>
+          <div className="h-px flex-1 bg-slate-800" />
+        </div>
+
         <FuturesPage currentUser={currentUser} onNavigate={onNavigate} />
       </div>
     );
@@ -198,6 +359,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
         </div>
         <h1 className="text-2xl font-black text-white tracking-tight">NBA PLAYOFF</h1>
         <p className="text-orange-400 font-bold text-xs tracking-widest mt-0.5">PREDICTOR 2026</p>
+        <p className="text-slate-400 text-sm mt-3 leading-relaxed">Login to save your predictions<br />and compete on the leaderboard.</p>
       </div>
 
       <div className="w-full max-w-sm">
@@ -421,10 +583,9 @@ const BettingPage = ({ currentUser }) => {
 const LeaderboardPage = ({ onUserClick }) => {
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null);
 
-  useEffect(() => {
-    loadLeaderboard();
-  }, []);
+  useEffect(() => { loadLeaderboard(); }, []);
 
   const loadLeaderboard = async () => {
     try {
@@ -437,40 +598,135 @@ const LeaderboardPage = ({ onUserClick }) => {
     }
   };
 
+  const medals = ['🥇', '🥈', '🥉'];
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
-      <h1 className="text-4xl font-black text-white mb-8">Leaderboard</h1>
+      <div className="flex items-center gap-3 mb-8">
+        <Users className="w-7 h-7 text-orange-400" />
+        <h1 className="text-4xl font-black text-white">Leaderboard</h1>
+      </div>
       {loading ? (
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent"></div>
+        <div className="space-y-2">
+          {[1,2,3,4,5].map(i => (
+            <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex items-center gap-3 animate-pulse">
+              <div className="w-10 h-10 rounded-full bg-slate-800 shrink-0" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3.5 w-28 bg-slate-800 rounded" />
+                <div className="h-2.5 w-20 bg-slate-800/60 rounded" />
+              </div>
+              <div className="w-12 h-8 bg-slate-800 rounded" />
+            </div>
+          ))}
         </div>
       ) : (
-        <div className="space-y-3">
-          {leaderboard.map((user) => (
-            <Card
-              key={user.rank}
-              className="p-4 cursor-pointer hover:bg-slate-800/50 transition-all"
-              onClick={() => onUserClick(user)}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-full flex items-center justify-center text-white font-bold">
-                    {user.rank}
+        <div className="space-y-2">
+          {leaderboard.map((user) => {
+            const isExpanded = expanded === user.rank;
+            const accuracy = user.accuracy ?? (user.total_predictions > 0 ? Math.round((user.correct_predictions / user.total_predictions) * 100) : 0);
+            const seriesPts  = user.series_points  ?? null;
+            const futuresPts = user.futures_points ?? null;
+            const leadersPts = user.leaders_points ?? null;
+            const hasBreakdown = seriesPts != null || futuresPts != null || leadersPts != null;
+            // Risk profile: pts-per-correct as proxy for boldness
+            const ppc = user.correct_predictions > 0 ? Math.round(user.points / user.correct_predictions) : 0;
+            const riskProfile = ppc >= 100 ? { label: '🔥 Degen',    cls: 'text-amber-400 bg-amber-500/10 border-amber-500/30' }
+                              : ppc >= 55  ? { label: '⚖️ Balanced', cls: 'text-blue-400  bg-blue-500/10  border-blue-500/30'  }
+                              : ppc > 0    ? { label: '🛡️ Safe',     cls: 'text-green-400 bg-green-500/10 border-green-500/30' }
+                              : null;
+
+            return (
+              <div key={user.rank} className={`bg-slate-900/50 border rounded-xl transition-all overflow-hidden ${
+                user.rank <= 3 ? 'border-amber-500/30' : 'border-slate-800'
+              }`}>
+                <div
+                  className="p-4 flex items-center gap-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
+                  onClick={() => setExpanded(isExpanded ? null : user.rank)}
+                >
+                  {/* Rank */}
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm shrink-0 ${
+                    user.rank === 1 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' :
+                    user.rank === 2 ? 'bg-slate-400/20 text-slate-300 border border-slate-400/40' :
+                    user.rank === 3 ? 'bg-orange-700/20 text-orange-400 border border-orange-700/40' :
+                    'bg-slate-800 text-slate-400'
+                  }`}>
+                    {user.rank <= 3 ? medals[user.rank - 1] : user.rank}
                   </div>
-                  <div>
-                    <p className="font-bold text-white hover:text-orange-400 transition-colors">{user.username}</p>
-                    <p className="text-xs text-slate-400">
-                      {user.correct_predictions}/{user.total_predictions} correct • {user.accuracy}% accuracy
-                    </p>
+
+                  {/* Name + stats */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        className="font-black text-white hover:text-orange-400 transition-colors text-left"
+                        onClick={(e) => { e.stopPropagation(); onUserClick(user); }}
+                      >
+                        {user.username}
+                      </button>
+                      {riskProfile && (
+                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${riskProfile.cls}`}>
+                          {riskProfile.label}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                      <span className="text-xs text-slate-500">
+                        {user.correct_predictions ?? 0}/{user.total_predictions ?? 0} correct
+                      </span>
+                      <span className={`text-xs font-black ${
+                        accuracy >= 70 ? 'text-green-400' :
+                        accuracy >= 50 ? 'text-yellow-400' :
+                        'text-slate-500'
+                      }`}>
+                        {accuracy}% acc
+                      </span>
+                    </div>
                   </div>
+
+                  {/* Points */}
+                  <div className="text-right shrink-0">
+                    <div className="text-2xl font-black text-orange-400">{user.points}</div>
+                    <div className="text-[10px] text-slate-500 font-bold">pts</div>
+                  </div>
+
+                  {/* Expand chevron */}
+                  <ChevronDown className={`w-4 h-4 text-slate-600 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl font-black text-orange-400">{user.points}</div>
-                  <div className="text-xs text-slate-400">points</div>
-                </div>
+
+                {/* Expanded breakdown */}
+                {isExpanded && (
+                  <div className="px-4 pb-4 border-t border-slate-800 pt-3">
+                    {hasBreakdown ? (
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
+                          <p className="text-lg font-black text-orange-400">{seriesPts ?? '—'}</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase">Series</p>
+                        </div>
+                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
+                          <p className="text-lg font-black text-yellow-400">{futuresPts ?? '—'}</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase">Futures</p>
+                        </div>
+                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
+                          <p className="text-lg font-black text-cyan-400">{leadersPts ?? '—'}</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase">Leaders</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
+                          <p className="text-xl font-black text-orange-400">{user.points}</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase">Total Points</p>
+                        </div>
+                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
+                          <p className="text-xl font-black text-green-400">{accuracy}%</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase">Accuracy</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -763,7 +1019,9 @@ function App() {
       {/* ── MAIN CONTENT ── */}
       {/* pb-20 on mobile to clear the bottom nav bar */}
       <main className="md:pl-64 min-h-screen pb-20 md:pb-0">
-        {renderPage()}
+        <Suspense fallback={<PageSpinner />}>
+          {renderPage()}
+        </Suspense>
       </main>
 
       {/* ── PWA INSTALL BANNER ── */}

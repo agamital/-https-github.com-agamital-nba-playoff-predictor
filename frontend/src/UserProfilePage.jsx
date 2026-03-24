@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal } from 'lucide-react';
+import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal, BarChart2 } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className = '' }) => (
@@ -62,31 +62,50 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
   const [profile, setProfile] = useState(null);
   const [predictions, setPredictions] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [predsLoading, setPredsLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!username) return;
     setLoading(true);
     setError('');
-    const load = async () => {
-      try {
-        const prof = await api.getUserProfile(username);
+    setPredictions(null);
+
+    console.time(`[profile] ${username}`);
+    api.getUserProfile(username)
+      .then(prof => {
+        console.timeEnd(`[profile] ${username}`);
         setProfile(prof);
-        const preds = await api.getMyPredictions(prof.user_id, '2026');
-        setPredictions(preds);
-      } catch (err) {
-        setError(err.response?.status === 404 ? 'User not found.' : 'Failed to load profile.');
-      } finally {
         setLoading(false);
-      }
-    };
-    load();
+        // Load predictions in background after profile is visible
+        setPredsLoading(true);
+        console.time(`[profile-preds] ${username}`);
+        return api.getMyPredictions(prof.user_id, '2026');
+      })
+      .then(preds => {
+        console.timeEnd(`[profile-preds] ${username}`);
+        setPredictions(preds);
+      })
+      .catch(err => {
+        setError(err.response?.status === 404 ? 'User not found.' : 'Failed to load profile.');
+        setLoading(false);
+      })
+      .finally(() => setPredsLoading(false));
   }, [username]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent" />
+      <div className="max-w-4xl mx-auto px-4 py-8">
+        {/* Profile header skeleton */}
+        <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-6 mb-8 animate-pulse">
+          <div className="flex items-center gap-5">
+            <div className="w-28 h-28 rounded-full bg-slate-800 shrink-0" />
+            <div className="flex-1 space-y-3">
+              <div className="h-7 w-40 bg-slate-800 rounded" />
+              <div className="h-4 w-56 bg-slate-800 rounded" />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -105,6 +124,21 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
   const futures = predictions?.futures_prediction;
   const correctCount = playoff.filter(p => p.is_correct === 1).length;
 
+  // Risk / underdog metrics
+  const underdogPicks = playoff.filter(p => {
+    const hSeed = p.home_team?.seed ?? null;
+    const aSeed = p.away_team?.seed ?? null;
+    if (hSeed == null || aSeed == null) return false;
+    const underdogId = hSeed > aSeed ? p.home_team?.id : p.away_team?.id;
+    return p.predicted_winner?.id === underdogId;
+  });
+  const underdogPct = playoff.length > 0 ? Math.round((underdogPicks.length / playoff.length) * 100) : null;
+  const boldWins = playoff.filter(p => p.is_correct === 1 && (p.points_earned ?? 0) > 60);
+  const riskProfile = underdogPct == null ? null
+    : underdogPct >= 40 ? { label: 'Aggressive 🔥', cls: 'text-amber-400 bg-amber-500/10 border-amber-500/30', desc: 'You love the long shot.' }
+    : underdogPct >= 15 ? { label: 'Balanced ⚖️',   cls: 'text-blue-400  bg-blue-500/10  border-blue-500/30',  desc: 'Mix of safe and bold picks.' }
+    :                     { label: 'Safe 🛡️',        cls: 'text-green-400 bg-green-500/10 border-green-500/30', desc: 'You play it safe with favorites.' };
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
 
@@ -117,6 +151,9 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
               <h1 className="text-2xl md:text-3xl font-black text-white truncate">{profile.username}</h1>
               {isOwnProfile && (
                 <span className="px-2 py-0.5 rounded-full bg-orange-500/20 border border-orange-500/30 text-orange-400 text-xs font-black">You</span>
+              )}
+              {riskProfile && (
+                <span className={`px-2.5 py-0.5 rounded-full border text-xs font-black ${riskProfile.cls}`}>{riskProfile.label}</span>
               )}
             </div>
             <div className="flex items-center gap-4 mt-3 flex-wrap">
@@ -141,6 +178,97 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
           </div>
         </div>
       </Card>
+
+      {/* ── Stats Section ── */}
+      {(profile.points > 0 || playoff.length > 0) && (
+        <div className="mb-8">
+          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+            <BarChart2 className="w-5 h-5 text-cyan-400" />
+            Stats
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Card className="p-4 text-center">
+              <p className="text-3xl font-black text-orange-400">{profile.points}</p>
+              <p className="text-xs text-slate-500 font-bold uppercase mt-1">Total Points</p>
+            </Card>
+            {playoff.length > 0 && (
+              <Card className="p-4 text-center">
+                <p className="text-3xl font-black text-green-400">
+                  {Math.round((correctCount / playoff.length) * 100)}%
+                </p>
+                <p className="text-xs text-slate-500 font-bold uppercase mt-1">Accuracy</p>
+              </Card>
+            )}
+            {playoff.length > 0 && (
+              <Card className="p-4 text-center">
+                <p className="text-3xl font-black text-blue-400">{correctCount}/{playoff.length}</p>
+                <p className="text-xs text-slate-500 font-bold uppercase mt-1">Correct Picks</p>
+              </Card>
+            )}
+            {(() => {
+              const best = playoff.filter(p => p.points_earned > 0).sort((a, b) => b.points_earned - a.points_earned)[0];
+              return best ? (
+                <Card className="p-4 text-center border-yellow-500/30 bg-yellow-500/5">
+                  <p className="text-3xl font-black text-yellow-400">+{best.points_earned}</p>
+                  <p className="text-xs text-yellow-500/80 font-bold uppercase mt-1">Best Pick</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">{best.predicted_winner?.abbreviation} · {best.round?.replace('Conference ', 'Conf ')}</p>
+                </Card>
+              ) : null;
+            })()}
+          </div>
+
+          {/* Risk profile row */}
+          {playoff.length > 0 && (
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-3">
+              {underdogPct != null && (
+                <Card className={`p-3 flex items-center gap-3 ${underdogPct >= 15 ? 'border-amber-500/20 bg-amber-500/5' : ''}`}>
+                  <span className="text-2xl shrink-0">{underdogPct >= 40 ? '🔥' : underdogPct >= 15 ? '⚡' : '🛡️'}</span>
+                  <div>
+                    <p className={`text-lg font-black ${underdogPct >= 15 ? 'text-amber-400' : 'text-slate-300'}`}>{underdogPct}%</p>
+                    <p className="text-[10px] text-slate-500 font-bold">Underdog Picks</p>
+                  </div>
+                </Card>
+              )}
+              {boldWins.length > 0 && (
+                <Card className="p-3 flex items-center gap-3 border-amber-500/20 bg-amber-500/5">
+                  <span className="text-2xl shrink-0">💎</span>
+                  <div>
+                    <p className="text-lg font-black text-amber-400">{boldWins.length}</p>
+                    <p className="text-[10px] text-slate-500 font-bold">Bold Wins</p>
+                  </div>
+                </Card>
+              )}
+              {riskProfile && (
+                <Card className={`p-3 flex items-center gap-3 border col-span-2 md:col-span-1 ${riskProfile.cls}`}>
+                  <div>
+                    <p className="text-sm font-black text-white">{riskProfile.label}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">{riskProfile.desc}</p>
+                  </div>
+                </Card>
+              )}
+            </div>
+          )}
+
+          {futures?.points_earned > 0 && (
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <Card className="p-3 flex items-center gap-3">
+                <Trophy className="w-5 h-5 text-orange-400 shrink-0" />
+                <div>
+                  <p className="text-sm font-black text-white">{playoff.reduce((s, p) => s + (p.points_earned || 0), 0)}</p>
+                  <p className="text-[10px] text-slate-500 font-bold">Series Points</p>
+                </div>
+              </Card>
+              <Card className="p-3 flex items-center gap-3">
+                <Star className="w-5 h-5 text-yellow-400 shrink-0" />
+                <div>
+                  <p className="text-sm font-black text-white">{futures.points_earned}</p>
+                  <p className="text-[10px] text-slate-500 font-bold">Futures Points</p>
+                </div>
+              </Card>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Futures Picks ── */}
       {futures && (
@@ -239,7 +367,21 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
         </div>
       )}
 
-      {!futures && playoff.length === 0 && playin.length === 0 && (
+      {predsLoading && (
+        <div className="space-y-3 mb-8">
+          {[1, 2, 3, 4].map(i => (
+            <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 animate-pulse flex gap-4">
+              <div className="w-8 h-8 rounded-full bg-slate-800 shrink-0" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3 w-28 bg-slate-800 rounded" />
+                <div className="h-3 w-40 bg-slate-800 rounded" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!predsLoading && !futures && playoff.length === 0 && playin.length === 0 && predictions !== null && (
         <Card className="p-12 text-center">
           <Trophy className="w-14 h-14 text-slate-700 mx-auto mb-4" />
           <p className="text-slate-400 font-bold">No predictions yet</p>

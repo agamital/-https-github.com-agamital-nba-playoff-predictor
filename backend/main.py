@@ -239,17 +239,17 @@ def init_db():
         UNIQUE(user_id, season)
     )''')
 
-    # Playoff leaders predictions
+    # Playoff leaders predictions (stat values as integers)
     c.execute('''CREATE TABLE IF NOT EXISTS leaders_predictions (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         season TEXT DEFAULT '2026',
-        top_scorer TEXT,
-        top_assists TEXT,
-        top_rebounds TEXT,
-        top_threes TEXT,
-        top_steals TEXT,
-        top_blocks TEXT,
+        top_scorer INTEGER,
+        top_assists INTEGER,
+        top_rebounds INTEGER,
+        top_threes INTEGER,
+        top_steals INTEGER,
+        top_blocks INTEGER,
         predicted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_correct_scorer INTEGER,
         is_correct_assists INTEGER,
@@ -260,6 +260,15 @@ def init_db():
         points_earned INTEGER DEFAULT 0,
         UNIQUE(user_id, season)
     )''')
+
+    # Migration: convert leaders TEXT columns to INTEGER if they still are TEXT
+    for col in ('top_scorer', 'top_assists', 'top_rebounds', 'top_threes', 'top_steals', 'top_blocks'):
+        try:
+            c.execute(f'''ALTER TABLE leaders_predictions
+                          ALTER COLUMN {col} TYPE INTEGER
+                          USING NULLIF(regexp_replace({col}, '[^0-9]', '', 'g'), '')::INTEGER''')
+        except Exception:
+            pass  # already INTEGER or table doesn't exist yet
 
     # Add bracket_group to series for progressive bracket unlocking
     c.execute("ALTER TABLE series ADD COLUMN IF NOT EXISTS bracket_group TEXT DEFAULT 'A'")
@@ -876,6 +885,30 @@ async def leaderboard(season: str = "2026"):
 
     conn.close()
     return board
+
+@app.get("/api/dashboard")
+async def dashboard(user_id: int, season: str = "2026"):
+    """Lightweight dashboard counts — avoids fetching full prediction/series data."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute(
+        '''SELECT
+             (SELECT COUNT(*) FROM predictions p
+              JOIN series s ON p.series_id = s.id
+              WHERE p.user_id = %s AND s.season = %s) AS series_predicted,
+             (SELECT COUNT(*) FROM series WHERE season = %s) AS total_series,
+             (SELECT COUNT(*) FROM futures_predictions WHERE user_id = %s AND season = %s) AS futures_done,
+             (SELECT COUNT(*) FROM leaders_predictions WHERE user_id = %s AND season = %s) AS leaders_done''',
+        (user_id, season, season, user_id, season, user_id, season)
+    )
+    row = c.fetchone()
+    conn.close()
+    return {
+        'series_predicted': row[0] or 0,
+        'total_series':     row[1] or 0,
+        'futures_done':     (row[2] or 0) > 0,
+        'leaders_done':     (row[3] or 0) > 0,
+    }
 
 @app.get("/api/my-predictions")
 async def my_predictions(user_id: int, season: str = "2026"):
@@ -1834,11 +1867,15 @@ async def get_leaders(user_id: int, season: str = "2026"):
 
 @app.post("/api/leaders")
 async def save_leaders(user_id: int, season: str = "2026",
-                       top_scorer: Optional[str] = None, top_assists: Optional[str] = None,
-                       top_rebounds: Optional[str] = None, top_threes: Optional[str] = None,
-                       top_steals: Optional[str] = None, top_blocks: Optional[str] = None):
+                       top_scorer: Optional[int] = None, top_assists: Optional[int] = None,
+                       top_rebounds: Optional[int] = None, top_threes: Optional[int] = None,
+                       top_steals: Optional[int] = None, top_blocks: Optional[int] = None):
     if _get_futures_lock():
         raise HTTPException(400, "Predictions are locked")
+    # Validate: all provided values must be positive integers
+    for val in (top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks):
+        if val is not None and val <= 0:
+            raise HTTPException(400, "Stat values must be positive integers")
     conn = get_db_conn()
     c = conn.cursor()
     c.execute('''INSERT INTO leaders_predictions
@@ -1863,26 +1900,35 @@ async def get_leaders_results(season: str = "2026"):
     for cat in LEADERS_POINTS:
         c.execute("SELECT value FROM site_settings WHERE key = %s", (f'leaders_{cat}_{season}',))
         row = c.fetchone()
-        results[cat] = row[0] if row else ''
+        raw = row[0] if row else None
+        # Return as integer when available, else None
+        try:
+            results[cat] = int(raw) if raw and raw.strip() else None
+        except (ValueError, TypeError):
+            results[cat] = None
     conn.close()
     return results
 
 
 @app.post("/api/admin/leaders/results")
 async def set_leaders_results(season: str = "2026",
-                               top_scorer: Optional[str] = None, top_assists: Optional[str] = None,
-                               top_rebounds: Optional[str] = None, top_threes: Optional[str] = None,
-                               top_steals: Optional[str] = None, top_blocks: Optional[str] = None):
+                               top_scorer: Optional[int] = None, top_assists: Optional[int] = None,
+                               top_rebounds: Optional[int] = None, top_threes: Optional[int] = None,
+                               top_steals: Optional[int] = None, top_blocks: Optional[int] = None):
     conn = get_db_conn()
     c = conn.cursor()
+    # Store as string in site_settings (value column is TEXT); 0 or None means not set
     actual = {
-        'scorer': top_scorer or '', 'assists': top_assists or '',
-        'rebounds': top_rebounds or '', 'threes': top_threes or '',
-        'steals': top_steals or '', 'blocks': top_blocks or '',
+        'scorer':   top_scorer   if top_scorer   and top_scorer   > 0 else None,
+        'assists':  top_assists  if top_assists  and top_assists  > 0 else None,
+        'rebounds': top_rebounds if top_rebounds and top_rebounds > 0 else None,
+        'threes':   top_threes   if top_threes   and top_threes   > 0 else None,
+        'steals':   top_steals   if top_steals   and top_steals   > 0 else None,
+        'blocks':   top_blocks   if top_blocks   and top_blocks   > 0 else None,
     }
     for cat, val in actual.items():
         c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
-                  (f'leaders_{cat}_{season}', val))
+                  (f'leaders_{cat}_{season}', str(val) if val is not None else ''))
 
     c.execute('''SELECT id, top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks
                  FROM leaders_predictions WHERE season = %s''', (season,))
@@ -1894,6 +1940,7 @@ async def set_leaders_results(season: str = "2026",
             'rebounds': lp[3], 'threes':    lp[4],
             'steals':   lp[5], 'blocks':    lp[6],
         }
+        # actual values are already int | None from the dict above
         pts, correct = calculate_leaders_points(preds, actual)
         c.execute('''UPDATE leaders_predictions SET
                      is_correct_scorer = %s, is_correct_assists = %s,
