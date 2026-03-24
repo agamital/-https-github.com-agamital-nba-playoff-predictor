@@ -530,7 +530,10 @@ function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session && !localStorage.getItem('nba_user')) {
         try {
-          const user = await api.loginWithGoogle(session.access_token);
+          const email = session.user.email;
+          const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || '';
+          console.log('[Google OAuth] syncing user:', email, name);
+          const user = await api.loginWithGoogle(email, name);
           setCurrentUser(user);
           localStorage.setItem('nba_user', JSON.stringify(user));
           // Sign out of Supabase session — we use our own auth from here on

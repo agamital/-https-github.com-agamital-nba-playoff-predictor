@@ -9,7 +9,6 @@ import time
 import threading
 import os
 import re
-import requests
 import psycopg2
 import psycopg2.extras
 
@@ -645,30 +644,12 @@ async def login(creds: UserLogin):
     return {"user_id": row[0], "username": row[1], "email": row[2], "role": role, "points": row[5]}
 
 @app.post("/api/auth/google")
-async def google_auth(access_token: str):
-    """Verify a Supabase OAuth access token and return (or create) our app user."""
-    supabase_url = os.environ.get("SUPABASE_URL", "https://nvfmfbedpbulynqmbdqt.supabase.co")
-    supabase_anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
-
-    resp = requests.get(
-        f"{supabase_url}/auth/v1/user",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "apikey": supabase_anon_key,
-        },
-        timeout=10,
-    )
-    if resp.status_code != 200:
-        raise HTTPException(401, "Invalid or expired Google token")
-
-    data = resp.json()
-    email = data.get("email", "")
+async def google_auth(email: str, name: str = ""):
+    """Find or create a user after Google OAuth (Supabase already verified the identity)."""
     if not email:
-        raise HTTPException(400, "No email returned from Google")
+        raise HTTPException(400, "Email is required")
 
-    meta = data.get("user_metadata", {})
-    full_name = meta.get("full_name") or meta.get("name") or ""
-    base_username = re.sub(r'[^a-z0-9_]', '', full_name.lower().replace(" ", "_")) or email.split("@")[0]
+    base_username = re.sub(r'[^a-z0-9_]', '', name.lower().replace(" ", "_")) or email.split("@")[0]
 
     conn = get_db_conn()
     c = conn.cursor()
