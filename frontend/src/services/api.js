@@ -233,6 +233,74 @@ export const getFuturesAll = async (season = '2026') => {
   return response.data;
 };
 
+// Playoff Leaders
+export const getLeadersPrediction = async (userId, season = '2026') => {
+  const response = await api.get(`/api/leaders?user_id=${userId}&season=${season}`);
+  return response.data;
+};
+
+export const saveLeadersPrediction = async (userId, data, season = '2026') => {
+  const params = new URLSearchParams({ user_id: userId, season });
+  if (data.top_scorer)   params.append('top_scorer',   data.top_scorer);
+  if (data.top_assists)  params.append('top_assists',  data.top_assists);
+  if (data.top_rebounds) params.append('top_rebounds', data.top_rebounds);
+  if (data.top_threes)   params.append('top_threes',   data.top_threes);
+  if (data.top_steals)   params.append('top_steals',   data.top_steals);
+  if (data.top_blocks)   params.append('top_blocks',   data.top_blocks);
+  const response = await api.post(`/api/leaders?${params.toString()}`);
+  return response.data;
+};
+
+export const getAdminLeadersResults = async (season = '2026') => {
+  const response = await api.get(`/api/admin/leaders/results?season=${season}`);
+  return response.data;
+};
+
+export const setAdminLeadersResults = async (data, season = '2026') => {
+  const params = new URLSearchParams({ season });
+  if (data.top_scorer)   params.append('top_scorer',   data.top_scorer);
+  if (data.top_assists)  params.append('top_assists',  data.top_assists);
+  if (data.top_rebounds) params.append('top_rebounds', data.top_rebounds);
+  if (data.top_threes)   params.append('top_threes',   data.top_threes);
+  if (data.top_steals)   params.append('top_steals',   data.top_steals);
+  if (data.top_blocks)   params.append('top_blocks',   data.top_blocks);
+  const response = await api.post(`/api/admin/leaders/results?${params.toString()}`);
+  return response.data;
+};
+
+export const getAdminOdds = async () => {
+  const response = await api.get('/api/admin/odds');
+  return response.data;
+};
+
+export const setAdminOdds = async (odds) => {
+  const params = new URLSearchParams(Object.entries(odds).map(([k, v]) => [k, String(v)]));
+  const response = await api.post(`/api/admin/odds?${params.toString()}`);
+  return response.data;
+};
+
+export const getAdminFuturesResults = async (season = '2026') => {
+  const response = await api.get(`/api/admin/futures/results?season=${season}`);
+  return response.data;
+};
+
+export const setAdminFuturesResults = async (data, season = '2026') => {
+  const params = new URLSearchParams({ season });
+  if (data.actual_champion_id)       params.append('actual_champion_id',       data.actual_champion_id);
+  if (data.actual_west_champ_id)     params.append('actual_west_champ_id',     data.actual_west_champ_id);
+  if (data.actual_east_champ_id)     params.append('actual_east_champ_id',     data.actual_east_champ_id);
+  if (data.actual_finals_mvp)        params.append('actual_finals_mvp',        data.actual_finals_mvp);
+  if (data.actual_west_finals_mvp)   params.append('actual_west_finals_mvp',   data.actual_west_finals_mvp);
+  if (data.actual_east_finals_mvp)   params.append('actual_east_finals_mvp',   data.actual_east_finals_mvp);
+  const response = await api.post(`/api/admin/futures/results?${params.toString()}`);
+  return response.data;
+};
+
+export const lockSeries = async (seriesId, locked) => {
+  const response = await api.post(`/api/admin/series/${seriesId}/lock?locked=${locked}`);
+  return response.data;
+};
+
 export const getTeamRoster = async (teamId) => {
   const response = await api.get(`/api/teams/${teamId}/roster`);
   return response.data;

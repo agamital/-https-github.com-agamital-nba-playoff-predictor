@@ -65,28 +65,47 @@ const FinalsCard = () => (
 // ── Playoff match card ────────────────────────────────────────────────────────
 
 const MatchCard = ({ series, pick, onTeamClick }) => {
-  const { home_team: h, away_team: a } = series;
+  const { home_team: h, away_team: a, status, winner_team_id, actual_games } = series;
+  const isCompleted = status === 'completed';
+  const isLocked = status === 'locked';
   const hp = pick?.teamId === h.id;
   const ap = pick?.teamId === a.id;
+  const hWon = winner_team_id === h.id;
+  const aWon = winner_team_id === a.id;
 
-  const teamRow = (team, picked, onClick) => (
-    <button onClick={onClick}
-      className={`flex-1 flex items-center gap-2 px-3 w-full transition-all ${picked ? 'bg-orange-500/25' : 'hover:bg-slate-800/70'}`}>
+  const teamRow = (team, picked, won, onClick) => (
+    <button
+      onClick={isCompleted || isLocked ? undefined : onClick}
+      className={`flex-1 flex items-center gap-2 px-3 w-full transition-all ${
+        won ? 'bg-green-500/20' :
+        picked && !isCompleted ? 'bg-orange-500/25' :
+        isCompleted && !won ? 'opacity-40' :
+        isLocked ? '' :
+        'hover:bg-slate-800/70'
+      }`}
+      style={{ cursor: isCompleted || isLocked ? 'default' : 'pointer' }}
+    >
       <span className="text-xs text-slate-500 w-4 shrink-0 font-bold">{team.seed}</span>
       <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
-      <span className={`text-sm font-bold truncate ${picked ? 'text-orange-400' : 'text-white'}`}>{team.abbreviation}</span>
-      {picked && <ChevronRight className="ml-auto w-4 h-4 text-orange-400 shrink-0" />}
+      <span className={`text-sm font-bold truncate ${won ? 'text-green-400' : picked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>
+        {team.abbreviation}
+      </span>
+      {won && actual_games && <span className="ml-auto text-[10px] text-green-400 font-black shrink-0">in {actual_games}</span>}
+      {picked && !isCompleted && !isLocked && <ChevronRight className="ml-auto w-4 h-4 text-orange-400 shrink-0" />}
     </button>
   );
 
   return (
     <div style={{ height: CH }}
-      className={`w-44 border-2 rounded-xl flex flex-col overflow-hidden transition-all cursor-pointer bg-slate-900/80 ${
-        (hp || ap) ? 'border-orange-500/40 shadow-md shadow-orange-500/10' : 'border-slate-700/60 hover:border-slate-600'
-      }`}>
-      {teamRow(h, hp, () => onTeamClick(series, h.id))}
+      className={`w-44 border-2 rounded-xl flex flex-col overflow-hidden transition-all ${
+        isCompleted ? 'border-green-500/40 shadow-md shadow-green-500/10' :
+        isLocked ? 'border-yellow-500/30 opacity-75' :
+        (hp || ap) ? 'border-orange-500/40 shadow-md shadow-orange-500/10 cursor-pointer' :
+        'border-slate-700/60 hover:border-slate-600 cursor-pointer'
+      } bg-slate-900/80`}>
+      {teamRow(h, hp, hWon, () => onTeamClick(series, h.id))}
       <div className="h-px bg-slate-800" />
-      {teamRow(a, ap, () => onTeamClick(series, a.id))}
+      {teamRow(a, ap, aWon, () => onTeamClick(series, a.id))}
     </div>
   );
 };
@@ -245,7 +264,7 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onSave, saved,
             {s ? (
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
                 <MatchCard series={s} pick={picks[s.id]} onTeamClick={onTeamClick} />
-                {picks[s.id]?.teamId && (
+                {picks[s.id]?.teamId && s.status === 'active' && (
                   <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
                     <InlinePicker seriesId={s.id} pick={picks[s.id]} onGamesSelect={onGamesSelect} onSave={onSave} saved={saved[s.id]} />
                   </div>
@@ -326,31 +345,44 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
   const hp = pick?.teamId === h.id;
   const ap = pick?.teamId === a.id;
   const picked = hp ? h : ap ? a : null;
+  const isCompleted = series.status === 'completed';
+  const isLocked = series.status === 'locked';
+  const hWon = series.winner_team_id === h.id;
+  const aWon = series.winner_team_id === a.id;
 
-  const teamBtn = (team, isPicked, onClick) => (
-    <button onClick={onClick}
+  const teamBtn = (team, isPicked, isWon, onClick) => (
+    <button onClick={isCompleted || isLocked ? undefined : onClick}
       className={`flex items-center gap-3 p-4 rounded-xl border-2 transition-all w-full ${
-        isPicked ? 'border-orange-500 bg-orange-500/15' : 'border-slate-700 bg-slate-900/60 hover:border-slate-600'
+        isWon ? 'border-green-500 bg-green-500/15' :
+        isPicked && !isCompleted ? 'border-orange-500 bg-orange-500/15' :
+        isCompleted && !isWon ? 'border-slate-700 bg-slate-900/60 opacity-40' :
+        'border-slate-700 bg-slate-900/60 hover:border-slate-600'
       }`}>
-      <span className={`text-xs font-black w-5 ${isPicked ? 'text-orange-400' : 'text-slate-500'}`}>{team.seed}</span>
+      <span className={`text-xs font-black w-5 ${isWon ? 'text-green-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-slate-500'}`}>{team.seed}</span>
       <img src={team.logo_url} alt="" className="w-10 h-10 shrink-0" onError={e => e.target.style.display = 'none'} />
       <div className="text-left flex-1">
-        <p className={`font-black text-base leading-tight ${isPicked ? 'text-orange-400' : 'text-white'}`}>{team.name}</p>
-        <p className="text-xs text-slate-500">Seed #{team.seed}</p>
+        <p className={`font-black text-base leading-tight ${isWon ? 'text-green-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>{team.name}</p>
+        <p className="text-xs text-slate-500">{isWon && series.actual_games ? `Won in ${series.actual_games}` : `Seed #${team.seed}`}</p>
       </div>
-      {isPicked && <div className="w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center shrink-0"><span className="text-white text-xs font-black">✓</span></div>}
+      {isWon && <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shrink-0"><span className="text-white text-xs font-black">✓</span></div>}
+      {isPicked && !isCompleted && !isWon && <div className="w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center shrink-0"><span className="text-white text-xs font-black">✓</span></div>}
     </button>
   );
 
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-3">
-      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{series.round}</span>
-      <div className="space-y-2">
-        {teamBtn(h, hp, () => onTeamClick(series, h.id))}
-        <div className="text-center text-xs text-slate-600 font-bold">VS</div>
-        {teamBtn(a, ap, () => onTeamClick(series, a.id))}
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{series.round}</span>
+        {series.status === 'completed' && <span className="text-xs font-bold text-green-400 flex items-center gap-1">✓ Complete</span>}
+        {series.status === 'locked' && <span className="text-xs font-bold text-yellow-400 flex items-center gap-1">🔒 Locked</span>}
+        {series.status === 'active' && <span className="text-xs font-bold text-blue-400">Predictions Open</span>}
       </div>
-      {picked && (
+      <div className="space-y-2">
+        {teamBtn(h, hp, hWon, () => onTeamClick(series, h.id))}
+        <div className="text-center text-xs text-slate-600 font-bold">VS</div>
+        {teamBtn(a, ap, aWon, () => onTeamClick(series, a.id))}
+      </div>
+      {picked && !isCompleted && !isLocked && (
         <div className="pt-2 border-t border-slate-800 space-y-3">
           <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Series Length</p>
           <div className="grid grid-cols-4 gap-2">

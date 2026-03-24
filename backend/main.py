@@ -231,6 +231,31 @@ def init_db():
         UNIQUE(user_id, season)
     )''')
 
+    # Playoff leaders predictions
+    c.execute('''CREATE TABLE IF NOT EXISTS leaders_predictions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        season TEXT DEFAULT '2026',
+        top_scorer TEXT,
+        top_assists TEXT,
+        top_rebounds TEXT,
+        top_threes TEXT,
+        top_steals TEXT,
+        top_blocks TEXT,
+        predicted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_correct_scorer INTEGER,
+        is_correct_assists INTEGER,
+        is_correct_rebounds INTEGER,
+        is_correct_threes INTEGER,
+        is_correct_steals INTEGER,
+        is_correct_blocks INTEGER,
+        points_earned INTEGER DEFAULT 0,
+        UNIQUE(user_id, season)
+    )''')
+
+    # Add bracket_group to series for progressive bracket unlocking
+    c.execute("ALTER TABLE series ADD COLUMN IF NOT EXISTS bracket_group TEXT DEFAULT 'A'")
+
     conn.commit()
     conn.close()
     print("Database initialized")
@@ -444,11 +469,12 @@ def generate_matchups(force_conference=None):
         if series_count < 2 or force_conference:
             c.execute('DELETE FROM series WHERE season = %s AND conference = %s', ('2026', conf_full))
             matchups = [(teams[2], teams[5]), (teams[3], teams[4])]
-            for home, away in matchups:
+            bracket_groups = ['B', 'A']  # 3v6 → Group B, 4v5 → Group A
+            for (home, away), bg in zip(matchups, bracket_groups):
                 c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
-                            home_seed, away_seed, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''',
+                            home_seed, away_seed, status, bracket_group) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)''',
                          ('2026', 'First Round', conf_full, home['team_id'], away['team_id'],
-                          home['conf_rank'], away['conf_rank'], 'active'))
+                          home['conf_rank'], away['conf_rank'], 'active', bg))
                 print(f"  -> #{home['conf_rank']} {home['team_name']} vs #{away['conf_rank']} {away['team_name']}")
             print(f"  Created {conf_full} R1 series (3v6, 4v5)")
 
@@ -707,7 +733,7 @@ async def api_series(season: str = "2026"):
                  s.id, s.season, s.round, s.conference,
                  s.home_team_id, s.home_seed, s.home_wins,
                  s.away_team_id, s.away_seed, s.away_wins,
-                 s.winner_team_id, s.status,
+                 s.winner_team_id, s.status, s.actual_games,
                  ht.name, ht.abbreviation, ht.logo_url,
                  at.name, at.abbreviation, at.logo_url
                  FROM series s
@@ -725,21 +751,22 @@ async def api_series(season: str = "2026"):
             'home_team': {
                 'id': row[4],
                 'seed': row[5],
-                'name': row[12],
-                'abbreviation': row[13],
-                'logo_url': row[14]
+                'name': row[13],
+                'abbreviation': row[14],
+                'logo_url': row[15]
             },
             'away_team': {
                 'id': row[7],
                 'seed': row[8],
-                'name': row[15],
-                'abbreviation': row[16],
-                'logo_url': row[17]
+                'name': row[16],
+                'abbreviation': row[17],
+                'logo_url': row[18]
             },
             'home_wins': row[6],
             'away_wins': row[9],
             'winner_team_id': row[10],
-            'status': row[11]
+            'status': row[11],
+            'actual_games': row[12],
         })
 
     conn.close()
@@ -971,28 +998,104 @@ async def admin_get_series(season: str = "2026"):
     conn.close()
     return result
 
+def _recalculate_all_points(c):
+    """Recalculate all user points from all prediction sources."""
+    c.execute('''UPDATE users SET points = COALESCE((
+        SELECT SUM(p.points_earned) FROM predictions p WHERE p.user_id = users.id
+    ), 0) + COALESCE((
+        SELECT SUM(pp.points_earned) FROM playin_predictions pp WHERE pp.user_id = users.id
+    ), 0) + COALESCE((
+        SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = users.id
+    ), 0) + COALESCE((
+        SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = users.id
+    ), 0)''')
+
+
+def _try_advance_bracket(c, completed_series_id, season, round_name, conf, bracket_group, winner_team_id):
+    """After a series completes, auto-create the next-round matchup if both bracket partners are done."""
+    round_progression = {
+        'First Round': 'Conference Semifinals',
+        'Conference Semifinals': 'Conference Finals',
+        'Conference Finals': 'NBA Finals',
+    }
+    next_round = round_progression.get(round_name)
+    if not next_round:
+        return
+
+    if next_round == 'NBA Finals':
+        c.execute('''SELECT winner_team_id FROM series
+                     WHERE season = %s AND round = 'Conference Finals' AND status = 'completed'
+                     ORDER BY conference''', (season,))
+        cf_winners = c.fetchall()
+        if len(cf_winners) == 2:
+            c.execute("SELECT id FROM series WHERE season = %s AND round = 'NBA Finals'", (season,))
+            if not c.fetchone():
+                t1, t2 = cf_winners[0][0], cf_winners[1][0]
+                c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
+                             status, bracket_group)
+                             VALUES (%s, 'NBA Finals', 'Finals', %s, %s, 'active', 'A')''',
+                          (season, t1, t2))
+        return
+
+    # Find the partner series in the same bracket_group
+    c.execute('''SELECT id, winner_team_id FROM series
+                 WHERE season = %s AND round = %s AND conference = %s
+                 AND bracket_group = %s AND status = 'completed' AND id != %s''',
+              (season, round_name, conf, bracket_group, completed_series_id))
+    partner = c.fetchone()
+
+    if partner:
+        partner_winner_id = partner[1]
+        c.execute('''SELECT id FROM series WHERE season = %s AND round = %s
+                     AND conference = %s AND bracket_group = %s''',
+                  (season, next_round, conf, bracket_group))
+        if not c.fetchone():
+            c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
+                         status, bracket_group)
+                         VALUES (%s, %s, %s, %s, %s, 'active', %s)''',
+                      (season, next_round, conf, winner_team_id, partner_winner_id, bracket_group))
+
+
 @app.post("/api/admin/series/{series_id}/result")
 async def set_series_result(series_id: int, winner_team_id: int, actual_games: int):
     conn = get_db_conn()
     c = conn.cursor()
-    # Update series
+    # Get series info for round multiplier
+    c.execute('SELECT round, conference, season, bracket_group FROM series WHERE id = %s', (series_id,))
+    series_row = c.fetchone()
+    if not series_row:
+        conn.close()
+        raise HTTPException(404, "Series not found")
+    round_name, conf, season, bracket_group = series_row
+
+    round_multipliers = {
+        'First Round': 1,
+        'Conference Semifinals': 2,
+        'Conference Finals': 3,
+        'NBA Finals': 4,
+    }
+    mult = round_multipliers.get(round_name, 1)
+    winner_pts = 20 * mult
+    games_pts = 40 * mult  # additional if games also correct
+
+    # Update series status
     c.execute('UPDATE series SET winner_team_id = %s, actual_games = %s, status = %s WHERE id = %s',
               (winner_team_id, actual_games, 'completed', series_id))
-    # Score predictions: 2pts correct winner, +1 bonus for correct games
+
+    # Score predictions: winner_pts for correct winner, winner_pts+games_pts for both correct
     c.execute('''UPDATE predictions SET
                  is_correct = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END,
                  points_earned = CASE
-                     WHEN predicted_winner_id = %s AND predicted_games = %s THEN 3
-                     WHEN predicted_winner_id = %s THEN 2
+                     WHEN predicted_winner_id = %s AND predicted_games = %s THEN %s
+                     WHEN predicted_winner_id = %s THEN %s
                      ELSE 0 END
                  WHERE series_id = %s''',
-              (winner_team_id, winner_team_id, actual_games, winner_team_id, series_id))
-    # Recalculate user points
-    c.execute('''UPDATE users SET points = (
-                 SELECT COALESCE(SUM(p.points_earned),0) FROM predictions p WHERE p.user_id = users.id
-                 ) + (
-                 SELECT COALESCE(SUM(pp.points_earned),0) FROM playin_predictions pp WHERE pp.user_id = users.id
-                 )''')
+              (winner_team_id, winner_team_id, actual_games, winner_pts + games_pts,
+               winner_team_id, winner_pts, series_id))
+
+    _recalculate_all_points(c)
+    _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id)
+
     conn.commit()
     conn.close()
     return {"message": "Result set and scores updated"}
@@ -1026,6 +1129,53 @@ async def admin_get_playin(season: str = "2026"):
     conn.close()
     return result
 
+def _try_create_r1_from_playin(c, game_id, winner_id, season):
+    """After a play-in game, try to auto-create the R1 series vs the 1 or 2 seed."""
+    c.execute('SELECT conference, game_type FROM playin_games WHERE id = %s', (game_id,))
+    row = c.fetchone()
+    if not row:
+        return
+    conf, game_type = row  # conf = 'Eastern' or 'Western'
+    conf_short = 'East' if 'Eastern' in conf else 'West'
+
+    standings = get_standings()
+    conf_teams = sorted([t for t in standings if t['conference'] == conf_short], key=lambda x: x['conf_rank'])
+    if len(conf_teams) < 2:
+        return
+
+    seed1_nba_id = conf_teams[0]['team_id']
+    seed2_nba_id = conf_teams[1]['team_id']
+
+    # Verify teams exist in our DB
+    c.execute('SELECT id FROM teams WHERE id = %s', (seed1_nba_id,))
+    s1 = c.fetchone()
+    c.execute('SELECT id FROM teams WHERE id = %s', (seed2_nba_id,))
+    s2 = c.fetchone()
+    if not s1 or not s2:
+        return
+
+    seed1_id, seed2_id = s1[0], s2[0]
+
+    if game_type == '7v8':
+        # Winner is the 7-seed → plays 2-seed in R1 Group B
+        c.execute('SELECT id FROM series WHERE season = %s AND conference = %s AND round = %s AND bracket_group = %s',
+                  (season, conf, 'First Round', 'B'))
+        if not c.fetchone():
+            c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
+                         home_seed, away_seed, status, bracket_group)
+                         VALUES (%s, 'First Round', %s, %s, %s, 2, 7, 'active', 'B')''',
+                      (season, conf, seed2_id, winner_id))
+    elif game_type == 'elimination':
+        # Winner is the 8-seed → plays 1-seed in R1 Group A
+        c.execute('SELECT id FROM series WHERE season = %s AND conference = %s AND round = %s AND bracket_group = %s',
+                  (season, conf, 'First Round', 'A'))
+        if not c.fetchone():
+            c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
+                         home_seed, away_seed, status, bracket_group)
+                         VALUES (%s, 'First Round', %s, %s, %s, 1, 8, 'active', 'A')''',
+                      (season, conf, seed1_id, winner_id))
+
+
 @app.post("/api/admin/playin/{game_id}/result")
 async def set_playin_result(game_id: int, winner_id: int):
     conn = get_db_conn()
@@ -1034,13 +1184,10 @@ async def set_playin_result(game_id: int, winner_id: int):
               (winner_id, 'completed', game_id))
     c.execute('''UPDATE playin_predictions SET
                  is_correct = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END,
-                 points_earned = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END
+                 points_earned = CASE WHEN predicted_winner_id = %s THEN 5 ELSE 0 END
                  WHERE game_id = %s''', (winner_id, winner_id, game_id))
-    c.execute('''UPDATE users SET points = (
-                 SELECT COALESCE(SUM(p.points_earned),0) FROM predictions p WHERE p.user_id = users.id
-                 ) + (
-                 SELECT COALESCE(SUM(pp.points_earned),0) FROM playin_predictions pp WHERE pp.user_id = users.id
-                 )''')
+    _recalculate_all_points(c)
+    _try_create_r1_from_playin(c, game_id, winner_id, '2026')
     conn.commit()
     conn.close()
     return {"message": "Play-in result set"}
@@ -1499,6 +1646,259 @@ async def delete_account(user_id: int):
     conn.commit()
     conn.close()
     return {"message": "Account deleted"}
+
+
+# ── Series lock/unlock ────────────────────────────────────────────────────────
+
+@app.post("/api/admin/series/{series_id}/lock")
+async def lock_series_predictions(series_id: int, locked: bool):
+    conn = get_db_conn()
+    c = conn.cursor()
+    new_status = 'locked' if locked else 'active'
+    c.execute("UPDATE series SET status = %s WHERE id = %s AND status != 'completed'",
+              (new_status, series_id))
+    conn.commit()
+    conn.close()
+    return {"message": f"Series {'locked' if locked else 'unlocked'}"}
+
+
+# ── Odds multipliers ──────────────────────────────────────────────────────────
+
+@app.get("/api/admin/odds")
+async def get_odds():
+    conn = get_db_conn()
+    c = conn.cursor()
+    cats = ['champion', 'west_champ', 'east_champ', 'finals_mvp', 'west_finals_mvp', 'east_finals_mvp']
+    odds = {}
+    for cat in cats:
+        c.execute("SELECT value FROM site_settings WHERE key = %s", (f'odds_{cat}',))
+        row = c.fetchone()
+        odds[cat] = float(row[0]) if row else 1.0
+    conn.close()
+    return odds
+
+
+@app.post("/api/admin/odds")
+async def set_odds(champion: float = 1.0, west_champ: float = 1.0, east_champ: float = 1.0,
+                   finals_mvp: float = 1.0, west_finals_mvp: float = 1.0, east_finals_mvp: float = 1.0):
+    conn = get_db_conn()
+    c = conn.cursor()
+    settings = {
+        'odds_champion': champion, 'odds_west_champ': west_champ, 'odds_east_champ': east_champ,
+        'odds_finals_mvp': finals_mvp, 'odds_west_finals_mvp': west_finals_mvp,
+        'odds_east_finals_mvp': east_finals_mvp,
+    }
+    for key, value in settings.items():
+        c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+                  (key, str(value)))
+    conn.commit()
+    conn.close()
+    return {"message": "Odds updated", **{k: v for k, v in settings.items()}}
+
+
+# ── Futures actual results ────────────────────────────────────────────────────
+
+@app.get("/api/admin/futures/results")
+async def get_futures_results(season: str = "2026"):
+    conn = get_db_conn()
+    c = conn.cursor()
+    cats = ['champion', 'west_champ', 'east_champ', 'finals_mvp', 'west_finals_mvp', 'east_finals_mvp']
+    results = {}
+    for cat in cats:
+        c.execute("SELECT value FROM site_settings WHERE key = %s", (f'actual_{cat}_{season}',))
+        row = c.fetchone()
+        results[cat] = row[0] if row else ''
+    conn.close()
+    return results
+
+
+@app.post("/api/admin/futures/results")
+async def set_futures_results(season: str = "2026",
+                               actual_champion_id: Optional[int] = None,
+                               actual_west_champ_id: Optional[int] = None,
+                               actual_east_champ_id: Optional[int] = None,
+                               actual_finals_mvp: Optional[str] = None,
+                               actual_west_finals_mvp: Optional[str] = None,
+                               actual_east_finals_mvp: Optional[str] = None):
+    conn = get_db_conn()
+    c = conn.cursor()
+
+    # Store results
+    settings = {
+        f'actual_champion_{season}': str(actual_champion_id) if actual_champion_id else '',
+        f'actual_west_champ_{season}': str(actual_west_champ_id) if actual_west_champ_id else '',
+        f'actual_east_champ_{season}': str(actual_east_champ_id) if actual_east_champ_id else '',
+        f'actual_finals_mvp_{season}': actual_finals_mvp or '',
+        f'actual_west_finals_mvp_{season}': actual_west_finals_mvp or '',
+        f'actual_east_finals_mvp_{season}': actual_east_finals_mvp or '',
+    }
+    for key, value in settings.items():
+        c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+                  (key, value))
+
+    # Load odds multipliers
+    odds = {}
+    for cat in ['champion', 'west_champ', 'east_champ', 'finals_mvp', 'west_finals_mvp', 'east_finals_mvp']:
+        c.execute("SELECT value FROM site_settings WHERE key = %s", (f'odds_{cat}',))
+        row = c.fetchone()
+        odds[cat] = float(row[0]) if row else 1.0
+
+    base_points = {
+        'champion': 200, 'west_champ': 100, 'east_champ': 100,
+        'finals_mvp': 80, 'west_finals_mvp': 50, 'east_finals_mvp': 50,
+    }
+
+    # Score all futures predictions
+    c.execute('''SELECT id, champion_team_id, west_champ_team_id, east_champ_team_id,
+                 finals_mvp, west_finals_mvp, east_finals_mvp
+                 FROM futures_predictions WHERE season = %s''', (season,))
+    fps = c.fetchall()
+
+    for fp in fps:
+        fp_id = fp[0]
+        champ_id, west_id, east_id = fp[1], fp[2], fp[3]
+        fmvp, wmvp, emvp = fp[4], fp[5], fp[6]
+
+        def is_correct_team(pred_id, actual_id):
+            if not actual_id: return None
+            return 1 if pred_id and pred_id == actual_id else 0
+
+        def is_correct_player(pred, actual):
+            if not actual: return None
+            return 1 if pred and pred.strip().lower() == actual.strip().lower() else 0
+
+        c_champ = is_correct_team(champ_id, actual_champion_id)
+        c_west  = is_correct_team(west_id,  actual_west_champ_id)
+        c_east  = is_correct_team(east_id,  actual_east_champ_id)
+        c_fmvp  = is_correct_player(fmvp,  actual_finals_mvp)
+        c_wmvp  = is_correct_player(wmvp,  actual_west_finals_mvp)
+        c_emvp  = is_correct_player(emvp,  actual_east_finals_mvp)
+
+        pts = 0
+        if c_champ == 1: pts += int(base_points['champion']    * odds['champion'])
+        if c_west  == 1: pts += int(base_points['west_champ']  * odds['west_champ'])
+        if c_east  == 1: pts += int(base_points['east_champ']  * odds['east_champ'])
+        if c_fmvp  == 1: pts += int(base_points['finals_mvp']  * odds['finals_mvp'])
+        if c_wmvp  == 1: pts += int(base_points['west_finals_mvp'] * odds['west_finals_mvp'])
+        if c_emvp  == 1: pts += int(base_points['east_finals_mvp'] * odds['east_finals_mvp'])
+
+        c.execute('''UPDATE futures_predictions SET
+                     is_correct_champion = %s, is_correct_west = %s, is_correct_east = %s,
+                     points_earned = %s WHERE id = %s''',
+                  (c_champ, c_west, c_east, pts, fp_id))
+
+    _recalculate_all_points(c)
+    conn.commit()
+    conn.close()
+    return {"message": "Futures results set and scores recalculated"}
+
+
+# ── Playoff Leaders ───────────────────────────────────────────────────────────
+
+@app.get("/api/leaders")
+async def get_leaders(user_id: int, season: str = "2026"):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute('SELECT * FROM leaders_predictions WHERE user_id = %s AND season = %s', (user_id, season))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return {"has_prediction": False}
+    return {
+        "has_prediction": True,
+        "top_scorer":   row[3], "top_assists":  row[4],
+        "top_rebounds": row[5], "top_threes":   row[6],
+        "top_steals":   row[7], "top_blocks":   row[8],
+        "is_correct_scorer":   row[10], "is_correct_assists":  row[11],
+        "is_correct_rebounds": row[12], "is_correct_threes":   row[13],
+        "is_correct_steals":   row[14], "is_correct_blocks":   row[15],
+        "points_earned": row[16] or 0,
+    }
+
+
+@app.post("/api/leaders")
+async def save_leaders(user_id: int, season: str = "2026",
+                       top_scorer: Optional[str] = None, top_assists: Optional[str] = None,
+                       top_rebounds: Optional[str] = None, top_threes: Optional[str] = None,
+                       top_steals: Optional[str] = None, top_blocks: Optional[str] = None):
+    if _get_futures_lock():
+        raise HTTPException(400, "Predictions are locked")
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute('''INSERT INTO leaders_predictions
+                 (user_id, season, top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks)
+                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 ON CONFLICT(user_id, season) DO UPDATE SET
+                 top_scorer = EXCLUDED.top_scorer, top_assists = EXCLUDED.top_assists,
+                 top_rebounds = EXCLUDED.top_rebounds, top_threes = EXCLUDED.top_threes,
+                 top_steals = EXCLUDED.top_steals, top_blocks = EXCLUDED.top_blocks,
+                 predicted_at = CURRENT_TIMESTAMP''',
+              (user_id, season, top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks))
+    conn.commit()
+    conn.close()
+    return {"message": "Saved"}
+
+
+@app.get("/api/admin/leaders/results")
+async def get_leaders_results(season: str = "2026"):
+    conn = get_db_conn()
+    c = conn.cursor()
+    cats = ['scorer', 'assists', 'rebounds', 'threes', 'steals', 'blocks']
+    results = {}
+    for cat in cats:
+        c.execute("SELECT value FROM site_settings WHERE key = %s", (f'leaders_{cat}_{season}',))
+        row = c.fetchone()
+        results[cat] = row[0] if row else ''
+    conn.close()
+    return results
+
+
+@app.post("/api/admin/leaders/results")
+async def set_leaders_results(season: str = "2026",
+                               top_scorer: Optional[str] = None, top_assists: Optional[str] = None,
+                               top_rebounds: Optional[str] = None, top_threes: Optional[str] = None,
+                               top_steals: Optional[str] = None, top_blocks: Optional[str] = None):
+    conn = get_db_conn()
+    c = conn.cursor()
+    actual = {
+        'scorer': top_scorer or '', 'assists': top_assists or '',
+        'rebounds': top_rebounds or '', 'threes': top_threes or '',
+        'steals': top_steals or '', 'blocks': top_blocks or '',
+    }
+    for cat, val in actual.items():
+        c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+                  (f'leaders_{cat}_{season}', val))
+
+    points_map = {'scorer': 100, 'assists': 70, 'rebounds': 70, 'threes': 60, 'steals': 40, 'blocks': 40}
+
+    c.execute('''SELECT id, top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks
+                 FROM leaders_predictions WHERE season = %s''', (season,))
+    lps = c.fetchall()
+    for lp in lps:
+        lp_id = lp[0]
+        preds = {'scorer': lp[1], 'assists': lp[2], 'rebounds': lp[3], 'threes': lp[4], 'steals': lp[5], 'blocks': lp[6]}
+        pts = 0
+        correct = {}
+        for cat, actual_val in actual.items():
+            if actual_val and preds[cat]:
+                is_c = 1 if preds[cat].strip().lower() == actual_val.strip().lower() else 0
+                correct[cat] = is_c
+                if is_c:
+                    pts += points_map[cat]
+            else:
+                correct[cat] = None
+        c.execute('''UPDATE leaders_predictions SET
+                     is_correct_scorer = %s, is_correct_assists = %s,
+                     is_correct_rebounds = %s, is_correct_threes = %s,
+                     is_correct_steals = %s, is_correct_blocks = %s,
+                     points_earned = %s WHERE id = %s''',
+                  (correct.get('scorer'), correct.get('assists'), correct.get('rebounds'),
+                   correct.get('threes'), correct.get('steals'), correct.get('blocks'), pts, lp_id))
+
+    _recalculate_all_points(c)
+    conn.commit()
+    conn.close()
+    return {"message": "Leaders results set", "results": actual}
 
 
 if __name__ == "__main__":

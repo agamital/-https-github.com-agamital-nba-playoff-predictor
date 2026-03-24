@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, Lock, CheckCircle, Star, User, X } from 'lucide-react';
+import { Trophy, Lock, CheckCircle, Star, User, X, BarChart2 } from 'lucide-react';
 import * as api from './services/api';
 
 // ── All known playoff-eligible players (search suggestions) ──────────────────
@@ -9,11 +9,20 @@ const ALL_PLAYERS = [
   'Anthony Davis', 'Joel Embiid', 'Tyrese Haliburton', 'Donovan Mitchell',
   'Jimmy Butler', 'Victor Wembanyama', 'Cade Cunningham', 'Jalen Brunson',
   'Darius Garland', 'Scottie Barnes', 'Evan Mobley', 'Paolo Banchero',
-  'Franz Wagner', 'Alperen Sengun', 'Jaren Jackson Jr.', 'De\'Aaron Fox',
+  'Franz Wagner', 'Alperen Sengun', 'Jaren Jackson Jr.', "De'Aaron Fox",
   'Ja Morant', 'Zion Williamson', 'Brandon Ingram', 'Devin Booker',
   'James Harden', 'Kawhi Leonard', 'Paul George', 'Klay Thompson',
   'Draymond Green', 'Jamal Murray', 'Michael Porter Jr.', 'Austin Reaves',
   'Anthony Edwards', 'Karl-Anthony Towns', 'Rudy Gobert',
+];
+
+const LEADER_CATEGORIES = [
+  { key: 'top_scorer',   label: 'Most Total Points',     color: 'text-yellow-400', pts: 100, icon: '🏀' },
+  { key: 'top_assists',  label: 'Most Total Assists',    color: 'text-blue-400',   pts: 70,  icon: '🎯' },
+  { key: 'top_rebounds', label: 'Most Total Rebounds',   color: 'text-green-400',  pts: 70,  icon: '💪' },
+  { key: 'top_threes',   label: 'Most 3-Pointers Made',  color: 'text-purple-400', pts: 60,  icon: '3️⃣' },
+  { key: 'top_steals',   label: 'Most Total Steals',     color: 'text-red-400',    pts: 40,  icon: '🤚' },
+  { key: 'top_blocks',   label: 'Most Total Blocks',     color: 'text-orange-400', pts: 40,  icon: '🛡️' },
 ];
 
 // ── Search/autocomplete player picker ────────────────────────────────────────
@@ -157,7 +166,15 @@ const FuturesPage = ({ currentUser }) => {
   const [westFinalsMvp, setWestFinalsMvp] = useState('');
   const [eastFinalsMvp, setEastFinalsMvp] = useState('');
 
-  // locked = globally locked by admin OR individually locked
+  // Leaders state
+  const [leaders, setLeaders] = useState({
+    top_scorer: '', top_assists: '', top_rebounds: '',
+    top_threes: '', top_steals: '', top_blocks: '',
+  });
+  const [leadersSaving, setLeadersSaving] = useState(false);
+  const [leadersSaved, setLeadersSaved] = useState(false);
+  const [existingLeaders, setExistingLeaders] = useState(null);
+
   const locked = globalLocked || (existing?.locked || false);
 
   useEffect(() => {
@@ -174,7 +191,10 @@ const FuturesPage = ({ currentUser }) => {
         setEastTeams(east);
         setGlobalLocked(lockStatus.locked);
         if (currentUser) {
-          const fut = await api.getFutures(currentUser.user_id);
+          const [fut, leadPred] = await Promise.all([
+            api.getFutures(currentUser.user_id),
+            api.getLeadersPrediction(currentUser.user_id),
+          ]);
           if (fut.has_prediction) {
             setExisting(fut);
             setChampion(fut.champion_team_id);
@@ -183,6 +203,17 @@ const FuturesPage = ({ currentUser }) => {
             setFinalsMvp(fut.finals_mvp || '');
             setWestFinalsMvp(fut.west_finals_mvp || '');
             setEastFinalsMvp(fut.east_finals_mvp || '');
+          }
+          if (leadPred.has_prediction) {
+            setExistingLeaders(leadPred);
+            setLeaders({
+              top_scorer:   leadPred.top_scorer   || '',
+              top_assists:  leadPred.top_assists  || '',
+              top_rebounds: leadPred.top_rebounds || '',
+              top_threes:   leadPred.top_threes   || '',
+              top_steals:   leadPred.top_steals   || '',
+              top_blocks:   leadPred.top_blocks   || '',
+            });
           }
         }
       } catch (err) {
@@ -206,7 +237,6 @@ const FuturesPage = ({ currentUser }) => {
         west_finals_mvp: westFinalsMvp,
         east_finals_mvp: eastFinalsMvp,
       });
-      // Refresh to show updated existing picks
       const fut = await api.getFutures(currentUser.user_id);
       if (fut.has_prediction) setExisting(fut);
       setSaved(true);
@@ -215,6 +245,22 @@ const FuturesPage = ({ currentUser }) => {
       alert('Error: ' + (err.response?.data?.detail || 'Unknown error'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveLeaders = async () => {
+    if (!currentUser || locked) return;
+    setLeadersSaving(true);
+    try {
+      await api.saveLeadersPrediction(currentUser.user_id, leaders);
+      const l = await api.getLeadersPrediction(currentUser.user_id);
+      if (l.has_prediction) setExistingLeaders(l);
+      setLeadersSaved(true);
+      setTimeout(() => setLeadersSaved(false), 2500);
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.detail || 'Unknown error'));
+    } finally {
+      setLeadersSaving(false);
     }
   };
 
@@ -235,6 +281,8 @@ const FuturesPage = ({ currentUser }) => {
       </div>
     );
   }
+
+  const hasAnyLeaderPick = Object.values(leaders).some(v => v);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -258,7 +306,7 @@ const FuturesPage = ({ currentUser }) => {
         )}
       </div>
 
-      {/* Current picks summary if exists */}
+      {/* Current picks summary */}
       {existing?.has_prediction && (
         <div className="grid grid-cols-3 gap-3 mb-8">
           {[
@@ -310,7 +358,7 @@ const FuturesPage = ({ currentUser }) => {
           </Section>
         </div>
 
-        {/* Save button */}
+        {/* Save Futures button */}
         {!locked && (
           <button
             onClick={handleSave}
@@ -323,9 +371,81 @@ const FuturesPage = ({ currentUser }) => {
                 : 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white shadow-xl shadow-orange-500/30'
             }`}
           >
-            {saved ? '✓ Picks Saved!' : saving ? 'Saving...' : existing?.has_prediction ? 'Update My Picks' : 'Save My Picks'}
+            {saved ? '✓ Futures Picks Saved!' : saving ? 'Saving...' : existing?.has_prediction ? 'Update Futures Picks' : 'Save Futures Picks'}
           </button>
         )}
+
+        {/* ── Playoff Leaders Section ── */}
+        <div className="mt-4">
+          <div className="flex items-center gap-2 mb-5">
+            <BarChart2 className="w-5 h-5 text-cyan-400" />
+            <h2 className="text-xl font-black text-white uppercase tracking-wide">Playoff Leaders</h2>
+            <span className="ml-2 px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 text-[10px] font-black uppercase tracking-wider">New</span>
+          </div>
+          <p className="text-slate-400 text-sm mb-5">
+            Predict which player will lead the entire playoffs in each statistical category.
+            Exact match required to earn points.
+          </p>
+
+          {/* Points guide */}
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-6">
+            {LEADER_CATEGORIES.map(cat => (
+              <div key={cat.key} className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5 text-center">
+                <div className="text-lg mb-0.5">{cat.icon}</div>
+                <div className={`text-[10px] font-black uppercase ${cat.color}`}>{cat.pts}pts</div>
+                <div className="text-[9px] text-slate-500 font-bold leading-tight mt-0.5">
+                  {cat.label.replace('Most ', '').replace(' Made', '')}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {LEADER_CATEGORIES.map(cat => {
+              const isCorrect = existingLeaders?.[`is_correct_${cat.key.replace('top_', '')}`];
+              return (
+                <div key={cat.key}
+                  className={`bg-slate-900/50 border rounded-2xl p-4 ${
+                    isCorrect === 1 ? 'border-green-500/40' :
+                    isCorrect === 0 ? 'border-red-500/40' :
+                    'border-slate-800'
+                  }`}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xl">{cat.icon}</span>
+                    <div>
+                      <p className={`text-xs font-black uppercase tracking-wider ${cat.color}`}>{cat.label}</p>
+                      <p className="text-[10px] text-slate-500">Worth {cat.pts} pts</p>
+                    </div>
+                    {isCorrect === 1 && <CheckCircle className="ml-auto w-4 h-4 text-green-400" />}
+                  </div>
+                  <PlayerSearchPicker
+                    value={leaders[cat.key]}
+                    onChange={v => setLeaders(prev => ({ ...prev, [cat.key]: v }))}
+                    locked={locked}
+                    placeholder={`Who leads in ${cat.label.toLowerCase()}?`}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Save Leaders button */}
+          {!locked && (
+            <button
+              onClick={handleSaveLeaders}
+              disabled={leadersSaving || !hasAnyLeaderPick}
+              className={`w-full mt-4 py-4 rounded-2xl font-black text-lg tracking-wide transition-all ${
+                leadersSaved
+                  ? 'bg-green-500 text-white shadow-lg shadow-green-500/25'
+                  : leadersSaving || !hasAnyLeaderPick
+                  ? 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white shadow-xl shadow-cyan-500/30'
+              }`}
+            >
+              {leadersSaved ? '✓ Leaders Picks Saved!' : leadersSaving ? 'Saving...' : existingLeaders ? 'Update Leaders Picks' : 'Save Leaders Picks'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
