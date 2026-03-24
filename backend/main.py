@@ -11,6 +11,14 @@ import os
 import re
 import psycopg2
 import psycopg2.extras
+from scoring import (
+    calculate_play_in_points,
+    calculate_series_points,
+    calculate_futures_points,
+    calculate_leaders_points,
+    FUTURES_BASE_POINTS,
+    LEADERS_POINTS,
+)
 
 _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 
@@ -33,31 +41,31 @@ _NBA_HEADERS = {
 }
 _NBA_TIMEOUT = 5  # seconds — fail fast, never block users
 
-# Hardcoded standings (2025-26 season, as of 2026-03-23).
+# Hardcoded standings (2025-26 season, as of 2026-03-24).
 # Used instantly on startup so users never wait for the NBA API.
 _HARDCODED_STANDINGS = [
     # Eastern Conference
-    {'team_id': 1610612765, 'team_name': 'Detroit Pistons',        'conference': 'East', 'wins': 51, 'losses': 19, 'win_pct': 0.729, 'conf_rank': 1,  'playoff_rank': 1},
+    {'team_id': 1610612765, 'team_name': 'Detroit Pistons',        'conference': 'East', 'wins': 52, 'losses': 19, 'win_pct': 0.733, 'conf_rank': 1,  'playoff_rank': 1},
     {'team_id': 1610612738, 'team_name': 'Boston Celtics',         'conference': 'East', 'wins': 47, 'losses': 24, 'win_pct': 0.662, 'conf_rank': 2,  'playoff_rank': 2},
     {'team_id': 1610612752, 'team_name': 'New York Knicks',        'conference': 'East', 'wins': 47, 'losses': 25, 'win_pct': 0.653, 'conf_rank': 3,  'playoff_rank': 3},
     {'team_id': 1610612739, 'team_name': 'Cleveland Cavaliers',    'conference': 'East', 'wins': 44, 'losses': 27, 'win_pct': 0.620, 'conf_rank': 4,  'playoff_rank': 4},
-    {'team_id': 1610612761, 'team_name': 'Toronto Raptors',        'conference': 'East', 'wins': 39, 'losses': 31, 'win_pct': 0.557, 'conf_rank': 5,  'playoff_rank': 5},
-    {'team_id': 1610612737, 'team_name': 'Atlanta Hawks',          'conference': 'East', 'wins': 39, 'losses': 32, 'win_pct': 0.549, 'conf_rank': 6,  'playoff_rank': 6},
-    {'team_id': 1610612755, 'team_name': 'Philadelphia 76ers',     'conference': 'East', 'wins': 39, 'losses': 32, 'win_pct': 0.549, 'conf_rank': 7,  'playoff_rank': 7},
-    {'team_id': 1610612753, 'team_name': 'Orlando Magic',          'conference': 'East', 'wins': 38, 'losses': 32, 'win_pct': 0.543, 'conf_rank': 8,  'playoff_rank': 8},
-    {'team_id': 1610612748, 'team_name': 'Miami Heat',             'conference': 'East', 'wins': 38, 'losses': 33, 'win_pct': 0.535, 'conf_rank': 9,  'playoff_rank': 9},
+    {'team_id': 1610612761, 'team_name': 'Toronto Raptors',        'conference': 'East', 'wins': 40, 'losses': 31, 'win_pct': 0.563, 'conf_rank': 5,  'playoff_rank': 5},
+    {'team_id': 1610612737, 'team_name': 'Atlanta Hawks',          'conference': 'East', 'wins': 40, 'losses': 32, 'win_pct': 0.556, 'conf_rank': 6,  'playoff_rank': 6},
+    {'team_id': 1610612755, 'team_name': 'Philadelphia 76ers',     'conference': 'East', 'wins': 39, 'losses': 33, 'win_pct': 0.542, 'conf_rank': 7,  'playoff_rank': 7},
+    {'team_id': 1610612753, 'team_name': 'Orlando Magic',          'conference': 'East', 'wins': 38, 'losses': 33, 'win_pct': 0.535, 'conf_rank': 8,  'playoff_rank': 8},
+    {'team_id': 1610612748, 'team_name': 'Miami Heat',             'conference': 'East', 'wins': 38, 'losses': 34, 'win_pct': 0.528, 'conf_rank': 9,  'playoff_rank': 9},
     {'team_id': 1610612766, 'team_name': 'Charlotte Hornets',      'conference': 'East', 'wins': 37, 'losses': 34, 'win_pct': 0.521, 'conf_rank': 10, 'playoff_rank': 10},
     # Western Conference
-    {'team_id': 1610612760, 'team_name': 'Oklahoma City Thunder',  'conference': 'West', 'wins': 56, 'losses': 15, 'win_pct': 0.789, 'conf_rank': 1,  'playoff_rank': 1},
-    {'team_id': 1610612759, 'team_name': 'San Antonio Spurs',      'conference': 'West', 'wins': 53, 'losses': 18, 'win_pct': 0.746, 'conf_rank': 2,  'playoff_rank': 2},
-    {'team_id': 1610612747, 'team_name': 'Los Angeles Lakers',     'conference': 'West', 'wins': 46, 'losses': 25, 'win_pct': 0.648, 'conf_rank': 3,  'playoff_rank': 3},
-    {'team_id': 1610612745, 'team_name': 'Houston Rockets',        'conference': 'West', 'wins': 43, 'losses': 27, 'win_pct': 0.614, 'conf_rank': 4,  'playoff_rank': 4},
-    {'team_id': 1610612743, 'team_name': 'Denver Nuggets',         'conference': 'West', 'wins': 44, 'losses': 28, 'win_pct': 0.611, 'conf_rank': 5,  'playoff_rank': 5},
-    {'team_id': 1610612750, 'team_name': 'Minnesota Timberwolves', 'conference': 'West', 'wins': 44, 'losses': 28, 'win_pct': 0.611, 'conf_rank': 6,  'playoff_rank': 6},
+    {'team_id': 1610612760, 'team_name': 'Oklahoma City Thunder',  'conference': 'West', 'wins': 57, 'losses': 15, 'win_pct': 0.792, 'conf_rank': 1,  'playoff_rank': 1},
+    {'team_id': 1610612759, 'team_name': 'San Antonio Spurs',      'conference': 'West', 'wins': 54, 'losses': 18, 'win_pct': 0.750, 'conf_rank': 2,  'playoff_rank': 2},
+    {'team_id': 1610612747, 'team_name': 'Los Angeles Lakers',     'conference': 'West', 'wins': 46, 'losses': 26, 'win_pct': 0.639, 'conf_rank': 3,  'playoff_rank': 3},
+    {'team_id': 1610612743, 'team_name': 'Denver Nuggets',         'conference': 'West', 'wins': 44, 'losses': 28, 'win_pct': 0.611, 'conf_rank': 4,  'playoff_rank': 4},
+    {'team_id': 1610612750, 'team_name': 'Minnesota Timberwolves', 'conference': 'West', 'wins': 44, 'losses': 28, 'win_pct': 0.611, 'conf_rank': 5,  'playoff_rank': 5},
+    {'team_id': 1610612745, 'team_name': 'Houston Rockets',        'conference': 'West', 'wins': 43, 'losses': 28, 'win_pct': 0.606, 'conf_rank': 6,  'playoff_rank': 6},
     {'team_id': 1610612756, 'team_name': 'Phoenix Suns',           'conference': 'West', 'wins': 40, 'losses': 32, 'win_pct': 0.556, 'conf_rank': 7,  'playoff_rank': 7},
-    {'team_id': 1610612746, 'team_name': 'LA Clippers',            'conference': 'West', 'wins': 35, 'losses': 36, 'win_pct': 0.493, 'conf_rank': 8,  'playoff_rank': 8},
-    {'team_id': 1610612757, 'team_name': 'Portland Trail Blazers', 'conference': 'West', 'wins': 35, 'losses': 37, 'win_pct': 0.486, 'conf_rank': 9,  'playoff_rank': 9},
-    {'team_id': 1610612744, 'team_name': 'Golden State Warriors',  'conference': 'West', 'wins': 33, 'losses': 38, 'win_pct': 0.465, 'conf_rank': 10, 'playoff_rank': 10},
+    {'team_id': 1610612746, 'team_name': 'LA Clippers',            'conference': 'West', 'wins': 36, 'losses': 36, 'win_pct': 0.500, 'conf_rank': 8,  'playoff_rank': 8},
+    {'team_id': 1610612757, 'team_name': 'Portland Trail Blazers', 'conference': 'West', 'wins': 36, 'losses': 37, 'win_pct': 0.493, 'conf_rank': 9,  'playoff_rank': 9},
+    {'team_id': 1610612744, 'team_name': 'Golden State Warriors',  'conference': 'West', 'wins': 34, 'losses': 38, 'win_pct': 0.472, 'conf_rank': 10, 'playoff_rank': 10},
 ]
 
 try:
@@ -443,19 +451,7 @@ def generate_matchups(force_conference=None):
     for conf_short in ['East', 'West']:
         conf_full = 'Eastern' if conf_short == 'East' else 'Western'
 
-        # If forcing a specific conference, skip others
         if force_conference and conf_full != force_conference:
-            continue
-
-        # Check what already exists for this conference
-        c.execute('SELECT COUNT(*) FROM series WHERE season = %s AND conference = %s', ('2026', conf_full))
-        series_count = c.fetchone()[0]
-        c.execute('SELECT COUNT(*) FROM playin_games WHERE season = %s AND conference = %s', ('2026', conf_full))
-        playin_count = c.fetchone()[0]
-
-        print(f"{conf_full}: found {series_count} series, {playin_count} play-in games in DB")
-        if series_count >= 2 and playin_count >= 2 and not force_conference:
-            print(f"  -> {conf_full} already complete, skipping")
             continue
 
         teams = sorted([t for t in standings if t['conference'] == conf_short],
@@ -465,8 +461,36 @@ def generate_matchups(force_conference=None):
             print(f"Not enough {conf_full} teams ({len(teams)}), skipping")
             continue
 
-        # Create playoff series (3v6, 4v5) — replace if forcing
-        if series_count < 2 or force_conference:
+        # Expected R1 matchups from current standings
+        expected = {
+            frozenset({teams[2]['team_id'], teams[5]['team_id']}),
+            frozenset({teams[3]['team_id'], teams[4]['team_id']}),
+        }
+
+        c.execute('''SELECT home_team_id, away_team_id FROM series
+                     WHERE season = %s AND conference = %s AND round = 'First Round' ''',
+                  ('2026', conf_full))
+        existing_r1 = {frozenset({r[0], r[1]}) for r in c.fetchall()}
+
+        c.execute('SELECT COUNT(*) FROM playin_games WHERE season = %s AND conference = %s', ('2026', conf_full))
+        playin_count = c.fetchone()[0]
+
+        need_series = (existing_r1 != expected)
+        need_playin = (playin_count < 2)
+
+        # Safety: don't auto-regenerate if any First Round series is no longer active
+        if need_series and not force_conference:
+            c.execute('''SELECT COUNT(*) FROM series WHERE season = %s AND conference = %s
+                         AND round = 'First Round' AND status != 'active' ''', ('2026', conf_full))
+            if c.fetchone()[0] > 0:
+                print(f"  -> {conf_full} has locked/completed R1 series — skipping auto-regeneration")
+                need_series = False
+
+        if not need_series and not need_playin and not force_conference:
+            print(f"  -> {conf_full} already matches current standings, skipping")
+            continue
+
+        if need_series or force_conference:
             c.execute('DELETE FROM series WHERE season = %s AND conference = %s', ('2026', conf_full))
             matchups = [(teams[2], teams[5]), (teams[3], teams[4])]
             bracket_groups = ['B', 'A']  # 3v6 → Group B, 4v5 → Group A
@@ -478,8 +502,7 @@ def generate_matchups(force_conference=None):
                 print(f"  -> #{home['conf_rank']} {home['team_name']} vs #{away['conf_rank']} {away['team_name']}")
             print(f"  Created {conf_full} R1 series (3v6, 4v5)")
 
-        # Create play-in games (7v8, 9v10) — replace if forcing
-        if len(teams) >= 10 and (playin_count < 2 or force_conference):
+        if len(teams) >= 10 and (need_playin or force_conference):
             c.execute('DELETE FROM playin_games WHERE season = %s AND conference = %s', ('2026', conf_full))
             for game_type, idx1, idx2 in [('7v8', 6, 7), ('9v10', 8, 9)]:
                 c.execute('''INSERT INTO playin_games (season, conference, game_type, team1_id, team1_seed,
@@ -1060,38 +1083,44 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
 async def set_series_result(series_id: int, winner_team_id: int, actual_games: int):
     conn = get_db_conn()
     c = conn.cursor()
-    # Get series info for round multiplier
-    c.execute('SELECT round, conference, season, bracket_group FROM series WHERE id = %s', (series_id,))
+
+    c.execute('''SELECT round, conference, season, bracket_group,
+                 home_team_id, away_team_id, home_seed, away_seed
+                 FROM series WHERE id = %s''', (series_id,))
     series_row = c.fetchone()
     if not series_row:
         conn.close()
         raise HTTPException(404, "Series not found")
-    round_name, conf, season, bracket_group = series_row
+    round_name, conf, season, bracket_group = series_row[:4]
+    home_team_id, away_team_id = series_row[4], series_row[5]
+    home_seed, away_seed = series_row[6], series_row[7]
 
-    round_multipliers = {
-        'First Round': 1,
-        'Conference Semifinals': 2,
-        'Conference Finals': 3,
-        'NBA Finals': 4,
-    }
-    mult = round_multipliers.get(round_name, 1)
-    winner_pts = 20 * mult
-    games_pts = 40 * mult  # additional if games also correct
-
-    # Update series status
+    # Mark series completed
     c.execute('UPDATE series SET winner_team_id = %s, actual_games = %s, status = %s WHERE id = %s',
               (winner_team_id, actual_games, 'completed', series_id))
 
-    # Score predictions: winner_pts for correct winner, winner_pts+games_pts for both correct
-    c.execute('''UPDATE predictions SET
-                 is_correct = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END,
-                 points_earned = CASE
-                     WHEN predicted_winner_id = %s AND predicted_games = %s THEN %s
-                     WHEN predicted_winner_id = %s THEN %s
-                     ELSE 0 END
-                 WHERE series_id = %s''',
-              (winner_team_id, winner_team_id, actual_games, winner_pts + games_pts,
-               winner_team_id, winner_pts, series_id))
+    # Score each prediction individually so underdog multipliers apply per pick
+    c.execute('SELECT id, predicted_winner_id, predicted_games FROM predictions WHERE series_id = %s',
+              (series_id,))
+    for pred_id, pred_winner_id, pred_games in c.fetchall():
+        winner_correct = (pred_winner_id == winner_team_id)
+        games_correct  = (pred_games == actual_games)
+
+        # Determine which seed the user predicted
+        if pred_winner_id == home_team_id:
+            pred_seed = home_seed
+        elif pred_winner_id == away_team_id:
+            pred_seed = away_seed
+        else:
+            pred_seed = None
+
+        pts = calculate_series_points(
+            round_name, home_seed, away_seed, pred_seed,
+            winner_correct=winner_correct, games_correct=games_correct,
+        )
+        is_correct = 1 if winner_correct else 0
+        c.execute('UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s',
+                  (is_correct, pts, pred_id))
 
     _recalculate_all_points(c)
     _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id)
@@ -1184,8 +1213,9 @@ async def set_playin_result(game_id: int, winner_id: int):
               (winner_id, 'completed', game_id))
     c.execute('''UPDATE playin_predictions SET
                  is_correct = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END,
-                 points_earned = CASE WHEN predicted_winner_id = %s THEN 5 ELSE 0 END
-                 WHERE game_id = %s''', (winner_id, winner_id, game_id))
+                 points_earned = CASE WHEN predicted_winner_id = %s THEN %s ELSE 0 END
+                 WHERE game_id = %s''',
+              (winner_id, winner_id, calculate_play_in_points(True), game_id))
     _recalculate_all_points(c)
     _try_create_r1_from_playin(c, game_id, winner_id, '2026')
     conn.commit()
@@ -1668,9 +1698,8 @@ async def lock_series_predictions(series_id: int, locked: bool):
 async def get_odds():
     conn = get_db_conn()
     c = conn.cursor()
-    cats = ['champion', 'west_champ', 'east_champ', 'finals_mvp', 'west_finals_mvp', 'east_finals_mvp']
     odds = {}
-    for cat in cats:
+    for cat in FUTURES_BASE_POINTS:
         c.execute("SELECT value FROM site_settings WHERE key = %s", (f'odds_{cat}',))
         row = c.fetchone()
         odds[cat] = float(row[0]) if row else 1.0
@@ -1702,9 +1731,8 @@ async def set_odds(champion: float = 1.0, west_champ: float = 1.0, east_champ: f
 async def get_futures_results(season: str = "2026"):
     conn = get_db_conn()
     c = conn.cursor()
-    cats = ['champion', 'west_champ', 'east_champ', 'finals_mvp', 'west_finals_mvp', 'east_finals_mvp']
     results = {}
-    for cat in cats:
+    for cat in FUTURES_BASE_POINTS:
         c.execute("SELECT value FROM site_settings WHERE key = %s", (f'actual_{cat}_{season}',))
         row = c.fetchone()
         results[cat] = row[0] if row else ''
@@ -1738,15 +1766,10 @@ async def set_futures_results(season: str = "2026",
 
     # Load odds multipliers
     odds = {}
-    for cat in ['champion', 'west_champ', 'east_champ', 'finals_mvp', 'west_finals_mvp', 'east_finals_mvp']:
+    for cat in FUTURES_BASE_POINTS:
         c.execute("SELECT value FROM site_settings WHERE key = %s", (f'odds_{cat}',))
         row = c.fetchone()
         odds[cat] = float(row[0]) if row else 1.0
-
-    base_points = {
-        'champion': 200, 'west_champ': 100, 'east_champ': 100,
-        'finals_mvp': 80, 'west_finals_mvp': 50, 'east_finals_mvp': 50,
-    }
 
     # Score all futures predictions
     c.execute('''SELECT id, champion_team_id, west_champ_team_id, east_champ_team_id,
@@ -1756,36 +1779,29 @@ async def set_futures_results(season: str = "2026",
 
     for fp in fps:
         fp_id = fp[0]
-        champ_id, west_id, east_id = fp[1], fp[2], fp[3]
-        fmvp, wmvp, emvp = fp[4], fp[5], fp[6]
-
-        def is_correct_team(pred_id, actual_id):
-            if not actual_id: return None
-            return 1 if pred_id and pred_id == actual_id else 0
-
-        def is_correct_player(pred, actual):
-            if not actual: return None
-            return 1 if pred and pred.strip().lower() == actual.strip().lower() else 0
-
-        c_champ = is_correct_team(champ_id, actual_champion_id)
-        c_west  = is_correct_team(west_id,  actual_west_champ_id)
-        c_east  = is_correct_team(east_id,  actual_east_champ_id)
-        c_fmvp  = is_correct_player(fmvp,  actual_finals_mvp)
-        c_wmvp  = is_correct_player(wmvp,  actual_west_finals_mvp)
-        c_emvp  = is_correct_player(emvp,  actual_east_finals_mvp)
-
-        pts = 0
-        if c_champ == 1: pts += int(base_points['champion']    * odds['champion'])
-        if c_west  == 1: pts += int(base_points['west_champ']  * odds['west_champ'])
-        if c_east  == 1: pts += int(base_points['east_champ']  * odds['east_champ'])
-        if c_fmvp  == 1: pts += int(base_points['finals_mvp']  * odds['finals_mvp'])
-        if c_wmvp  == 1: pts += int(base_points['west_finals_mvp'] * odds['west_finals_mvp'])
-        if c_emvp  == 1: pts += int(base_points['east_finals_mvp'] * odds['east_finals_mvp'])
+        preds = {
+            'champion':        fp[1],
+            'west_champ':      fp[2],
+            'east_champ':      fp[3],
+            'finals_mvp':      fp[4],
+            'west_finals_mvp': fp[5],
+            'east_finals_mvp': fp[6],
+        }
+        actuals = {
+            'champion':        actual_champion_id,
+            'west_champ':      actual_west_champ_id,
+            'east_champ':      actual_east_champ_id,
+            'finals_mvp':      actual_finals_mvp,
+            'west_finals_mvp': actual_west_finals_mvp,
+            'east_finals_mvp': actual_east_finals_mvp,
+        }
+        pts, correct = calculate_futures_points(preds, actuals, odds)
 
         c.execute('''UPDATE futures_predictions SET
                      is_correct_champion = %s, is_correct_west = %s, is_correct_east = %s,
                      points_earned = %s WHERE id = %s''',
-                  (c_champ, c_west, c_east, pts, fp_id))
+                  (correct.get('champion'), correct.get('west_champ'), correct.get('east_champ'),
+                   pts, fp_id))
 
     _recalculate_all_points(c)
     conn.commit()
@@ -1843,9 +1859,8 @@ async def save_leaders(user_id: int, season: str = "2026",
 async def get_leaders_results(season: str = "2026"):
     conn = get_db_conn()
     c = conn.cursor()
-    cats = ['scorer', 'assists', 'rebounds', 'threes', 'steals', 'blocks']
     results = {}
-    for cat in cats:
+    for cat in LEADERS_POINTS:
         c.execute("SELECT value FROM site_settings WHERE key = %s", (f'leaders_{cat}_{season}',))
         row = c.fetchone()
         results[cat] = row[0] if row else ''
@@ -1869,24 +1884,17 @@ async def set_leaders_results(season: str = "2026",
         c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
                   (f'leaders_{cat}_{season}', val))
 
-    points_map = {'scorer': 100, 'assists': 70, 'rebounds': 70, 'threes': 60, 'steals': 40, 'blocks': 40}
-
     c.execute('''SELECT id, top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks
                  FROM leaders_predictions WHERE season = %s''', (season,))
     lps = c.fetchall()
     for lp in lps:
         lp_id = lp[0]
-        preds = {'scorer': lp[1], 'assists': lp[2], 'rebounds': lp[3], 'threes': lp[4], 'steals': lp[5], 'blocks': lp[6]}
-        pts = 0
-        correct = {}
-        for cat, actual_val in actual.items():
-            if actual_val and preds[cat]:
-                is_c = 1 if preds[cat].strip().lower() == actual_val.strip().lower() else 0
-                correct[cat] = is_c
-                if is_c:
-                    pts += points_map[cat]
-            else:
-                correct[cat] = None
+        preds = {
+            'scorer':   lp[1], 'assists':   lp[2],
+            'rebounds': lp[3], 'threes':    lp[4],
+            'steals':   lp[5], 'blocks':    lp[6],
+        }
+        pts, correct = calculate_leaders_points(preds, actual)
         c.execute('''UPDATE leaders_predictions SET
                      is_correct_scorer = %s, is_correct_assists = %s,
                      is_correct_rebounds = %s, is_correct_threes = %s,
