@@ -49,21 +49,26 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
 
   const handleGoogleLogin = async () => {
     if (!supabase) {
-      setError('Google login is not configured yet.');
+      setError('Google login is not configured. Add VITE_SUPABASE_ANON_KEY in Vercel → Settings → Environment Variables.');
       return;
     }
     setGoogleLoading(true);
     setError('');
     try {
       const redirectTo = import.meta.env.VITE_APP_URL || window.location.origin;
-      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      console.log('[Google OAuth] redirectTo:', redirectTo);
+      const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo },
       });
-      if (oauthError) throw oauthError;
-      // Redirect happens — no further action needed here
+      console.log('[Google OAuth] result:', { data, oauthError });
+      if (oauthError) {
+        throw new Error(oauthError.message || oauthError.toString() || 'OAuth error');
+      }
+      // Browser is now redirecting — loading stays true intentionally
     } catch (err) {
-      setError(err.message || 'Google sign-in failed');
+      console.error('[Google OAuth] error:', err);
+      setError(err.message || 'Google sign-in failed. Check browser console for details.');
       setGoogleLoading(false);
     }
   };
