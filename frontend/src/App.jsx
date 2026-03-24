@@ -99,41 +99,41 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
 
   if (currentUser) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-12">
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center px-4 py-2 rounded-full bg-orange-500/20 border border-orange-500/30 mb-6">
-            <span className="text-sm font-bold text-orange-400">✨ 2026 PLAYOFFS</span>
+      <div className="max-w-7xl mx-auto px-4 py-8 md:py-12">
+        <div className="text-center mb-10 md:mb-16">
+          <div className="inline-flex items-center px-3 py-1.5 rounded-full bg-orange-500/20 border border-orange-500/30 mb-4 md:mb-6">
+            <span className="text-xs md:text-sm font-bold text-orange-400">✨ 2026 PLAYOFFS</span>
           </div>
-          <h1 className="text-6xl font-black text-white mb-6">
+          <h1 className="text-4xl md:text-6xl font-black text-white mb-4 md:mb-6">
             NBA PLAYOFF<br />
             <span className="bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">
               PREDICTOR
             </span>
           </h1>
-          <p className="text-xl text-slate-300 mb-10">
+          <p className="text-lg md:text-xl text-slate-300 mb-7 md:mb-10">
             Welcome back, <strong>{currentUser.username}</strong>!
           </p>
-          <div className="flex gap-4 justify-center">
-            <Button onClick={() => onNavigate('betting')} className="px-8 py-4 text-lg">
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <Button onClick={() => onNavigate('betting')} className="px-6 py-3.5 text-base md:px-8 md:py-4 md:text-lg">
               Make Predictions →
             </Button>
-            <Button onClick={() => onNavigate('leaderboard')} variant="outline" className="px-8 py-4 text-lg">
+            <Button onClick={() => onNavigate('leaderboard')} variant="outline" className="px-6 py-3.5 text-base md:px-8 md:py-4 md:text-lg">
               View Leaderboard
             </Button>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="p-6 text-center">
-            <div className="text-4xl font-black text-orange-400 mb-2">{currentUser.points || 0}</div>
-            <div className="text-slate-400">Total Points</div>
+        <div className="grid grid-cols-3 gap-3 md:gap-6">
+          <Card className="p-4 md:p-6 text-center">
+            <div className="text-3xl md:text-4xl font-black text-orange-400 mb-1 md:mb-2">{currentUser.points || 0}</div>
+            <div className="text-slate-400 text-xs md:text-sm">Points</div>
           </Card>
-          <Card className="p-6 text-center">
-            <div className="text-4xl font-black text-blue-400 mb-2">0</div>
-            <div className="text-slate-400">Predictions Made</div>
+          <Card className="p-4 md:p-6 text-center">
+            <div className="text-3xl md:text-4xl font-black text-blue-400 mb-1 md:mb-2">0</div>
+            <div className="text-slate-400 text-xs md:text-sm">Predictions</div>
           </Card>
-          <Card className="p-6 text-center">
-            <div className="text-4xl font-black text-green-400 mb-2">0%</div>
-            <div className="text-slate-400">Accuracy</div>
+          <Card className="p-4 md:p-6 text-center">
+            <div className="text-3xl md:text-4xl font-black text-green-400 mb-1 md:mb-2">0%</div>
+            <div className="text-slate-400 text-xs md:text-sm">Accuracy</div>
           </Card>
         </div>
         <FuturesPage currentUser={currentUser} />
@@ -141,87 +141,130 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
     );
   }
 
-  const titles = { login: 'Welcome Back', reset: 'Reset Password' };
-  const subtitles = { login: 'Sign in to your account', reset: 'Enter your username and a new password' };
-
-  return (
-    <div className="max-w-md mx-auto px-4 py-12">
-      <div className="text-center mb-8">
-        <h1 className="text-4xl font-black text-white mb-2">{titles[mode]}</h1>
-        <p className="text-slate-400">{subtitles[mode]}</p>
-      </div>
-      <Card className="p-6">
-        {mode === 'login' && (
-          <>
-            {/* Google Sign-In — primary action */}
-            <button
-              onClick={handleGoogleLogin}
-              disabled={googleLoading}
-              className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-lg transition-all border border-gray-200 shadow-sm disabled:opacity-60"
-            >
-              <GoogleIcon />
-              {googleLoading ? 'Redirecting…' : 'Continue with Google'}
-            </button>
-
-            <div className="relative my-5">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-700" />
-              </div>
-              <div className="relative flex justify-center text-xs text-slate-500">
-                <span className="bg-slate-900 px-3">or sign in with password</span>
-              </div>
-            </div>
-          </>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="text"
-            placeholder="Username"
-            value={formData.username}
-            onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-            className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white"
-            required
-          />
-          {mode === 'login' && (
+  // ── Auth page (login / reset) ─────────────────────────────────────────────
+  if (mode === 'reset') {
+    return (
+      <div className="min-h-[calc(100dvh-7rem)] flex flex-col items-center justify-center px-4 py-8">
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-7">
+            <h1 className="text-3xl font-black text-white mb-1">Reset Password</h1>
+            <p className="text-slate-400 text-sm">Enter your username and a new password</p>
+          </div>
+          <div className="bg-slate-900/70 border border-slate-700/60 rounded-2xl p-6 space-y-3">
             <input
-              type="password"
-              placeholder="Password"
-              value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white"
+              type="text"
+              placeholder="Username"
+              value={formData.username}
+              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              className="w-full px-4 py-3.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-base focus:outline-none focus:border-orange-500 transition-colors"
               required
             />
-          )}
-          {mode === 'reset' && (
             <input
               type="password"
               placeholder="New Password"
               value={formData.newPassword}
               onChange={(e) => setFormData({ ...formData, newPassword: e.target.value })}
-              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white"
+              className="w-full px-4 py-3.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-base focus:outline-none focus:border-orange-500 transition-colors"
               required
             />
-          )}
-          {error && <p className="text-red-400 text-sm">{error}</p>}
-          {success && <p className="text-green-400 text-sm">{success}</p>}
-          <Button type="submit" className="w-full py-3" disabled={loading}>
-            {loading ? 'Loading...' : mode === 'login' ? 'Login' : 'Reset Password'}
-          </Button>
-        </form>
-        <div className="mt-4 text-center space-y-2">
-          {mode !== 'reset' && (
-            <button onClick={() => setMode('reset')} className="block w-full text-slate-400 hover:text-slate-300 text-sm">
-              Forgot password?
+            {error   && <p className="text-red-400 text-sm">{error}</p>}
+            {success && <p className="text-green-400 text-sm">{success}</p>}
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="w-full py-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-black text-base transition-colors disabled:opacity-60"
+            >
+              {loading ? 'Updating…' : 'Reset Password'}
             </button>
-          )}
-          {mode === 'reset' && (
-            <button onClick={() => setMode('login')} className="block w-full text-orange-400 hover:text-orange-300 text-sm">
-              Back to login
-            </button>
-          )}
+          </div>
+          <button
+            onClick={() => setMode('login')}
+            className="w-full mt-4 py-3 text-orange-400 hover:text-orange-300 active:text-orange-200 text-sm font-semibold transition-colors"
+          >
+            ← Back to sign in
+          </button>
         </div>
-      </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-[calc(100dvh-7rem)] flex flex-col items-center justify-center px-4 py-8">
+      {/* ── Brand header ── */}
+      <div className="text-center mb-8">
+        <div className="w-16 h-16 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-orange-500/30">
+          <Trophy className="w-9 h-9 text-white" />
+        </div>
+        <h1 className="text-2xl font-black text-white tracking-tight">NBA PLAYOFF</h1>
+        <p className="text-orange-400 font-bold text-xs tracking-widest mt-0.5">PREDICTOR 2026</p>
+      </div>
+
+      <div className="w-full max-w-sm">
+        {/* ── Google button — primary CTA ── */}
+        <button
+          onClick={handleGoogleLogin}
+          disabled={googleLoading}
+          className="w-full flex items-center justify-center gap-3 py-4 px-6 bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-800 font-bold rounded-2xl transition-all shadow-lg hover:shadow-xl text-base disabled:opacity-60 disabled:cursor-not-allowed"
+          style={{ minHeight: 56 }}
+        >
+          {googleLoading ? (
+            <>
+              <div className="w-5 h-5 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin" />
+              Redirecting to Google…
+            </>
+          ) : (
+            <>
+              <GoogleIcon />
+              Continue with Google
+            </>
+          )}
+        </button>
+
+        {/* ── Divider ── */}
+        <div className="flex items-center gap-3 my-6">
+          <div className="flex-1 h-px bg-slate-700/70" />
+          <span className="text-xs text-slate-500 font-medium uppercase tracking-wider">or</span>
+          <div className="flex-1 h-px bg-slate-700/70" />
+        </div>
+
+        {/* ── Password login ── */}
+        <div className="bg-slate-900/70 border border-slate-700/60 rounded-2xl p-5 space-y-3">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Sign in with password</p>
+          <input
+            type="text"
+            placeholder="Username"
+            value={formData.username}
+            onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+            className="w-full px-4 py-3.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-base focus:outline-none focus:border-orange-500 transition-colors"
+            autoCapitalize="none"
+            autoCorrect="off"
+          />
+          <input
+            type="password"
+            placeholder="Password"
+            value={formData.password}
+            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+            className="w-full px-4 py-3.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-base focus:outline-none focus:border-orange-500 transition-colors"
+          />
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <button
+            onClick={handleSubmit}
+            disabled={loading}
+            className="w-full py-3.5 rounded-xl bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-white font-bold text-base transition-colors disabled:opacity-60"
+            style={{ minHeight: 52 }}
+          >
+            {loading ? 'Signing in…' : 'Sign In'}
+          </button>
+        </div>
+
+        <button
+          onClick={() => setMode('reset')}
+          className="w-full mt-4 py-3 text-slate-400 hover:text-slate-300 active:text-slate-200 text-sm font-medium transition-colors"
+          style={{ minHeight: 44 }}
+        >
+          Forgot password?
+        </button>
+      </div>
     </div>
   );
 };
@@ -605,8 +648,11 @@ function App() {
     }
   };
 
-  // Bottom nav: core 5 items (no admin), account accessible via sidebar only
-  const bottomNavItems = navItems.filter(i => i.id !== 'admin').slice(0, 5);
+  // Bottom nav: core 5 items (no admin) + Account when logged in
+  const coreNavItems = navItems.filter(i => i.id !== 'admin').slice(0, 5);
+  const bottomNavItems = currentUser
+    ? [...coreNavItems, { id: 'account', label: 'Account', icon: Settings }]
+    : coreNavItems;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900">
@@ -693,12 +739,20 @@ function App() {
             </div>
           </div>
           {currentUser && (
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-sm font-black">
-                {currentUser.username[0].toUpperCase()}
-              </div>
+            <button
+              onClick={() => navigate('account')}
+              className="flex items-center gap-2 active:opacity-70 transition-opacity"
+              style={{ minHeight: 44 }}
+            >
+              {currentUser.avatar_url ? (
+                <img src={currentUser.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+              ) : (
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-sm font-black shrink-0">
+                  {currentUser.username[0].toUpperCase()}
+                </div>
+              )}
               <span className="text-xs text-slate-400 font-bold">{currentUser.points || 0}pts</span>
-            </div>
+            </button>
           )}
         </div>
       </div>
