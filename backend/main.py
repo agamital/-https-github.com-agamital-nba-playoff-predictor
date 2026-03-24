@@ -29,7 +29,34 @@ _NBA_HEADERS = {
     'Referer': 'https://www.nba.com/',
     'Connection': 'keep-alive',
 }
-_NBA_TIMEOUT = 60  # seconds
+_NBA_TIMEOUT = 5  # seconds — fail fast, never block users
+
+# Hardcoded standings (2025-26 season, as of 2026-03-23).
+# Used instantly on startup so users never wait for the NBA API.
+_HARDCODED_STANDINGS = [
+    # Eastern Conference
+    {'team_id': 1610612765, 'team_name': 'Detroit Pistons',        'conference': 'East', 'wins': 51, 'losses': 19, 'win_pct': 0.729, 'conf_rank': 1,  'playoff_rank': 1},
+    {'team_id': 1610612738, 'team_name': 'Boston Celtics',         'conference': 'East', 'wins': 47, 'losses': 24, 'win_pct': 0.662, 'conf_rank': 2,  'playoff_rank': 2},
+    {'team_id': 1610612752, 'team_name': 'New York Knicks',        'conference': 'East', 'wins': 47, 'losses': 25, 'win_pct': 0.653, 'conf_rank': 3,  'playoff_rank': 3},
+    {'team_id': 1610612739, 'team_name': 'Cleveland Cavaliers',    'conference': 'East', 'wins': 44, 'losses': 27, 'win_pct': 0.620, 'conf_rank': 4,  'playoff_rank': 4},
+    {'team_id': 1610612761, 'team_name': 'Toronto Raptors',        'conference': 'East', 'wins': 39, 'losses': 31, 'win_pct': 0.557, 'conf_rank': 5,  'playoff_rank': 5},
+    {'team_id': 1610612737, 'team_name': 'Atlanta Hawks',          'conference': 'East', 'wins': 39, 'losses': 32, 'win_pct': 0.549, 'conf_rank': 6,  'playoff_rank': 6},
+    {'team_id': 1610612755, 'team_name': 'Philadelphia 76ers',     'conference': 'East', 'wins': 39, 'losses': 32, 'win_pct': 0.549, 'conf_rank': 7,  'playoff_rank': 7},
+    {'team_id': 1610612753, 'team_name': 'Orlando Magic',          'conference': 'East', 'wins': 38, 'losses': 32, 'win_pct': 0.543, 'conf_rank': 8,  'playoff_rank': 8},
+    {'team_id': 1610612748, 'team_name': 'Miami Heat',             'conference': 'East', 'wins': 38, 'losses': 33, 'win_pct': 0.535, 'conf_rank': 9,  'playoff_rank': 9},
+    {'team_id': 1610612766, 'team_name': 'Charlotte Hornets',      'conference': 'East', 'wins': 37, 'losses': 34, 'win_pct': 0.521, 'conf_rank': 10, 'playoff_rank': 10},
+    # Western Conference
+    {'team_id': 1610612760, 'team_name': 'Oklahoma City Thunder',  'conference': 'West', 'wins': 56, 'losses': 15, 'win_pct': 0.789, 'conf_rank': 1,  'playoff_rank': 1},
+    {'team_id': 1610612759, 'team_name': 'San Antonio Spurs',      'conference': 'West', 'wins': 53, 'losses': 18, 'win_pct': 0.746, 'conf_rank': 2,  'playoff_rank': 2},
+    {'team_id': 1610612747, 'team_name': 'Los Angeles Lakers',     'conference': 'West', 'wins': 46, 'losses': 25, 'win_pct': 0.648, 'conf_rank': 3,  'playoff_rank': 3},
+    {'team_id': 1610612745, 'team_name': 'Houston Rockets',        'conference': 'West', 'wins': 43, 'losses': 27, 'win_pct': 0.614, 'conf_rank': 4,  'playoff_rank': 4},
+    {'team_id': 1610612743, 'team_name': 'Denver Nuggets',         'conference': 'West', 'wins': 44, 'losses': 28, 'win_pct': 0.611, 'conf_rank': 5,  'playoff_rank': 5},
+    {'team_id': 1610612750, 'team_name': 'Minnesota Timberwolves', 'conference': 'West', 'wins': 44, 'losses': 28, 'win_pct': 0.611, 'conf_rank': 6,  'playoff_rank': 6},
+    {'team_id': 1610612756, 'team_name': 'Phoenix Suns',           'conference': 'West', 'wins': 40, 'losses': 32, 'win_pct': 0.556, 'conf_rank': 7,  'playoff_rank': 7},
+    {'team_id': 1610612746, 'team_name': 'LA Clippers',            'conference': 'West', 'wins': 35, 'losses': 36, 'win_pct': 0.493, 'conf_rank': 8,  'playoff_rank': 8},
+    {'team_id': 1610612757, 'team_name': 'Portland Trail Blazers', 'conference': 'West', 'wins': 35, 'losses': 37, 'win_pct': 0.486, 'conf_rank': 9,  'playoff_rank': 9},
+    {'team_id': 1610612744, 'team_name': 'Golden State Warriors',  'conference': 'West', 'wins': 33, 'losses': 38, 'win_pct': 0.465, 'conf_rank': 10, 'playoff_rank': 10},
+]
 
 try:
     from nba_api.stats.static import teams as nba_teams_api
@@ -278,26 +305,16 @@ def _refresh_standings_cache(force=False):
     if cache_valid and not force:
         return  # Still fresh, nothing to do
 
-    last_error = None
-    for attempt in range(1, 3):          # attempt 1, then retry (attempt 2)
-        try:
-            print(f"Standings fetch attempt {attempt}…")
-            standings = _fetch_standings_from_api()
-            now = datetime.now()
-            _standings_cache["data"]       = standings
-            _standings_cache["fetched_at"] = now
-            _standings_cache["expires"]    = now + timedelta(minutes=5)
-            print(f"Standings refreshed at {now.strftime('%H:%M:%S')} — {len(standings)} teams")
-            return
-        except Exception as e:
-            last_error = e
-            print(f"Standings attempt {attempt} failed: {e}")
-            if attempt < 2:
-                print("Retrying in 5 s…")
-                time.sleep(5)
-
-    # Both attempts failed — keep stale cache, just log
-    print(f"Standings unavailable after 2 attempts. Keeping cached data. Last error: {last_error}")
+    try:
+        print("Standings fetch attempt…")
+        standings = _fetch_standings_from_api()
+        now = datetime.now()
+        _standings_cache["data"]       = standings
+        _standings_cache["fetched_at"] = now
+        _standings_cache["expires"]    = now + timedelta(hours=1)
+        print(f"Standings refreshed — {len(standings)} teams")
+    except Exception as e:
+        print(f"NBA API unavailable ({e}), using cached/hardcoded standings")
 
 
 def _load_standings_from_db():
@@ -324,26 +341,27 @@ def _load_standings_from_db():
 
 def get_standings(force_refresh=False):
     """
-    Returns standings. Priority:
-      1. In-memory cache (if still fresh and not forced)
-      2. Live NBA API fetch (with retry)
-      3. DB-stored manual standings (seed_standings.py fallback)
+    Returns standings instantly. Never blocks on the NBA API.
+    Priority: 1) memory cache  2) DB  3) hardcoded constant
+    force_refresh triggers a background API refresh but still returns immediately.
     """
-    _refresh_standings_cache(force=force_refresh)
+    if force_refresh:
+        threading.Thread(target=_refresh_standings_cache, args=(True,), daemon=True).start()
 
     if _standings_cache["data"]:
         return _standings_cache["data"]
 
-    # API failed — fall back to DB-seeded standings
     db_data = _load_standings_from_db()
     if db_data:
-        print("Using DB-seeded standings (NBA API unavailable)")
-        # Populate cache so subsequent calls don't hit DB every time
+        print("Using DB-seeded standings")
         now = datetime.now()
         _standings_cache["data"]       = db_data
         _standings_cache["fetched_at"] = now
         _standings_cache["expires"]    = now + timedelta(hours=1)
-    return db_data
+        return db_data
+
+    print("Using hardcoded standings fallback")
+    return _HARDCODED_STANDINGS
 
 
 def _background_standings_loop():
@@ -447,7 +465,14 @@ def ensure_admin_users():
 
 @app.on_event("startup")
 async def startup():
-    # Each step is wrapped so a failure in one never prevents the server from starting.
+    # Load hardcoded standings instantly — app responds to users immediately,
+    # no waiting for NBA API or DB on a cold start.
+    now = datetime.now()
+    _standings_cache["data"]       = _HARDCODED_STANDINGS
+    _standings_cache["fetched_at"] = now
+    _standings_cache["expires"]    = now + timedelta(hours=1)
+    print(f"Loaded {len(_HARDCODED_STANDINGS)} hardcoded standings into cache")
+
     try:
         init_db()
         print("DB initialised")
@@ -459,7 +484,7 @@ async def startup():
     except Exception as e:
         print(f"ERROR ensure_admin_users: {e}")
 
-    # Load DB-seeded standings into memory cache immediately (no network call)
+    # Promote DB standings over hardcoded if available
     try:
         db_standings = _load_standings_from_db()
         if db_standings:
@@ -467,7 +492,7 @@ async def startup():
             _standings_cache["data"]       = db_standings
             _standings_cache["fetched_at"] = now
             _standings_cache["expires"]    = now + timedelta(hours=1)
-            print(f"Pre-loaded {len(db_standings)} teams from DB standings cache")
+            print(f"Upgraded to {len(db_standings)} DB standings")
     except Exception as e:
         print(f"ERROR loading DB standings: {e}")
 
@@ -533,12 +558,13 @@ async def register(user: User):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
-        c.execute('INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
-                  (user.username, user.email, user.password))
+        role = 'admin' if user.email in _ADMIN_EMAILS else 'user'
+        c.execute('INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)',
+                  (user.username, user.email, user.password, role))
         conn.commit()
         user_id = c.lastrowid
         conn.close()
-        return {"user_id": user_id, "username": user.username}
+        return {"user_id": user_id, "username": user.username, "email": user.email, "role": role, "points": 0}
     except:
         conn.close()
         raise HTTPException(400, "User exists")
@@ -594,12 +620,15 @@ async def login(creds: UserLogin):
     c = conn.cursor()
     c.execute('SELECT * FROM users WHERE username = ? AND password = ?', (creds.username, creds.password))
     row = c.fetchone()
-    conn.close()
-    
     if not row:
+        conn.close()
         raise HTTPException(401, "Invalid credentials")
-    
-    return {"user_id": row[0], "username": row[1], "email": row[2], "role": row[4], "points": row[5]}
+    role = 'admin' if row[2] in _ADMIN_EMAILS else row[4]
+    if role == 'admin' and row[4] != 'admin':
+        c.execute("UPDATE users SET role='admin' WHERE id=?", (row[0],))
+        conn.commit()
+    conn.close()
+    return {"user_id": row[0], "username": row[1], "email": row[2], "role": role, "points": row[5]}
 
 @app.get("/api/series")
 async def api_series(season: str = "2026"):
