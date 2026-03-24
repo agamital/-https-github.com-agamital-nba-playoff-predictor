@@ -8,6 +8,8 @@ import asyncio
 import time
 import threading
 import os
+import re
+import requests
 import psycopg2
 import psycopg2.extras
 
@@ -641,6 +643,64 @@ async def login(creds: UserLogin):
         conn.commit()
     conn.close()
     return {"user_id": row[0], "username": row[1], "email": row[2], "role": role, "points": row[5]}
+
+@app.post("/api/auth/google")
+async def google_auth(access_token: str):
+    """Verify a Supabase OAuth access token and return (or create) our app user."""
+    supabase_url = os.environ.get("SUPABASE_URL", "https://nvfmfbedpbulynqmbdqt.supabase.co")
+    supabase_anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
+
+    resp = requests.get(
+        f"{supabase_url}/auth/v1/user",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "apikey": supabase_anon_key,
+        },
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(401, "Invalid or expired Google token")
+
+    data = resp.json()
+    email = data.get("email", "")
+    if not email:
+        raise HTTPException(400, "No email returned from Google")
+
+    meta = data.get("user_metadata", {})
+    full_name = meta.get("full_name") or meta.get("name") or ""
+    base_username = re.sub(r'[^a-z0-9_]', '', full_name.lower().replace(" ", "_")) or email.split("@")[0]
+
+    conn = get_db_conn()
+    c = conn.cursor()
+
+    # Existing user?
+    c.execute("SELECT id, username, email, password, role, points FROM users WHERE email = %s", (email,))
+    row = c.fetchone()
+
+    if row:
+        role = 'admin' if email in _ADMIN_EMAILS else row[4]
+        if role == 'admin' and row[4] != 'admin':
+            c.execute("UPDATE users SET role='admin' WHERE id=%s", (row[0],))
+            conn.commit()
+        conn.close()
+        return {"user_id": row[0], "username": row[1], "email": row[2], "role": role, "points": row[5]}
+
+    # New user — ensure username is unique
+    role = 'admin' if email in _ADMIN_EMAILS else 'user'
+    username = base_username
+    c.execute("SELECT id FROM users WHERE username = %s", (username,))
+    if c.fetchone():
+        username = base_username + "_" + str(int(time.time()))[-4:]
+
+    c.execute(
+        "INSERT INTO users (username, email, password, role) VALUES (%s, %s, %s, %s) RETURNING id",
+        (username, email, "", role)
+    )
+    conn.commit()
+    user_id = c.fetchone()[0]
+    conn.close()
+    return {"user_id": user_id, "username": username, "email": email, "role": role, "points": 0}
+
 
 @app.get("/api/series")
 async def api_series(season: str = "2026"):

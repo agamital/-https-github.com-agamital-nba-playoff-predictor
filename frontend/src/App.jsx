@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Trophy, Users, Target, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X } from 'lucide-react';
 import * as api from './services/api';
+import { supabase } from './lib/supabase';
 import StandingsPage from './StandingsPage';
 import './index.css';
 import MyPredictionsPage from './MyPredictionsPage';
@@ -28,12 +29,43 @@ const Card = ({ children, className, onClick }) => (
   </div>
 );
 
+// Google "G" logo SVG
+const GoogleIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+  </svg>
+);
+
 const HomePage = ({ currentUser, onNavigate, onLogin }) => {
-  const [mode, setMode] = useState('login'); // 'login' | 'register' | 'reset'
-  const [formData, setFormData] = useState({ username: '', email: '', password: '', newPassword: '' });
+  const [mode, setMode] = useState('login'); // 'login' | 'reset'
+  const [formData, setFormData] = useState({ username: '', password: '', newPassword: '' });
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  const handleGoogleLogin = async () => {
+    if (!supabase) {
+      setError('Google login is not configured yet.');
+      return;
+    }
+    setGoogleLoading(true);
+    setError('');
+    try {
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin },
+      });
+      if (oauthError) throw oauthError;
+      // Redirect happens — no further action needed here
+    } catch (err) {
+      setError(err.message || 'Google sign-in failed');
+      setGoogleLoading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -43,9 +75,6 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
     try {
       if (mode === 'login') {
         const user = await api.login(formData.username, formData.password);
-        onLogin(user);
-      } else if (mode === 'register') {
-        const user = await api.register(formData.username, formData.email, formData.password);
         onLogin(user);
       } else if (mode === 'reset') {
         await api.resetPassword(formData.username, formData.newPassword);
@@ -104,8 +133,8 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
     );
   }
 
-  const titles = { login: 'Welcome Back', register: 'Join Now', reset: 'Reset Password' };
-  const subtitles = { login: 'Login to your account', register: 'Create your account', reset: 'Enter your username and a new password' };
+  const titles = { login: 'Welcome Back', reset: 'Reset Password' };
+  const subtitles = { login: 'Sign in to your account', reset: 'Enter your username and a new password' };
 
   return (
     <div className="max-w-md mx-auto px-4 py-12">
@@ -114,6 +143,29 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
         <p className="text-slate-400">{subtitles[mode]}</p>
       </div>
       <Card className="p-6">
+        {mode === 'login' && (
+          <>
+            {/* Google Sign-In — primary action */}
+            <button
+              onClick={handleGoogleLogin}
+              disabled={googleLoading}
+              className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-lg transition-all border border-gray-200 shadow-sm disabled:opacity-60"
+            >
+              <GoogleIcon />
+              {googleLoading ? 'Redirecting…' : 'Continue with Google'}
+            </button>
+
+            <div className="relative my-5">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-700" />
+              </div>
+              <div className="relative flex justify-center text-xs text-slate-500">
+                <span className="bg-slate-900 px-3">or sign in with password</span>
+              </div>
+            </div>
+          </>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <input
             type="text"
@@ -123,17 +175,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white"
             required
           />
-          {mode === 'register' && (
-            <input
-              type="email"
-              placeholder="Email"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white"
-              required
-            />
-          )}
-          {mode !== 'reset' && (
+          {mode === 'login' && (
             <input
               type="password"
               placeholder="Password"
@@ -156,23 +198,18 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
           {error && <p className="text-red-400 text-sm">{error}</p>}
           {success && <p className="text-green-400 text-sm">{success}</p>}
           <Button type="submit" className="w-full py-3" disabled={loading}>
-            {loading ? 'Loading...' : mode === 'login' ? 'Login' : mode === 'register' ? 'Sign Up' : 'Reset Password'}
+            {loading ? 'Loading...' : mode === 'login' ? 'Login' : 'Reset Password'}
           </Button>
         </form>
         <div className="mt-4 text-center space-y-2">
-          {mode !== 'login' && (
-            <button onClick={() => setMode('login')} className="block w-full text-orange-400 hover:text-orange-300 text-sm">
-              Already have an account? Login
-            </button>
-          )}
-          {mode !== 'register' && (
-            <button onClick={() => setMode('register')} className="block w-full text-orange-400 hover:text-orange-300 text-sm">
-              Don't have an account? Sign up
-            </button>
-          )}
           {mode !== 'reset' && (
             <button onClick={() => setMode('reset')} className="block w-full text-slate-400 hover:text-slate-300 text-sm">
               Forgot password?
+            </button>
+          )}
+          {mode === 'reset' && (
+            <button onClick={() => setMode('login')} className="block w-full text-orange-400 hover:text-orange-300 text-sm">
+              Back to login
             </button>
           )}
         </div>
@@ -481,6 +518,23 @@ function App() {
         localStorage.setItem('nba_user', JSON.stringify(updated));
       }).catch(() => {});
     }
+
+    // Handle Google OAuth callback from Supabase
+    if (!supabase) return;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session && !localStorage.getItem('nba_user')) {
+        try {
+          const user = await api.loginWithGoogle(session.access_token);
+          setCurrentUser(user);
+          localStorage.setItem('nba_user', JSON.stringify(user));
+          // Sign out of Supabase session — we use our own auth from here on
+          await supabase.auth.signOut();
+        } catch (err) {
+          console.error('Google login failed:', err);
+        }
+      }
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   const handleLogin = (user) => {

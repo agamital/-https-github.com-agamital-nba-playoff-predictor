@@ -61,6 +61,13 @@ export const login = async (username, password) => {
   return response.data;
 };
 
+export const loginWithGoogle = async (accessToken) => {
+  const response = await api.post('/api/auth/google', null, {
+    params: { access_token: accessToken },
+  });
+  return response.data;
+};
+
 // Series
 export const getSeries = async (season = '2026', status = null) => {
   const params = { season };
