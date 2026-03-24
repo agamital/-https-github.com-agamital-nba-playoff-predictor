@@ -61,10 +61,41 @@ export const login = async (username, password) => {
   return response.data;
 };
 
-export const loginWithGoogle = async (email, name = '') => {
+export const loginWithGoogle = async (email, name = '', avatarUrl = '') => {
   const response = await api.post('/api/auth/google', null, {
-    params: { email, name },
+    params: { email, name, avatar_url: avatarUrl },
   });
+  return response.data;
+};
+
+// User profiles
+export const getUserProfile = async (username) => {
+  const response = await api.get(`/api/users/${username}`);
+  return response.data;
+};
+
+// Account management
+export const getAccount = async (userId) => {
+  const response = await api.get('/api/account', { params: { user_id: userId } });
+  return response.data;
+};
+
+export const changeUsername = async (userId, newUsername) => {
+  const response = await api.patch('/api/account/username', null, {
+    params: { user_id: userId, new_username: newUsername },
+  });
+  return response.data;
+};
+
+export const changePassword = async (userId, currentPassword, newPassword) => {
+  const response = await api.patch('/api/account/password', null, {
+    params: { user_id: userId, current_password: currentPassword, new_password: newPassword },
+  });
+  return response.data;
+};
+
+export const deleteAccount = async (userId) => {
+  const response = await api.delete('/api/account', { params: { user_id: userId } });
   return response.data;
 };
 

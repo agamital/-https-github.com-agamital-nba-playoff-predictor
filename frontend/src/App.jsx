@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, Users, Target, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X } from 'lucide-react';
+import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings } from 'lucide-react';
 import * as api from './services/api';
 import { supabase } from './lib/supabase';
 import StandingsPage from './StandingsPage';
@@ -9,6 +9,8 @@ import UserPredictionsPage from './UserPredictionsPage';
 import AdminPage from './AdminPage';
 import BracketPage from './BracketPage';
 import FuturesPage from './FuturesPage';
+import UserProfilePage from './UserProfilePage';
+import AccountPage from './AccountPage';
 
 const Button = ({ children, onClick, className, variant = 'default', ...props }) => {
   const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-all';
@@ -511,6 +513,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [profileUsername, setProfileUsername] = useState(null);
 
   useEffect(() => {
     const stored = localStorage.getItem('nba_user');
@@ -532,8 +535,9 @@ function App() {
         try {
           const email = session.user.email;
           const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || '';
+          const avatarUrl = session.user.user_metadata?.avatar_url || session.user.user_metadata?.picture || '';
           console.log('[Google OAuth] syncing user:', email, name);
-          const user = await api.loginWithGoogle(email, name);
+          const user = await api.loginWithGoogle(email, name, avatarUrl);
           setCurrentUser(user);
           localStorage.setItem('nba_user', JSON.stringify(user));
           // Sign out of Supabase session — we use our own auth from here on
@@ -558,24 +562,30 @@ function App() {
     setCurrentPage('home');
   };
 
-  const navigate = (page) => {
+  const handleUserUpdate = (updatedUser) => {
+    setCurrentUser(updatedUser);
+    localStorage.setItem('nba_user', JSON.stringify(updatedUser));
+  };
+
+  const navigate = (page, opts = {}) => {
     setCurrentPage(page);
     setMobileMenuOpen(false);
+    if (page === 'profile' && opts.username) setProfileUsername(opts.username);
     if (page !== 'user-predictions') setSelectedUser(null);
   };
 
   const handleUserClick = (user) => {
-    setSelectedUser(user);
-    setCurrentPage('user-predictions');
+    setProfileUsername(user.username);
+    setCurrentPage('profile');
     setMobileMenuOpen(false);
   };
 
   const navItems = [
-    { id: 'home',          label: 'Home',       icon: HomeIcon  },
-    { id: 'standings',     label: 'Standings',  icon: BarChart3 },
-    { id: 'betting',       label: 'Playoffs',   icon: Trophy    },
-    { id: 'leaderboard',   label: 'Leaderboard',icon: Users     },
-    { id: 'mypredictions', label: 'My Picks',   icon: Star      },
+    { id: 'home',        label: 'Home',        icon: HomeIcon  },
+    { id: 'standings',   label: 'Standings',   icon: BarChart3 },
+    { id: 'betting',     label: 'Playoffs',    icon: Trophy    },
+    { id: 'leaderboard', label: 'Leaderboard', icon: Users     },
+    { id: 'profile',     label: 'My Profile',  icon: Star      },
     ...(currentUser?.role === 'admin' ? [{ id: 'admin', label: 'Admin', icon: Shield }] : []),
   ];
 
@@ -587,13 +597,15 @@ function App() {
       case 'betting':          return <BracketPage currentUser={currentUser} />;
       case 'leaderboard':      return <LeaderboardPage onUserClick={handleUserClick} />;
       case 'mypredictions':    return <MyPredictionsPage currentUser={currentUser} />;
+      case 'profile':          return <UserProfilePage username={profileUsername || currentUser?.username} currentUser={currentUser} />;
+      case 'account':          return <AccountPage currentUser={currentUser} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
       case 'user-predictions': return selectedUser ? <UserPredictionsPage userId={selectedUser.user_id} username={selectedUser.username} onBack={() => navigate('leaderboard')} /> : null;
       case 'admin':            return <AdminPage currentUser={currentUser} />;
       default:                 return <HomePage {...props} />;
     }
   };
 
-  // Only show bottom nav items that fit well on mobile (max 5)
+  // Bottom nav: core 5 items (no admin), account accessible via sidebar only
   const bottomNavItems = navItems.filter(i => i.id !== 'admin').slice(0, 5);
 
   return (
@@ -614,8 +626,14 @@ function App() {
           <nav className="flex-1 px-2 space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
+              const handleNav = () => {
+                if (item.id === 'profile' && currentUser) {
+                  setProfileUsername(currentUser.username);
+                }
+                navigate(item.id);
+              };
               return (
-                <button key={item.id} onClick={() => navigate(item.id)}
+                <button key={item.id} onClick={handleNav}
                   className={`group flex items-center w-full px-3 py-3 text-sm font-semibold rounded-xl transition-all ${
                     currentPage === item.id
                       ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
@@ -628,11 +646,26 @@ function App() {
             })}
           </nav>
           {currentUser && (
-            <div className="p-4 border-t border-blue-500/20">
-              <div className="flex items-center mb-3 px-2">
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold mr-3 shrink-0">
-                  {currentUser.username[0].toUpperCase()}
-                </div>
+            <div className="p-4 border-t border-blue-500/20 space-y-2">
+              <button
+                onClick={() => navigate('account')}
+                className={`group flex items-center w-full px-3 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                  currentPage === 'account'
+                    ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
+                    : 'text-slate-300 hover:bg-slate-800/50'
+                }`}
+              >
+                <Settings className="mr-3 h-4 w-4 shrink-0" />
+                Account Settings
+              </button>
+              <div className="flex items-center px-2 py-1">
+                {currentUser.avatar_url ? (
+                  <img src={currentUser.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover mr-3 shrink-0" />
+                ) : (
+                  <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold mr-3 shrink-0">
+                    {currentUser.username[0].toUpperCase()}
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-white truncate">{currentUser.username}</p>
                   <p className="text-xs text-slate-400">{currentUser.points || 0} pts</p>
@@ -684,10 +717,14 @@ function App() {
         {bottomNavItems.map((item) => {
           const Icon = item.icon;
           const active = currentPage === item.id;
+          const handleBottomNav = () => {
+            if (item.id === 'profile' && currentUser) setProfileUsername(currentUser.username);
+            navigate(item.id);
+          };
           return (
             <button
               key={item.id}
-              onClick={() => navigate(item.id)}
+              onClick={handleBottomNav}
               className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 min-h-[56px] transition-colors active:bg-slate-800/60 ${
                 active ? 'text-orange-400' : 'text-slate-500'
               }`}

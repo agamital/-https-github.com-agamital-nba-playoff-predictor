@@ -113,8 +113,13 @@ def init_db():
         email TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         role TEXT DEFAULT 'user',
-        points INTEGER DEFAULT 0
+        points INTEGER DEFAULT 0,
+        avatar_url TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+    # Migrate existing tables that predate these columns
+    c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT ''")
+    c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
 
     c.execute('''CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY,
@@ -644,7 +649,7 @@ async def login(creds: UserLogin):
     return {"user_id": row[0], "username": row[1], "email": row[2], "role": role, "points": row[5]}
 
 @app.post("/api/auth/google")
-async def google_auth(email: str, name: str = ""):
+async def google_auth(email: str, name: str = "", avatar_url: str = ""):
     """Find or create a user after Google OAuth (Supabase already verified the identity)."""
     if not email:
         raise HTTPException(400, "Email is required")
@@ -655,16 +660,25 @@ async def google_auth(email: str, name: str = ""):
     c = conn.cursor()
 
     # Existing user?
-    c.execute("SELECT id, username, email, password, role, points FROM users WHERE email = %s", (email,))
+    c.execute("SELECT id, username, email, password, role, points, avatar_url FROM users WHERE email = %s", (email,))
     row = c.fetchone()
 
     if row:
         role = 'admin' if email in _ADMIN_EMAILS else row[4]
+        updates = []
+        params = []
         if role == 'admin' and row[4] != 'admin':
-            c.execute("UPDATE users SET role='admin' WHERE id=%s", (row[0],))
+            updates.append("role='admin'")
+        if avatar_url and row[6] != avatar_url:
+            updates.append("avatar_url=%s")
+            params.append(avatar_url)
+        if updates:
+            params.append(row[0])
+            c.execute(f"UPDATE users SET {', '.join(updates)} WHERE id=%s", params)
             conn.commit()
         conn.close()
-        return {"user_id": row[0], "username": row[1], "email": row[2], "role": role, "points": row[5]}
+        return {"user_id": row[0], "username": row[1], "email": row[2], "role": role,
+                "points": row[5], "avatar_url": avatar_url or row[6] or ""}
 
     # New user — ensure username is unique
     role = 'admin' if email in _ADMIN_EMAILS else 'user'
@@ -674,13 +688,13 @@ async def google_auth(email: str, name: str = ""):
         username = base_username + "_" + str(int(time.time()))[-4:]
 
     c.execute(
-        "INSERT INTO users (username, email, password, role) VALUES (%s, %s, %s, %s) RETURNING id",
-        (username, email, "", role)
+        "INSERT INTO users (username, email, password, role, avatar_url) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (username, email, "", role, avatar_url)
     )
     conn.commit()
     user_id = c.fetchone()[0]
     conn.close()
-    return {"user_id": user_id, "username": username, "email": email, "role": role, "points": 0}
+    return {"user_id": user_id, "username": username, "email": email, "role": role, "points": 0, "avatar_url": avatar_url}
 
 
 @app.get("/api/series")
@@ -1392,6 +1406,99 @@ async def debug_standings_raw():
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/api/users/{username}")
+async def get_user_profile(username: str):
+    """Public profile: username, points, rank, avatar."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT id, username, points, avatar_url FROM users WHERE username = %s", (username,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    c.execute("SELECT COUNT(*) + 1 FROM users WHERE points > %s", (row[2],))
+    rank = c.fetchone()[0]
+    conn.close()
+    return {"user_id": row[0], "username": row[1], "points": row[2], "avatar_url": row[3] or "", "rank": rank}
+
+
+@app.get("/api/account")
+async def get_account(user_id: int):
+    """Private account info for the logged-in user."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT id, username, email, role, points, avatar_url, created_at, password FROM users WHERE id = %s", (user_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    c.execute("SELECT COUNT(*) + 1 FROM users WHERE points > %s", (row[4],))
+    rank = c.fetchone()[0]
+    conn.close()
+    return {
+        "user_id": row[0],
+        "username": row[1],
+        "email": row[2],
+        "role": row[3],
+        "points": row[4],
+        "avatar_url": row[5] or "",
+        "member_since": row[6].isoformat() if row[6] else None,
+        "rank": rank,
+        "login_method": "google" if not row[7] else "password",
+    }
+
+
+@app.patch("/api/account/username")
+async def change_username(user_id: int, new_username: str):
+    if len(new_username) < 3:
+        raise HTTPException(400, "Username must be at least 3 characters")
+    if not re.match(r'^[a-zA-Z0-9_]+$', new_username):
+        raise HTTPException(400, "Username can only contain letters, numbers and underscores")
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT id FROM users WHERE username = %s AND id != %s", (new_username, user_id))
+    if c.fetchone():
+        conn.close()
+        raise HTTPException(400, "Username already taken")
+    c.execute("UPDATE users SET username = %s WHERE id = %s", (new_username, user_id))
+    conn.commit()
+    conn.close()
+    return {"message": "Username updated", "username": new_username}
+
+
+@app.patch("/api/account/password")
+async def change_account_password(user_id: int, current_password: str, new_password: str):
+    if len(new_password) < 4:
+        raise HTTPException(400, "Password must be at least 4 characters")
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT password FROM users WHERE id = %s", (user_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    if row[0] != current_password:
+        conn.close()
+        raise HTTPException(400, "Current password is incorrect")
+    c.execute("UPDATE users SET password = %s WHERE id = %s", (new_password, user_id))
+    conn.commit()
+    conn.close()
+    return {"message": "Password updated"}
+
+
+@app.delete("/api/account")
+async def delete_account(user_id: int):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM predictions WHERE user_id = %s", (user_id,))
+    c.execute("DELETE FROM playin_predictions WHERE user_id = %s", (user_id,))
+    c.execute("DELETE FROM futures_predictions WHERE user_id = %s", (user_id,))
+    c.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    conn.commit()
+    conn.close()
+    return {"message": "Account deleted"}
 
 
 if __name__ == "__main__":
