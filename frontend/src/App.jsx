@@ -55,9 +55,10 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
     setGoogleLoading(true);
     setError('');
     try {
+      const redirectTo = import.meta.env.VITE_APP_URL || window.location.origin;
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin },
+        options: { redirectTo },
       });
       if (oauthError) throw oauthError;
       // Redirect happens — no further action needed here
