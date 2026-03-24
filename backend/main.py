@@ -4,11 +4,12 @@ from pydantic import BaseModel
 from typing import Optional
 import uvicorn
 from datetime import datetime, timedelta
-import sqlite3
 import asyncio
 import time
 import threading
-from pathlib import Path
+import os
+import psycopg2
+import psycopg2.extras
 
 _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 
@@ -67,7 +68,6 @@ except Exception:
 
 app = FastAPI(title="NBA Predictor API")
 
-import os
 _FRONTEND_ORIGIN = os.environ.get("FRONTEND_URL", "")
 app.add_middleware(
     CORSMiddleware,
@@ -77,7 +77,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_PATH = Path(__file__).parent / "nba_predictor.db"
+def get_db_conn():
+    url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        raise RuntimeError("DATABASE_URL not set")
+    return psycopg2.connect(url)
 
 class User(BaseModel):
     username: str
@@ -97,19 +101,20 @@ class Prediction(BaseModel):
     predicted_winner_id: int
     predicted_games: Optional[int] = None
 
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    
+
     c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         username TEXT UNIQUE NOT NULL,
         email TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         role TEXT DEFAULT 'user',
         points INTEGER DEFAULT 0
     )''')
-    
+
     c.execute('''CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
@@ -119,9 +124,9 @@ def init_db():
         division TEXT,
         logo_url TEXT
     )''')
-    
+
     c.execute('''CREATE TABLE IF NOT EXISTS series (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         season TEXT NOT NULL,
         round TEXT NOT NULL,
         conference TEXT NOT NULL,
@@ -134,9 +139,9 @@ def init_db():
         winner_team_id INTEGER,
         status TEXT DEFAULT 'active'
     )''')
-    
+
     c.execute('''CREATE TABLE IF NOT EXISTS predictions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         series_id INTEGER NOT NULL,
         predicted_winner_id INTEGER NOT NULL,
@@ -148,17 +153,17 @@ def init_db():
     )''')
     # Add predicted_games column if it doesn't exist (for existing DBs)
     try:
-        c.execute('ALTER TABLE predictions ADD COLUMN predicted_games INTEGER')
-    except:
+        c.execute('ALTER TABLE predictions ADD COLUMN IF NOT EXISTS predicted_games INTEGER')
+    except Exception:
         pass
     # Add actual_games column to series if it doesn't exist
     try:
-        c.execute('ALTER TABLE series ADD COLUMN actual_games INTEGER')
-    except:
+        c.execute('ALTER TABLE series ADD COLUMN IF NOT EXISTS actual_games INTEGER')
+    except Exception:
         pass
-    
+
     c.execute('''CREATE TABLE IF NOT EXISTS playin_games (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         season TEXT NOT NULL,
         conference TEXT NOT NULL,
         game_type TEXT NOT NULL,
@@ -169,9 +174,9 @@ def init_db():
         winner_id INTEGER,
         status TEXT DEFAULT 'active'
     )''')
-    
+
     c.execute('''CREATE TABLE IF NOT EXISTS playin_predictions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         game_id INTEGER NOT NULL,
         predicted_winner_id INTEGER NOT NULL,
@@ -182,7 +187,7 @@ def init_db():
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS cached_standings (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        id           SERIAL PRIMARY KEY,
         team_id      INTEGER NOT NULL,
         team_name    TEXT    NOT NULL,
         abbreviation TEXT    NOT NULL,
@@ -202,7 +207,7 @@ def init_db():
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS futures_predictions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         season TEXT DEFAULT '2026',
         champion_team_id INTEGER,
@@ -211,7 +216,7 @@ def init_db():
         finals_mvp TEXT,
         west_finals_mvp TEXT,
         east_finals_mvp TEXT,
-        locked BOOLEAN DEFAULT 0,
+        locked BOOLEAN DEFAULT FALSE,
         predicted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_correct_champion INTEGER,
         is_correct_west INTEGER,
@@ -228,17 +233,24 @@ def sync_teams():
     if not NBA_API_AVAILABLE:
         return
     teams = nba_teams_api.get_teams()
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    
+
     eastern = ['ATL','BOS','BKN','CHA','CHI','CLE','DET','IND','MIA','MIL','NYK','ORL','PHI','TOR','WAS']
-    
+
     for team in teams:
         conf = 'Eastern' if team['abbreviation'] in eastern else 'Western'
-        c.execute('''INSERT OR REPLACE INTO teams VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        c.execute('''INSERT INTO teams (id, name, abbreviation, city, conference, division, logo_url)
+                     VALUES (%s, %s, %s, %s, %s, %s, %s)
+                     ON CONFLICT (id) DO UPDATE SET
+                       name = EXCLUDED.name,
+                       abbreviation = EXCLUDED.abbreviation,
+                       city = EXCLUDED.city,
+                       conference = EXCLUDED.conference,
+                       logo_url = EXCLUDED.logo_url''',
                   (team['id'], team['full_name'], team['abbreviation'], team['city'],
                    conf, '', f"https://cdn.nba.com/logos/nba/{team['id']}/primary/L/logo.svg"))
-    
+
     conn.commit()
     conn.close()
     print(f"Synced {len(teams)} teams")
@@ -320,7 +332,7 @@ def _refresh_standings_cache(force=False):
 def _load_standings_from_db():
     """Read manually-seeded standings from the cached_standings DB table."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_conn()
         c = conn.cursor()
         c.execute('''SELECT team_id, team_name, conference, wins, losses, win_pct, conf_rank
                      FROM cached_standings WHERE season = '2026' ORDER BY conference, conf_rank''')
@@ -394,7 +406,7 @@ def generate_matchups(force_conference=None):
         print("No standings data, skipping matchup generation")
         return
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
 
     for conf_short in ['East', 'West']:
@@ -405,9 +417,9 @@ def generate_matchups(force_conference=None):
             continue
 
         # Check what already exists for this conference
-        c.execute('SELECT COUNT(*) FROM series WHERE season = ? AND conference = ?', ('2026', conf_full))
+        c.execute('SELECT COUNT(*) FROM series WHERE season = %s AND conference = %s', ('2026', conf_full))
         series_count = c.fetchone()[0]
-        c.execute('SELECT COUNT(*) FROM playin_games WHERE season = ? AND conference = ?', ('2026', conf_full))
+        c.execute('SELECT COUNT(*) FROM playin_games WHERE season = %s AND conference = %s', ('2026', conf_full))
         playin_count = c.fetchone()[0]
 
         print(f"{conf_full}: found {series_count} series, {playin_count} play-in games in DB")
@@ -424,11 +436,11 @@ def generate_matchups(force_conference=None):
 
         # Create playoff series (3v6, 4v5) — replace if forcing
         if series_count < 2 or force_conference:
-            c.execute('DELETE FROM series WHERE season = ? AND conference = ?', ('2026', conf_full))
+            c.execute('DELETE FROM series WHERE season = %s AND conference = %s', ('2026', conf_full))
             matchups = [(teams[2], teams[5]), (teams[3], teams[4])]
             for home, away in matchups:
                 c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
-                            home_seed, away_seed, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                            home_seed, away_seed, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''',
                          ('2026', 'First Round', conf_full, home['team_id'], away['team_id'],
                           home['conf_rank'], away['conf_rank'], 'active'))
                 print(f"  -> #{home['conf_rank']} {home['team_name']} vs #{away['conf_rank']} {away['team_name']}")
@@ -436,10 +448,10 @@ def generate_matchups(force_conference=None):
 
         # Create play-in games (7v8, 9v10) — replace if forcing
         if len(teams) >= 10 and (playin_count < 2 or force_conference):
-            c.execute('DELETE FROM playin_games WHERE season = ? AND conference = ?', ('2026', conf_full))
+            c.execute('DELETE FROM playin_games WHERE season = %s AND conference = %s', ('2026', conf_full))
             for game_type, idx1, idx2 in [('7v8', 6, 7), ('9v10', 8, 9)]:
                 c.execute('''INSERT INTO playin_games (season, conference, game_type, team1_id, team1_seed,
-                            team2_id, team2_seed, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                            team2_id, team2_seed, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''',
                          ('2026', conf_full, game_type,
                           teams[idx1]['team_id'], teams[idx1]['conf_rank'],
                           teams[idx2]['team_id'], teams[idx2]['conf_rank'], 'active'))
@@ -454,10 +466,10 @@ _ADMIN_EMAILS = {"agamital@gmail.com"}
 
 def ensure_admin_users():
     """Promote known admin emails to role='admin' on every startup."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     for email in _ADMIN_EMAILS:
-        c.execute("UPDATE users SET role='admin' WHERE email=? AND role != 'admin'", (email,))
+        c.execute("UPDATE users SET role='admin' WHERE email=%s AND role != 'admin'", (email,))
         if c.rowcount:
             print(f"Promoted {email} to admin")
     conn.commit()
@@ -537,43 +549,43 @@ async def api_standings(force_refresh: bool = False):
 
 @app.get("/api/teams")
 async def api_teams(conference: Optional[str] = None):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    
+
     if conference:
-        c.execute('SELECT * FROM teams WHERE conference = ?', (conference,))
+        c.execute('SELECT * FROM teams WHERE conference = %s', (conference,))
     else:
         c.execute('SELECT * FROM teams')
-    
+
     teams = []
     for row in c.fetchall():
         teams.append({'id': row[0], 'name': row[1], 'abbreviation': row[2],
                      'city': row[3], 'conference': row[4], 'division': row[5], 'logo_url': row[6]})
-    
+
     conn.close()
     return teams
 
 @app.post("/api/auth/register")
 async def register(user: User):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     try:
         role = 'admin' if user.email in _ADMIN_EMAILS else 'user'
-        c.execute('INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)',
+        c.execute('INSERT INTO users (username, email, password, role) VALUES (%s, %s, %s, %s) RETURNING id',
                   (user.username, user.email, user.password, role))
         conn.commit()
-        user_id = c.lastrowid
+        user_id = c.fetchone()[0]
         conn.close()
         return {"user_id": user_id, "username": user.username, "email": user.email, "role": role, "points": 0}
-    except:
+    except Exception:
         conn.close()
         raise HTTPException(400, "User exists")
 
 @app.get("/api/auth/me")
 async def get_me(user_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+    c.execute('SELECT * FROM users WHERE id = %s', (user_id,))
     row = c.fetchone()
     conn.close()
     if not row:
@@ -584,9 +596,9 @@ async def get_me(user_id: int):
 async def reset_password(data: PasswordReset):
     if len(data.new_password) < 4:
         raise HTTPException(400, "Password must be at least 4 characters")
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    c.execute('UPDATE users SET password = ? WHERE username = ?', (data.new_password, data.username))
+    c.execute('UPDATE users SET password = %s WHERE username = %s', (data.new_password, data.username))
     if c.rowcount == 0:
         conn.close()
         raise HTTPException(404, "User not found")
@@ -601,12 +613,12 @@ async def bootstrap_admin(secret: str, email: str, new_password: Optional[str] =
     expected = os.environ.get("ADMIN_SECRET", "")
     if not expected or secret != expected:
         raise HTTPException(403, "Invalid secret")
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     if role:
-        c.execute('UPDATE users SET role = ? WHERE email = ?', (role, email))
+        c.execute('UPDATE users SET role = %s WHERE email = %s', (role, email))
     if new_password:
-        c.execute('UPDATE users SET password = ? WHERE email = ?', (new_password, email))
+        c.execute('UPDATE users SET password = %s WHERE email = %s', (new_password, email))
     if c.rowcount == 0:
         conn.close()
         raise HTTPException(404, "User not found")
@@ -616,27 +628,27 @@ async def bootstrap_admin(secret: str, email: str, new_password: Optional[str] =
 
 @app.post("/api/auth/login")
 async def login(creds: UserLogin):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE username = ? AND password = ?', (creds.username, creds.password))
+    c.execute('SELECT * FROM users WHERE username = %s AND password = %s', (creds.username, creds.password))
     row = c.fetchone()
     if not row:
         conn.close()
         raise HTTPException(401, "Invalid credentials")
     role = 'admin' if row[2] in _ADMIN_EMAILS else row[4]
     if role == 'admin' and row[4] != 'admin':
-        c.execute("UPDATE users SET role='admin' WHERE id=?", (row[0],))
+        c.execute("UPDATE users SET role='admin' WHERE id=%s", (row[0],))
         conn.commit()
     conn.close()
     return {"user_id": row[0], "username": row[1], "email": row[2], "role": role, "points": row[5]}
 
 @app.get("/api/series")
 async def api_series(season: str = "2026"):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    
+
     # CRITICAL: Column order must match team table structure!
-    c.execute('''SELECT 
+    c.execute('''SELECT
                  s.id, s.season, s.round, s.conference,
                  s.home_team_id, s.home_seed, s.home_wins,
                  s.away_team_id, s.away_seed, s.away_wins,
@@ -645,9 +657,9 @@ async def api_series(season: str = "2026"):
                  at.name, at.abbreviation, at.logo_url
                  FROM series s
                  JOIN teams ht ON s.home_team_id = ht.id
-                 JOIN teams at ON s.away_team_id = at.id 
-                 WHERE s.season = ?''', (season,))
-    
+                 JOIN teams at ON s.away_team_id = at.id
+                 WHERE s.season = %s''', (season,))
+
     series = []
     for row in c.fetchall():
         series.append({
@@ -674,55 +686,55 @@ async def api_series(season: str = "2026"):
             'winner_team_id': row[10],
             'status': row[11]
         })
-    
+
     conn.close()
     return series
 
 @app.get("/api/playin-games")
 async def api_playin(season: str = "2026"):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    
+
     c.execute('''SELECT p.*, t1.name, t1.abbreviation, t1.logo_url,
                  t2.name, t2.abbreviation, t2.logo_url FROM playin_games p
                  JOIN teams t1 ON p.team1_id = t1.id
-                 JOIN teams t2 ON p.team2_id = t2.id WHERE p.season = ?''', (season,))
-    
+                 JOIN teams t2 ON p.team2_id = t2.id WHERE p.season = %s''', (season,))
+
     games = []
     for row in c.fetchall():
         games.append({
-            'id': row[0], 
+            'id': row[0],
             'season': row[1],
-            'conference': row[2], 
+            'conference': row[2],
             'game_type': row[3],
             'team1': {
-                'id': row[4], 
+                'id': row[4],
                 'seed': row[5],
-                'name': row[10], 
-                'abbreviation': row[11], 
+                'name': row[10],
+                'abbreviation': row[11],
                 'logo_url': row[12]
             },
             'team2': {
                 'id': row[6],
-                'seed': row[7], 
-                'name': row[13], 
+                'seed': row[7],
+                'name': row[13],
                 'abbreviation': row[14],
                 'logo_url': row[15]
             },
             'winner_id': row[8],
             'status': row[9]
         })
-    
+
     conn.close()
     return games
 
 @app.post("/api/predictions")
 async def make_pred(prediction: Prediction, user_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute('''INSERT INTO predictions (user_id, series_id, predicted_winner_id, predicted_games)
-                 VALUES (?, ?, ?, ?) ON CONFLICT(user_id, series_id)
-                 DO UPDATE SET predicted_winner_id = ?, predicted_games = ?''',
+                 VALUES (%s, %s, %s, %s) ON CONFLICT(user_id, series_id)
+                 DO UPDATE SET predicted_winner_id = %s, predicted_games = %s''',
               (user_id, prediction.series_id, prediction.predicted_winner_id, prediction.predicted_games,
                prediction.predicted_winner_id, prediction.predicted_games))
     conn.commit()
@@ -731,11 +743,11 @@ async def make_pred(prediction: Prediction, user_id: int):
 
 @app.post("/api/playin-predictions")
 async def playin_pred(game_id: int, predicted_winner_id: int, user_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute('''INSERT INTO playin_predictions (user_id, game_id, predicted_winner_id)
-                 VALUES (?, ?, ?) ON CONFLICT(user_id, game_id) 
-                 DO UPDATE SET predicted_winner_id = ?''',
+                 VALUES (%s, %s, %s) ON CONFLICT(user_id, game_id)
+                 DO UPDATE SET predicted_winner_id = %s''',
               (user_id, game_id, predicted_winner_id, predicted_winner_id))
     conn.commit()
     conn.close()
@@ -743,28 +755,29 @@ async def playin_pred(game_id: int, predicted_winner_id: int, user_id: int):
 
 @app.get("/api/leaderboard")
 async def leaderboard(season: str = "2026"):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute('''SELECT u.id, u.username, u.points, COUNT(p.id),
                  SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END)
                  FROM users u LEFT JOIN predictions p ON u.id = p.user_id
                  GROUP BY u.id ORDER BY u.points DESC LIMIT 100''')
-    
+
     board = []
     for idx, row in enumerate(c.fetchall(), 1):
         total, correct = row[3] or 0, row[4] or 0
         board.append({'rank': idx, 'user_id': row[0], 'username': row[1], 'points': row[2],
                      'total_predictions': total, 'correct_predictions': correct,
                      'accuracy': round((correct/total*100) if total > 0 else 0, 1)})
-    
+
     conn.close()
     return board
+
 @app.get("/api/my-predictions")
 async def my_predictions(user_id: int, season: str = "2026"):
     """Get all predictions for a user"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    
+
     # Get playoff predictions
     c.execute('''
         SELECT p.*, s.round, s.conference,
@@ -776,9 +789,9 @@ async def my_predictions(user_id: int, season: str = "2026"):
         JOIN teams ht ON s.home_team_id = ht.id
         JOIN teams at ON s.away_team_id = at.id
         LEFT JOIN teams wt ON p.predicted_winner_id = wt.id
-        WHERE p.user_id = ? AND s.season = ?
+        WHERE p.user_id = %s AND s.season = %s
     ''', (user_id, season))
-    
+
     playoff_preds = []
     for row in c.fetchall():
         playoff_preds.append({
@@ -794,7 +807,7 @@ async def my_predictions(user_id: int, season: str = "2026"):
             'is_correct': row[5],
             'points_earned': row[6]
         })
-    
+
     # Get play-in predictions
     c.execute('''
         SELECT pp.*, pg.game_type, pg.conference,
@@ -806,9 +819,9 @@ async def my_predictions(user_id: int, season: str = "2026"):
         JOIN teams t1 ON pg.team1_id = t1.id
         JOIN teams t2 ON pg.team2_id = t2.id
         LEFT JOIN teams wt ON pp.predicted_winner_id = wt.id
-        WHERE pp.user_id = ? AND pg.season = ?
+        WHERE pp.user_id = %s AND pg.season = %s
     ''', (user_id, season))
-    
+
     playin_preds = []
     for row in c.fetchall():
         playin_preds.append({
@@ -821,7 +834,7 @@ async def my_predictions(user_id: int, season: str = "2026"):
             'predicted_winner': {'name': row[15], 'abbreviation': row[16], 'logo_url': row[17]},
             'predicted_at': row[4]
         })
-    
+
     # Get futures prediction
     c.execute('''
         SELECT f.*,
@@ -832,7 +845,7 @@ async def my_predictions(user_id: int, season: str = "2026"):
         LEFT JOIN teams tc ON f.champion_team_id = tc.id
         LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
         LEFT JOIN teams te ON f.east_champ_team_id = te.id
-        WHERE f.user_id = ? AND f.season = ?
+        WHERE f.user_id = %s AND f.season = %s
     ''', (user_id, season))
     frow = c.fetchone()
     futures_pred = None
@@ -865,18 +878,18 @@ async def my_predictions(user_id: int, season: str = "2026"):
 async def admin_regenerate_matchups(conference: str = None, season: str = '2026'):
     """Force regenerate matchups for one or both conferences"""
     generate_matchups(force_conference=conference)
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    c.execute('SELECT COUNT(*) FROM series WHERE season = ?', (season,))
+    c.execute('SELECT COUNT(*) FROM series WHERE season = %s', (season,))
     series = c.fetchone()[0]
-    c.execute('SELECT COUNT(*) FROM playin_games WHERE season = ?', (season,))
+    c.execute('SELECT COUNT(*) FROM playin_games WHERE season = %s', (season,))
     playin = c.fetchone()[0]
     conn.close()
     return {"message": "Done", "series_count": series, "playin_count": playin}
 
 @app.get("/api/admin/series")
 async def admin_get_series(season: str = "2026"):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute('''SELECT s.id, s.round, s.conference, s.status, s.winner_team_id, s.actual_games,
                  ht.id, ht.name, ht.abbreviation, ht.logo_url,
@@ -888,7 +901,8 @@ async def admin_get_series(season: str = "2026"):
                  JOIN teams at ON s.away_team_id = at.id
                  LEFT JOIN teams wt ON s.winner_team_id = wt.id
                  LEFT JOIN predictions p ON s.id = p.series_id
-                 WHERE s.season = ? GROUP BY s.id''', (season,))
+                 WHERE s.season = %s GROUP BY s.id, ht.id, ht.name, ht.abbreviation, ht.logo_url,
+                 at.id, at.name, at.abbreviation, at.logo_url, wt.name, wt.abbreviation''', (season,))
     result = []
     for row in c.fetchall():
         result.append({
@@ -904,19 +918,19 @@ async def admin_get_series(season: str = "2026"):
 
 @app.post("/api/admin/series/{series_id}/result")
 async def set_series_result(series_id: int, winner_team_id: int, actual_games: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     # Update series
-    c.execute('UPDATE series SET winner_team_id = ?, actual_games = ?, status = ? WHERE id = ?',
+    c.execute('UPDATE series SET winner_team_id = %s, actual_games = %s, status = %s WHERE id = %s',
               (winner_team_id, actual_games, 'completed', series_id))
     # Score predictions: 2pts correct winner, +1 bonus for correct games
     c.execute('''UPDATE predictions SET
-                 is_correct = CASE WHEN predicted_winner_id = ? THEN 1 ELSE 0 END,
+                 is_correct = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END,
                  points_earned = CASE
-                     WHEN predicted_winner_id = ? AND predicted_games = ? THEN 3
-                     WHEN predicted_winner_id = ? THEN 2
+                     WHEN predicted_winner_id = %s AND predicted_games = %s THEN 3
+                     WHEN predicted_winner_id = %s THEN 2
                      ELSE 0 END
-                 WHERE series_id = ?''',
+                 WHERE series_id = %s''',
               (winner_team_id, winner_team_id, actual_games, winner_team_id, series_id))
     # Recalculate user points
     c.execute('''UPDATE users SET points = (
@@ -930,7 +944,7 @@ async def set_series_result(series_id: int, winner_team_id: int, actual_games: i
 
 @app.get("/api/admin/playin")
 async def admin_get_playin(season: str = "2026"):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute('''SELECT p.id, p.conference, p.game_type, p.winner_id, p.status,
                  t1.id, t1.name, t1.abbreviation, t1.logo_url,
@@ -942,7 +956,8 @@ async def admin_get_playin(season: str = "2026"):
                  JOIN teams t2 ON p.team2_id = t2.id
                  LEFT JOIN teams wt ON p.winner_id = wt.id
                  LEFT JOIN playin_predictions pp ON p.id = pp.game_id
-                 WHERE p.season = ? GROUP BY p.id''', (season,))
+                 WHERE p.season = %s GROUP BY p.id, t1.id, t1.name, t1.abbreviation, t1.logo_url,
+                 t2.id, t2.name, t2.abbreviation, t2.logo_url, wt.name, wt.abbreviation''', (season,))
     result = []
     for row in c.fetchall():
         result.append({
@@ -958,14 +973,14 @@ async def admin_get_playin(season: str = "2026"):
 
 @app.post("/api/admin/playin/{game_id}/result")
 async def set_playin_result(game_id: int, winner_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
-    c.execute('UPDATE playin_games SET winner_id = ?, status = ? WHERE id = ?',
+    c.execute('UPDATE playin_games SET winner_id = %s, status = %s WHERE id = %s',
               (winner_id, 'completed', game_id))
     c.execute('''UPDATE playin_predictions SET
-                 is_correct = CASE WHEN predicted_winner_id = ? THEN 1 ELSE 0 END,
-                 points_earned = CASE WHEN predicted_winner_id = ? THEN 1 ELSE 0 END
-                 WHERE game_id = ?''', (winner_id, winner_id, game_id))
+                 is_correct = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END,
+                 points_earned = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END
+                 WHERE game_id = %s''', (winner_id, winner_id, game_id))
     c.execute('''UPDATE users SET points = (
                  SELECT COALESCE(SUM(p.points_earned),0) FROM predictions p WHERE p.user_id = users.id
                  ) + (
@@ -976,7 +991,7 @@ async def set_playin_result(game_id: int, winner_id: int):
     return {"message": "Play-in result set"}
 
 def _get_futures_lock() -> bool:
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute("SELECT value FROM site_settings WHERE key = 'futures_locked'")
     row = c.fetchone()
@@ -991,11 +1006,11 @@ async def futures_lock_status():
 
 @app.post("/api/admin/futures/lock")
 async def admin_futures_lock(locked: bool):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO site_settings (key, value) VALUES ('futures_locked', ?) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        "INSERT INTO site_settings (key, value) VALUES ('futures_locked', %s) "
+        "ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
         ('1' if locked else '0',)
     )
     conn.commit()
@@ -1005,7 +1020,7 @@ async def admin_futures_lock(locked: bool):
 
 @app.get("/api/futures")
 async def get_futures(user_id: int, season: str = "2026"):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute('''SELECT f.*,
                  tc.name, tc.abbreviation, tc.logo_url,
@@ -1015,7 +1030,7 @@ async def get_futures(user_id: int, season: str = "2026"):
                  LEFT JOIN teams tc ON f.champion_team_id = tc.id
                  LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
                  LEFT JOIN teams te ON f.east_champ_team_id = te.id
-                 WHERE f.user_id = ? AND f.season = ?''', (user_id, season))
+                 WHERE f.user_id = %s AND f.season = %s''', (user_id, season))
     row = c.fetchone()
     conn.close()
     if not row:
@@ -1040,14 +1055,14 @@ async def save_futures(user_id: int, season: str = "2026",
                        champion_team_id: int = None, west_champ_team_id: int = None,
                        east_champ_team_id: int = None, finals_mvp: str = None,
                        west_finals_mvp: str = None, east_finals_mvp: str = None):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     # Check global lock first
     if _get_futures_lock():
         conn.close()
         raise HTTPException(status_code=400, detail="Futures predictions are locked by admin")
     # Check per-user lock
-    c.execute('SELECT locked FROM futures_predictions WHERE user_id = ? AND season = ?', (user_id, season))
+    c.execute('SELECT locked FROM futures_predictions WHERE user_id = %s AND season = %s', (user_id, season))
     existing = c.fetchone()
     if existing and existing[0]:
         conn.close()
@@ -1055,14 +1070,14 @@ async def save_futures(user_id: int, season: str = "2026",
     c.execute('''INSERT INTO futures_predictions
                  (user_id, season, champion_team_id, west_champ_team_id, east_champ_team_id,
                   finals_mvp, west_finals_mvp, east_finals_mvp, predicted_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                  ON CONFLICT(user_id, season) DO UPDATE SET
-                 champion_team_id = excluded.champion_team_id,
-                 west_champ_team_id = excluded.west_champ_team_id,
-                 east_champ_team_id = excluded.east_champ_team_id,
-                 finals_mvp = excluded.finals_mvp,
-                 west_finals_mvp = excluded.west_finals_mvp,
-                 east_finals_mvp = excluded.east_finals_mvp,
+                 champion_team_id = EXCLUDED.champion_team_id,
+                 west_champ_team_id = EXCLUDED.west_champ_team_id,
+                 east_champ_team_id = EXCLUDED.east_champ_team_id,
+                 finals_mvp = EXCLUDED.finals_mvp,
+                 west_finals_mvp = EXCLUDED.west_finals_mvp,
+                 east_finals_mvp = EXCLUDED.east_finals_mvp,
                  predicted_at = CURRENT_TIMESTAMP''',
               (user_id, season, champion_team_id, west_champ_team_id, east_champ_team_id,
                finals_mvp, west_finals_mvp, east_finals_mvp))
@@ -1072,7 +1087,7 @@ async def save_futures(user_id: int, season: str = "2026",
 
 @app.get("/api/futures/leaderboard")
 async def futures_leaderboard(season: str = "2026"):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute('''SELECT u.username, f.points_earned,
                  f.is_correct_champion, f.is_correct_west, f.is_correct_east,
@@ -1082,7 +1097,7 @@ async def futures_leaderboard(season: str = "2026"):
                  LEFT JOIN teams tc ON f.champion_team_id = tc.id
                  LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
                  LEFT JOIN teams te ON f.east_champ_team_id = te.id
-                 WHERE f.season = ?
+                 WHERE f.season = %s
                  ORDER BY f.points_earned DESC''', (season,))
     results = []
     for row in c.fetchall():
@@ -1102,7 +1117,7 @@ async def futures_leaderboard(season: str = "2026"):
 @app.get("/api/futures/all")
 async def futures_all(season: str = "2026"):
     """All users' futures picks with aggregate stats per category."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_conn()
     c = conn.cursor()
 
     c.execute('''
@@ -1117,7 +1132,7 @@ async def futures_all(season: str = "2026"):
         LEFT JOIN teams tc ON f.champion_team_id = tc.id
         LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
         LEFT JOIN teams te ON f.east_champ_team_id = te.id
-        WHERE f.season = ?
+        WHERE f.season = %s
         ORDER BY f.predicted_at DESC
     ''', (season,))
 
