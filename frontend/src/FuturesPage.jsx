@@ -51,12 +51,12 @@ const MvpTextInput = ({ value, onChange, locked, placeholder }) => (
 );
 
 const LEADER_CATEGORIES = [
-  { key: 'top_scorer',   short: 'Most Total Points',    question: 'What will be the highest total points scored?',    color: 'text-yellow-400', pts: 100, icon: '🏀', example: 'e.g. 550' },
-  { key: 'top_assists',  short: 'Most Total Assists',   question: 'What will be the highest total assists?',          color: 'text-blue-400',   pts: 70,  icon: '🎯', example: 'e.g. 200' },
-  { key: 'top_rebounds', short: 'Most Total Rebounds',  question: 'What will be the highest total rebounds?',         color: 'text-green-400',  pts: 70,  icon: '💪', example: 'e.g. 250' },
-  { key: 'top_threes',   short: 'Most 3-Pointers Made', question: 'What will be the highest 3-pointers made?',        color: 'text-purple-400', pts: 60,  icon: '3️⃣', example: 'e.g. 55'  },
-  { key: 'top_steals',   short: 'Most Total Steals',    question: 'What will be the highest total steals?',           color: 'text-red-400',    pts: 40,  icon: '🤚', example: 'e.g. 35'  },
-  { key: 'top_blocks',   short: 'Most Total Blocks',    question: 'What will be the highest total blocks?',           color: 'text-orange-400', pts: 40,  icon: '🛡️', example: 'e.g. 40'  },
+  { key: 'top_scorer',   short: 'Most Total Points',    question: 'What will be the highest total points scored?',    color: 'text-yellow-400', pts: 100, icon: '🏀', example: 'e.g. 550', refKey: 'top_scorers',  statField: 'ppg', statLabel: 'PPG' },
+  { key: 'top_assists',  short: 'Most Total Assists',   question: 'What will be the highest total assists?',          color: 'text-blue-400',   pts: 70,  icon: '🎯', example: 'e.g. 200', refKey: 'top_assists',  statField: 'apg', statLabel: 'APG' },
+  { key: 'top_rebounds', short: 'Most Total Rebounds',  question: 'What will be the highest total rebounds?',         color: 'text-green-400',  pts: 70,  icon: '💪', example: 'e.g. 250', refKey: 'top_rebounds', statField: 'rpg', statLabel: 'RPG' },
+  { key: 'top_threes',   short: 'Most 3-Pointers Made', question: 'What will be the highest 3-pointers made?',        color: 'text-purple-400', pts: 60,  icon: '3️⃣', example: 'e.g. 55',  refKey: 'top_threes',   statField: 'fg3m', statLabel: '3PM' },
+  { key: 'top_steals',   short: 'Most Total Steals',    question: 'What will be the highest total steals?',           color: 'text-red-400',    pts: 40,  icon: '🤚', example: 'e.g. 35',  refKey: 'top_steals',   statField: 'spg', statLabel: 'SPG' },
+  { key: 'top_blocks',   short: 'Most Total Blocks',    question: 'What will be the highest total blocks?',           color: 'text-orange-400', pts: 40,  icon: '🛡️', example: 'e.g. 40',  refKey: 'top_blocks',   statField: 'bpg', statLabel: 'BPG' },
 ];
 
 
@@ -156,6 +156,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
   const [leadersSaved, setLeadersSaved] = useState(false);
   const [existingLeaders, setExistingLeaders] = useState(null);
   const [saveError, setSaveError] = useState('');
+  const [playerLeaders, setPlayerLeaders] = useState(null);
 
   const locked = globalLocked || (existing?.locked || false);
 
@@ -163,6 +164,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
     const load = async () => {
       try {
         api.getAdminOdds().then(setOdds).catch(() => {});
+        api.getPlayerLeaders().then(setPlayerLeaders).catch(() => {});
         const [allTeams, west, east, lockStatus] = await Promise.all([
           api.getTeams(),
           api.getTeams('Western'),
@@ -439,6 +441,23 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                     locked={locked}
                     placeholder={cat.example}
                   />
+                  {/* Regular season reference leaders */}
+                  {playerLeaders && (playerLeaders[cat.refKey] || []).length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-slate-800/60">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-600 mb-1.5">Reg. Season Leaders</p>
+                      <div className="space-y-1">
+                        {(playerLeaders[cat.refKey] || []).slice(0, 3).map((p, i) => (
+                          <div key={p.player_id} className="flex items-center gap-2">
+                            <span className="text-[10px] font-black text-slate-600 w-3">{i + 1}</span>
+                            <span className="text-[11px] font-bold text-slate-400 flex-1 truncate">{p.name}</span>
+                            <span className="text-[10px] font-black text-slate-600">{p.team}</span>
+                            <span className={`text-[11px] font-black ${cat.color}`}>{p[cat.statField]?.toFixed(1)}</span>
+                            <span className="text-[9px] text-slate-600 font-bold">{cat.statLabel}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
