@@ -272,9 +272,9 @@ const FuturesLockCard = () => {
   );
 };
 
+// MVP-only odds (category-level multipliers for Finals MVP picks)
 const OddsCard = () => {
   const [odds, setOdds] = useState({
-    champion: 1.0, west_champ: 1.0, east_champ: 1.0,
     finals_mvp: 1.0, west_finals_mvp: 1.0, east_finals_mvp: 1.0,
   });
   const [saving, setSaving] = useState(false);
@@ -299,12 +299,9 @@ const OddsCard = () => {
   };
 
   const fields = [
-    { key: 'champion',       label: 'NBA Champion',        base: 200 },
-    { key: 'west_champ',     label: 'West Champion',       base: 100 },
-    { key: 'east_champ',     label: 'East Champion',       base: 100 },
-    { key: 'finals_mvp',     label: 'Finals MVP',          base: 80  },
-    { key: 'west_finals_mvp',label: 'West Finals MVP',     base: 50  },
-    { key: 'east_finals_mvp',label: 'East Finals MVP',     base: 50  },
+    { key: 'finals_mvp',     label: 'Finals MVP',      base: 80 },
+    { key: 'west_finals_mvp',label: 'West Finals MVP', base: 50 },
+    { key: 'east_finals_mvp',label: 'East Finals MVP', base: 50 },
   ];
 
   return (
@@ -312,13 +309,13 @@ const OddsCard = () => {
       <button onClick={() => setExpanded(e => !e)} className="w-full flex items-center justify-between">
         <div className="flex items-center gap-2">
           <DollarSign className="w-5 h-5 text-yellow-400" />
-          <h2 className="text-lg font-black text-white">Futures Odds Multipliers</h2>
+          <h2 className="text-lg font-black text-white">MVP Odds Multipliers</h2>
         </div>
         {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
       </button>
       {expanded && (
         <div className="mt-4">
-          <p className="text-xs text-slate-400 mb-4">Base pts × multiplier = earned pts. Favorite=×1, Medium=×1.5, Underdog=×2-2.5</p>
+          <p className="text-xs text-slate-400 mb-4">Base pts × multiplier = earned pts for MVP picks.</p>
           <div className="space-y-3">
             {fields.map(f => (
               <div key={f.key} className="flex items-center gap-3">
@@ -326,12 +323,12 @@ const OddsCard = () => {
                 <span className="text-xs text-slate-500">base {f.base}pts</span>
                 <input
                   type="number"
-                  min="0.5" max="5" step="0.5"
-                  value={odds[f.key]}
+                  min="0.5" max="5" step="0.25"
+                  value={odds[f.key] ?? 1}
                   onChange={e => setOdds(prev => ({ ...prev, [f.key]: parseFloat(e.target.value) || 1 }))}
                   className="w-20 px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm text-center focus:outline-none focus:border-orange-500"
                 />
-                <span className="text-xs text-orange-400 font-bold w-16 text-right">= {Math.round(f.base * odds[f.key])}pts</span>
+                <span className="text-xs text-orange-400 font-bold w-16 text-right">= {Math.round(f.base * (odds[f.key] ?? 1))}pts</span>
               </div>
             ))}
           </div>
@@ -339,7 +336,127 @@ const OddsCard = () => {
             className={`mt-4 w-full py-2 rounded-lg font-bold text-sm transition-all ${
               saved ? 'bg-green-500 text-white' : 'bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-50'
             }`}>
-            {saved ? '✓ Odds Saved!' : saving ? 'Saving...' : 'Save Odds Multipliers'}
+            {saved ? '✓ MVP Odds Saved!' : saving ? 'Saving...' : 'Save MVP Odds'}
+          </button>
+        </div>
+      )}
+    </Card>
+  );
+};
+
+// Per-team championship and conference odds
+const TeamOddsCard = () => {
+  const [teams, setTeams] = useState([]);
+  const [edits, setEdits] = useState({}); // { team_id: { odds_championship, odds_conference } }
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    api.getAdminTeamOdds().then(data => {
+      setTeams(data);
+      const init = {};
+      data.forEach(t => {
+        init[t.team_id] = { odds_championship: t.odds_championship, odds_conference: t.odds_conference };
+      });
+      setEdits(init);
+    }).catch(() => {});
+  }, []);
+
+  const handleChange = (teamId, field, value) => {
+    const parsed = parseFloat(value);
+    setEdits(prev => ({ ...prev, [teamId]: { ...prev[teamId], [field]: isNaN(parsed) ? 1.0 : parsed } }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const updates = Object.entries(edits).map(([team_id, vals]) => ({
+        team_id: parseInt(team_id),
+        odds_championship: vals.odds_championship,
+        odds_conference: vals.odds_conference,
+      }));
+      await api.setAdminTeamOdds(updates);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      alert('Error: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const conferences = ['Eastern', 'Western'];
+
+  return (
+    <Card className="p-5 mb-4">
+      <button onClick={() => setExpanded(e => !e)} className="w-full flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Trophy className="w-5 h-5 text-amber-400" />
+          <h2 className="text-lg font-black text-white">Team Championship Odds</h2>
+        </div>
+        {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+      </button>
+      {expanded && (
+        <div className="mt-4">
+          <p className="text-xs text-slate-400 mb-1">
+            Set decimal odds per team. Points = base × odds.
+            <span className="text-amber-400"> Champion: 200pts base · Conf: 100pts base.</span>
+          </p>
+          <p className="text-xs text-slate-500 mb-4">e.g. OKC odds 1.35 → 200 × 1.35 = 270 pts if they win the championship.</p>
+          <div className="grid grid-cols-2 gap-4 mb-3">
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider col-span-2 border-b border-slate-800 pb-1">
+              Team — Championship odds (×200pts) — Conf odds (×100pts)
+            </span>
+          </div>
+          {conferences.map(conf => {
+            const confTeams = teams.filter(t => t.conference === conf);
+            if (!confTeams.length) return null;
+            return (
+              <div key={conf} className="mb-5">
+                <p className="text-xs font-black text-slate-400 uppercase tracking-wider mb-2">{conf}</p>
+                <div className="space-y-2">
+                  {confTeams.map(t => {
+                    const vals = edits[t.team_id] || { odds_championship: 1.0, odds_conference: 1.0 };
+                    return (
+                      <div key={t.team_id} className="flex items-center gap-2">
+                        <img src={t.logo_url} alt={t.abbreviation} className="w-6 h-6 shrink-0"
+                             onError={e => e.target.style.display='none'} />
+                        <span className="text-sm text-slate-300 w-10 font-bold shrink-0">{t.abbreviation}</span>
+                        <div className="flex items-center gap-1 flex-1">
+                          <input
+                            type="number" min="0.5" max="10" step="0.05"
+                            value={vals.odds_championship}
+                            onChange={e => handleChange(t.team_id, 'odds_championship', e.target.value)}
+                            className="w-20 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-amber-500"
+                          />
+                          <span className="text-[10px] text-amber-400 font-bold w-14 text-right">
+                            ={Math.round(200 * vals.odds_championship)}pt
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 flex-1">
+                          <input
+                            type="number" min="0.5" max="10" step="0.05"
+                            value={vals.odds_conference}
+                            onChange={e => handleChange(t.team_id, 'odds_conference', e.target.value)}
+                            className="w-20 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-cyan-500"
+                          />
+                          <span className="text-[10px] text-cyan-400 font-bold w-14 text-right">
+                            ={Math.round(100 * vals.odds_conference)}pt
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          <button onClick={handleSave} disabled={saving}
+            className={`w-full py-2 rounded-lg font-bold text-sm transition-all ${
+              saved ? 'bg-green-500 text-white' : 'bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50'
+            }`}>
+            {saved ? '✓ Team Odds Saved!' : saving ? 'Saving...' : 'Save All Team Odds'}
           </button>
         </div>
       )}
@@ -647,6 +764,7 @@ const AdminPage = ({ currentUser }) => {
       </div>
 
       <FuturesLockCard />
+      <TeamOddsCard />
       <OddsCard />
       <FuturesResultsCard teams={allTeams} />
       <LeadersResultsCard />

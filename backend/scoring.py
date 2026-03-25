@@ -68,8 +68,15 @@ SCORING RULES SUMMARY
      West Finals MVP         50 pts
      East Finals MVP         50 pts
 
-   Odds multiplier (admin-configurable per category, stored in site_settings):
-     points = base x odds_multiplier
+   Odds multiplier:
+     Team categories (champion / west_champ / east_champ):
+       Per-team multiplier stored in teams.odds_championship or teams.odds_conference.
+       Default 1.0 — admin sets per-team odds in the Admin panel.
+       points = base x team.odds_championship   (champion)
+       points = base x team.odds_conference     (conf champs)
+     Player categories (Finals MVP / West MVP / East MVP):
+       Per-category multiplier stored in site_settings (odds_finals_mvp, etc.).
+       points = base x odds_multiplier
    Team categories matched by integer team_id.
    Player (MVP) categories matched by case-insensitive string.
 
@@ -222,7 +229,11 @@ def calculate_futures_points(
     Args:
         predictions  {cat: team_id (int) | player name (str)}
         actuals      {cat: team_id (int) | player name (str)}  — falsy = result unknown
-        odds         {cat: float}  — per-category multipliers from site_settings
+        odds         {cat: float}  — multipliers per category.
+                     For team categories (champion/west_champ/east_champ), the caller
+                     should supply the *predicted* team's specific odds from
+                     teams.odds_championship / teams.odds_conference (default 1.0).
+                     For player categories, these come from site_settings.
 
     Returns:
         (total_points, correctness)

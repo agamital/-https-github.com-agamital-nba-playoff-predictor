@@ -60,16 +60,19 @@ const LEADER_CATEGORIES = [
 ];
 
 
-const TeamGrid = ({ teams, selectedId, onSelect, locked }) => (
+// oddsField: 'odds_championship' | 'odds_conference' — which odds column to display on each tile
+const TeamGrid = ({ teams, selectedId, onSelect, locked, oddsField }) => (
   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
     {teams.map(team => {
       const isSelected = selectedId === team.id;
+      const odds = oddsField ? (team[oddsField] ?? 1.0) : null;
+      const showOdds = odds !== null && odds !== 1.0;
       return (
         <button
           key={team.id}
           onClick={() => !locked && onSelect(team.id)}
           disabled={locked}
-          className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all ${
+          className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all relative ${
             isSelected
               ? 'border-orange-500 bg-orange-500/15 shadow-lg shadow-orange-500/20'
               : locked
@@ -86,6 +89,11 @@ const TeamGrid = ({ teams, selectedId, onSelect, locked }) => (
           <span className={`text-[11px] font-black leading-tight text-center ${isSelected ? 'text-orange-400' : 'text-slate-300'}`}>
             {team.abbreviation}
           </span>
+          {odds !== null && (
+            <span className={`text-[9px] font-black ${showOdds ? 'text-amber-400' : 'text-slate-600'}`}>
+              ×{odds.toFixed(2)}
+            </span>
+          )}
           {isSelected && <CheckCircle className="w-3 h-3 text-orange-400" />}
         </button>
       );
@@ -126,7 +134,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
   const [westTeams, setWestTeams] = useState([]);
   const [eastTeams, setEastTeams] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [odds, setOdds] = useState({});
+  const [odds, setOdds] = useState({}); // MVP category odds only
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [existing, setExisting] = useState(null);
@@ -259,6 +267,11 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
 
   const hasAnyLeaderPick = Object.values(leaders).some(v => v);
 
+  // Per-team odds: look up the selected team's odds field from the teams array
+  const champOdds  = teams.find(t => t.id === champion)?.odds_championship     ?? null;
+  const westOdds   = westTeams.find(t => t.id === westChamp)?.odds_conference  ?? null;
+  const eastOdds   = eastTeams.find(t => t.id === eastChamp)?.odds_conference  ?? null;
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Header */}
@@ -322,17 +335,17 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
         </div>
 
         {/* NBA Champion */}
-        <Section title="NBA Champion" color="text-yellow-400" icon={<Trophy className="w-5 h-5" />} pts={FUTURES_BASE_POINTS.champion} oddsMult={odds.champion}>
-          <TeamGrid teams={teams} selectedId={champion} onSelect={setChampion} locked={locked} />
+        <Section title="NBA Champion" color="text-yellow-400" icon={<Trophy className="w-5 h-5" />} pts={FUTURES_BASE_POINTS.champion} oddsMult={champOdds}>
+          <TeamGrid teams={teams} selectedId={champion} onSelect={setChampion} locked={locked} oddsField="odds_championship" />
         </Section>
 
         {/* Conference Champions */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Section title="West Champion" color="text-red-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_champ} oddsMult={odds.west_champ}>
-            <TeamGrid teams={westTeams} selectedId={westChamp} onSelect={setWestChamp} locked={locked} />
+          <Section title="West Champion" color="text-red-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_champ} oddsMult={westOdds}>
+            <TeamGrid teams={westTeams} selectedId={westChamp} onSelect={setWestChamp} locked={locked} oddsField="odds_conference" />
           </Section>
-          <Section title="East Champion" color="text-blue-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_champ} oddsMult={odds.east_champ}>
-            <TeamGrid teams={eastTeams} selectedId={eastChamp} onSelect={setEastChamp} locked={locked} />
+          <Section title="East Champion" color="text-blue-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_champ} oddsMult={eastOdds}>
+            <TeamGrid teams={eastTeams} selectedId={eastChamp} onSelect={setEastChamp} locked={locked} oddsField="odds_conference" />
           </Section>
         </div>
 

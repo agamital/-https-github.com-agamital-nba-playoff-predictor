@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import uvicorn
 from datetime import datetime, timedelta
 import asyncio
@@ -110,6 +110,11 @@ class Prediction(BaseModel):
     predicted_winner_id: int
     predicted_games: Optional[int] = None
 
+class TeamOddsUpdate(BaseModel):
+    team_id: int
+    odds_championship: float = 1.0
+    odds_conference: float = 1.0
+
 
 def init_db():
     conn = get_db_conn()
@@ -138,6 +143,8 @@ def init_db():
         division TEXT,
         logo_url TEXT
     )''')
+    c.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS odds_championship FLOAT DEFAULT 1.0")
+    c.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS odds_conference FLOAT DEFAULT 1.0")
 
     c.execute('''CREATE TABLE IF NOT EXISTS series (
         id SERIAL PRIMARY KEY,
@@ -616,15 +623,19 @@ async def api_teams(conference: Optional[str] = None):
     conn = get_db_conn()
     c = conn.cursor()
 
+    q = '''SELECT id, name, abbreviation, city, conference, division, logo_url,
+                  COALESCE(odds_championship, 1.0), COALESCE(odds_conference, 1.0)
+           FROM teams'''
     if conference:
-        c.execute('SELECT * FROM teams WHERE conference = %s', (conference,))
+        c.execute(q + ' WHERE conference = %s', (conference,))
     else:
-        c.execute('SELECT * FROM teams')
+        c.execute(q)
 
     teams = []
     for row in c.fetchall():
         teams.append({'id': row[0], 'name': row[1], 'abbreviation': row[2],
-                     'city': row[3], 'conference': row[4], 'division': row[5], 'logo_url': row[6]})
+                     'city': row[3], 'conference': row[4], 'division': row[5], 'logo_url': row[6],
+                     'odds_championship': float(row[7]), 'odds_conference': float(row[8])})
 
     conn.close()
     return teams
@@ -1758,6 +1769,40 @@ async def set_odds(champion: float = 1.0, west_champ: float = 1.0, east_champ: f
     return {"message": "Odds updated", **{k: v for k, v in settings.items()}}
 
 
+# ── Per-team championship / conference odds ───────────────────────────────────
+
+@app.get("/api/admin/team-odds")
+async def get_team_odds():
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute('''SELECT id, name, abbreviation, conference, logo_url,
+                        COALESCE(odds_championship, 1.0), COALESCE(odds_conference, 1.0)
+                 FROM teams ORDER BY conference, name''')
+    teams = []
+    for row in c.fetchall():
+        teams.append({
+            'team_id': row[0], 'name': row[1], 'abbreviation': row[2],
+            'conference': row[3], 'logo_url': row[4],
+            'odds_championship': float(row[5]), 'odds_conference': float(row[6]),
+        })
+    conn.close()
+    return teams
+
+
+@app.post("/api/admin/team-odds")
+async def set_team_odds(updates: List[TeamOddsUpdate]):
+    conn = get_db_conn()
+    c = conn.cursor()
+    for u in updates:
+        c.execute(
+            "UPDATE teams SET odds_championship = %s, odds_conference = %s WHERE id = %s",
+            (u.odds_championship, u.odds_conference, u.team_id)
+        )
+    conn.commit()
+    conn.close()
+    return {"message": f"Updated odds for {len(updates)} teams"}
+
+
 # ── Futures actual results ────────────────────────────────────────────────────
 
 @app.get("/api/admin/futures/results")
@@ -1797,12 +1842,18 @@ async def set_futures_results(season: str = "2026",
         c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
                   (key, value))
 
-    # Load odds multipliers
-    odds = {}
-    for cat in FUTURES_BASE_POINTS:
+    # Load MVP category odds from site_settings (team-category odds come from teams table)
+    mvp_cats = ['finals_mvp', 'west_finals_mvp', 'east_finals_mvp']
+    base_odds = {}
+    for cat in mvp_cats:
         c.execute("SELECT value FROM site_settings WHERE key = %s", (f'odds_{cat}',))
         row = c.fetchone()
-        odds[cat] = float(row[0]) if row else 1.0
+        base_odds[cat] = float(row[0]) if row else 1.0
+
+    # Load per-team odds so each user's pick uses that team's specific multiplier
+    c.execute("SELECT id, COALESCE(odds_championship,1.0), COALESCE(odds_conference,1.0) FROM teams")
+    team_odds_map = {row[0]: {'championship': float(row[1]), 'conference': float(row[2])}
+                     for row in c.fetchall()}
 
     # Score all futures predictions
     c.execute('''SELECT id, champion_team_id, west_champ_team_id, east_champ_team_id,
@@ -1828,6 +1879,11 @@ async def set_futures_results(season: str = "2026",
             'west_finals_mvp': actual_west_finals_mvp,
             'east_finals_mvp': actual_east_finals_mvp,
         }
+        # Build per-prediction odds: team picks use the predicted team's own multiplier
+        odds = dict(base_odds)
+        odds['champion']   = team_odds_map.get(fp[1], {}).get('championship', 1.0)
+        odds['west_champ'] = team_odds_map.get(fp[2], {}).get('conference',   1.0)
+        odds['east_champ'] = team_odds_map.get(fp[3], {}).get('conference',   1.0)
         pts, correct = calculate_futures_points(preds, actuals, odds)
 
         c.execute('''UPDATE futures_predictions SET

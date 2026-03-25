@@ -288,6 +288,16 @@ export const setAdminOdds = async (odds) => {
   return response.data;
 };
 
+export const getAdminTeamOdds = async () => {
+  const response = await api.get('/api/admin/team-odds');
+  return response.data;
+};
+
+export const setAdminTeamOdds = async (updates) => {
+  const response = await api.post('/api/admin/team-odds', updates);
+  return response.data;
+};
+
 export const getAdminFuturesResults = async (season = '2026') => {
   const response = await api.get(`/api/admin/futures/results?season=${season}`);
   return response.data;
