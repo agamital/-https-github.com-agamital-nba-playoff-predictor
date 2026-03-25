@@ -5,3 +5,4 @@ nba_api>=1.4.1
 requests>=2.31.0
 pydantic>=2.0.0
 psycopg2-binary>=2.9.0
+apscheduler>=3.10.0,<4.0

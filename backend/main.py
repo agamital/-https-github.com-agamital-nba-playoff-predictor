@@ -93,8 +93,9 @@ _FRONTEND_ORIGIN = os.environ.get("FRONTEND_URL", "")
 _allowed_origins = [
     "http://localhost:5173",
     "http://localhost:3000",
+    "https://nba-playoffs-2026.vercel.app",   # production — always allowed
 ]
-if _FRONTEND_ORIGIN:
+if _FRONTEND_ORIGIN and _FRONTEND_ORIGIN not in _allowed_origins:
     _allowed_origins.append(_FRONTEND_ORIGIN)
 
 app.add_middleware(
