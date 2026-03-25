@@ -551,18 +551,31 @@ def _apply_odds_migration():
     Add odds_championship / odds_conference to the teams table.
     Runs with autocommit=True in its own connection so it is completely
     immune to any aborted-transaction state left by init_db().
-    Safe to call repeatedly — IF NOT EXISTS makes it idempotent.
+    Checks information_schema first so it never errors on existing columns.
     """
     try:
         conn = get_db_conn()
-        conn.autocommit = True          # DDL outside any transaction
+        conn.autocommit = True
         c = conn.cursor()
-        c.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS odds_championship FLOAT DEFAULT 1.0")
-        c.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS odds_conference   FLOAT DEFAULT 1.0")
+
+        # Check which columns are already present
+        c.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'teams'
+              AND column_name IN ('odds_championship', 'odds_conference')
+        """)
+        existing = {row[0] for row in c.fetchall()}
+
+        for col in ("odds_championship", "odds_conference"):
+            if col not in existing:
+                c.execute(f"ALTER TABLE teams ADD COLUMN {col} FLOAT DEFAULT 1.0")
+                print(f"Migration: added teams.{col}")
+            else:
+                print(f"Migration: teams.{col} already exists, skipping")
+
         conn.close()
-        print("Odds columns verified/applied")
     except Exception as e:
-        print(f"Odds migration note (non-fatal): {e}")
+        print(f"Odds migration error (non-fatal): {e}")
 
 
 @app.on_event("startup")
@@ -1803,6 +1816,52 @@ async def set_odds(champion: float = 1.0, west_champ: float = 1.0, east_champ: f
     conn.commit()
     conn.close()
     return {"message": "Odds updated", **{k: v for k, v in settings.items()}}
+
+
+# ── One-shot migration endpoint (safe to call multiple times) ─────────────────
+
+@app.post("/api/admin/apply-migrations")
+async def apply_migrations():
+    """
+    Manually trigger DB migrations.  Idempotent — safe to call repeatedly.
+    Returns a detailed report so you can see exactly what happened.
+    """
+    results = []
+    try:
+        conn = get_db_conn()
+        conn.autocommit = True
+        c = conn.cursor()
+
+        # Check which columns already exist
+        c.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'teams'
+              AND column_name IN ('odds_championship','odds_conference')
+        """)
+        existing = {row[0] for row in c.fetchall()}
+        results.append(f"Existing odds columns before migration: {existing or 'none'}")
+
+        for col in ("odds_championship", "odds_conference"):
+            if col not in existing:
+                c.execute(f"ALTER TABLE teams ADD COLUMN {col} FLOAT DEFAULT 1.0")
+                results.append(f"Added column: {col}")
+            else:
+                results.append(f"Column already present: {col}")
+
+        # Verify final state
+        c.execute("""
+            SELECT column_name, data_type, column_default
+            FROM information_schema.columns
+            WHERE table_name = 'teams'
+              AND column_name IN ('odds_championship','odds_conference')
+            ORDER BY column_name
+        """)
+        final = c.fetchall()
+        results.append(f"Final column state: {final}")
+        conn.close()
+        return {"status": "ok", "steps": results}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "steps": results}
 
 
 # ── Per-team championship / conference odds ───────────────────────────────────
