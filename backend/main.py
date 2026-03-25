@@ -78,9 +78,16 @@ except Exception:
 app = FastAPI(title="NBA Predictor API")
 
 _FRONTEND_ORIGIN = os.environ.get("FRONTEND_URL", "")
+_allowed_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+if _FRONTEND_ORIGIN:
+    _allowed_origins.append(_FRONTEND_ORIGIN)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -653,6 +660,16 @@ async def api_standings(force_refresh: bool = False):
         "cache_age_minutes": cache_age_minutes,
         "cache_expires": _standings_cache["expires"].isoformat() if _standings_cache.get("expires") else None,
     }
+
+@app.get("/api/health")
+async def health_check():
+    try:
+        conn = get_db_conn()
+        conn.cursor().execute("SELECT 1")
+        conn.close()
+        return {"status": "ok", "db": "connected"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail={"status": "error", "db": str(e)})
 
 @app.get("/api/teams")
 async def api_teams(conference: Optional[str] = None):
