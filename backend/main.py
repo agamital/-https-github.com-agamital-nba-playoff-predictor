@@ -39,7 +39,7 @@ _NBA_HEADERS = {
     'Referer': 'https://www.nba.com/',
     'Connection': 'keep-alive',
 }
-_NBA_TIMEOUT = 5  # seconds — fail fast, never block users
+_NBA_TIMEOUT = 20  # seconds — generous timeout for slow NBA API responses
 
 # Hardcoded standings (2025-26 season, as of 2026-03-24).
 # Used instantly on startup so users never wait for the NBA API.
@@ -180,15 +180,22 @@ def init_db():
         UNIQUE(user_id, series_id)
     )''')
     # Add predicted_games column if it doesn't exist (for existing DBs)
+    # Use savepoints so a failure doesn't abort the whole transaction.
+    c.execute('SAVEPOINT sp_pred_games')
     try:
         c.execute('ALTER TABLE predictions ADD COLUMN IF NOT EXISTS predicted_games INTEGER')
-    except Exception:
-        pass
+        c.execute('RELEASE SAVEPOINT sp_pred_games')
+    except Exception as e:
+        print(f"init_db: predictions.predicted_games migration: {e}")
+        c.execute('ROLLBACK TO SAVEPOINT sp_pred_games')
     # Add actual_games column to series if it doesn't exist
+    c.execute('SAVEPOINT sp_series_games')
     try:
         c.execute('ALTER TABLE series ADD COLUMN IF NOT EXISTS actual_games INTEGER')
-    except Exception:
-        pass
+        c.execute('RELEASE SAVEPOINT sp_series_games')
+    except Exception as e:
+        print(f"init_db: series.actual_games migration: {e}")
+        c.execute('ROLLBACK TO SAVEPOINT sp_series_games')
 
     c.execute('''CREATE TABLE IF NOT EXISTS playin_games (
         id SERIAL PRIMARY KEY,
@@ -275,14 +282,21 @@ def init_db():
         UNIQUE(user_id, season)
     )''')
 
-    # Migration: convert leaders TEXT columns to INTEGER if they still are TEXT
+    # Migration: convert leaders TEXT columns to INTEGER if they still are TEXT.
+    # Each ALTER uses its own savepoint so a failure on one column doesn't
+    # abort the transaction and block the remaining columns / tables.
     for col in ('top_scorer', 'top_assists', 'top_rebounds', 'top_threes', 'top_steals', 'top_blocks'):
+        sp = f'sp_leaders_{col}'
+        c.execute(f'SAVEPOINT {sp}')
         try:
             c.execute(f'''ALTER TABLE leaders_predictions
                           ALTER COLUMN {col} TYPE INTEGER
-                          USING NULLIF(regexp_replace({col}, '[^0-9]', '', 'g'), '')::INTEGER''')
-        except Exception:
-            pass  # already INTEGER or table doesn't exist yet
+                          USING NULLIF(regexp_replace({col}::TEXT, '[^0-9]', '', 'g'), '')::INTEGER''')
+            c.execute(f'RELEASE SAVEPOINT {sp}')
+            print(f"init_db: leaders_predictions.{col} ensured INTEGER")
+        except Exception as e:
+            print(f"init_db: leaders_predictions.{col} migration skipped ({e})")
+            c.execute(f'ROLLBACK TO SAVEPOINT {sp}')
 
     # Add bracket_group to series for progressive bracket unlocking
     c.execute("ALTER TABLE series ADD COLUMN IF NOT EXISTS bracket_group TEXT DEFAULT 'A'")
@@ -319,15 +333,27 @@ def sync_teams():
 
 def _fetch_standings_from_api():
     """
-    Single attempt to hit stats.nba.com with proper headers and timeout.
-    Returns parsed standings list, or raises on failure.
+    Fetch standings from stats.nba.com with up to 3 attempts and exponential
+    backoff (2s, 4s).  Raises the last exception if all attempts fail.
     """
-    standings_api = leaguestandingsv3.LeagueStandingsV3(
-        season='2025-26',
-        headers=_NBA_HEADERS,
-        timeout=_NBA_TIMEOUT,
-    )
-    raw = standings_api.get_dict()
+    last_err = None
+    for attempt in range(1, 4):
+        try:
+            print(f"NBA API standings fetch attempt {attempt}/3…")
+            standings_api = leaguestandingsv3.LeagueStandingsV3(
+                season='2025-26',
+                headers=_NBA_HEADERS,
+                timeout=_NBA_TIMEOUT,
+            )
+            raw = standings_api.get_dict()
+            break  # success
+        except Exception as e:
+            last_err = e
+            print(f"NBA API attempt {attempt} failed: {e}")
+            if attempt < 3:
+                time.sleep(2 ** attempt)  # 2s, 4s
+    else:
+        raise last_err  # all 3 attempts failed
 
     result_set = raw['resultSets'][0]
     col_headers = result_set['headers']
@@ -940,22 +966,28 @@ async def playin_pred(game_id: int, predicted_winner_id: int, user_id: int):
 
 @app.get("/api/leaderboard")
 async def leaderboard(season: str = "2026"):
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute('''SELECT u.id, u.username, u.points, COUNT(p.id),
-                 SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END)
-                 FROM users u LEFT JOIN predictions p ON u.id = p.user_id
-                 GROUP BY u.id ORDER BY u.points DESC LIMIT 100''')
-
-    board = []
-    for idx, row in enumerate(c.fetchall(), 1):
-        total, correct = row[3] or 0, row[4] or 0
-        board.append({'rank': idx, 'user_id': row[0], 'username': row[1], 'points': row[2],
-                     'total_predictions': total, 'correct_predictions': correct,
-                     'accuracy': round((correct/total*100) if total > 0 else 0, 1)})
-
-    conn.close()
-    return board
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute('''SELECT u.id, u.username, u.points, COUNT(p.id),
+                     SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END)
+                     FROM users u LEFT JOIN predictions p ON u.id = p.user_id
+                     GROUP BY u.id ORDER BY u.points DESC LIMIT 100''')
+        board = []
+        for idx, row in enumerate(c.fetchall(), 1):
+            total, correct = row[3] or 0, row[4] or 0
+            board.append({'rank': idx, 'user_id': row[0], 'username': row[1], 'points': row[2],
+                         'total_predictions': total, 'correct_predictions': correct,
+                         'accuracy': round((correct/total*100) if total > 0 else 0, 1)})
+        return board
+    except Exception as e:
+        print(f"leaderboard error: {e}")
+        return []
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 @app.get("/api/stats/global")
 async def global_stats(season: str = "2026"):
