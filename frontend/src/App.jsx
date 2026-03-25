@@ -580,10 +580,139 @@ const BettingPage = ({ currentUser }) => {
   );
 };
 
+// ── Global Stats helpers ──────────────────────────────────────────────────────
+const SeriesVoteBar = ({ s }) => {
+  const total = s.total_votes;
+  const homePct = s.home_pct;
+  const awayPct = s.away_pct;
+  const noVotes = total === 0;
+  return (
+    <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <img src={s.home_team.logo_url} alt="" className="w-5 h-5" onError={e => e.target.style.display='none'} />
+        <span className="text-xs font-black text-white flex-1">{s.home_team.abbreviation}</span>
+        <span className="text-[10px] text-slate-500">{noVotes ? 'no votes yet' : `${total} votes`}</span>
+        <span className="text-xs font-black text-white flex-1 text-right">{s.away_team.abbreviation}</span>
+        <img src={s.away_team.logo_url} alt="" className="w-5 h-5" onError={e => e.target.style.display='none'} />
+      </div>
+      <div className="relative h-5 rounded-full overflow-hidden bg-slate-800 flex">
+        <div className="h-full bg-blue-500/80 transition-all duration-500" style={{ width: `${homePct}%` }} />
+        <div className="h-full bg-orange-500/80 transition-all duration-500 flex-1" />
+        <div className="absolute inset-0 flex items-center justify-between px-2 pointer-events-none">
+          <span className="text-[10px] font-black text-white drop-shadow">{noVotes ? '—' : `${homePct}%`}</span>
+          <span className="text-[10px] font-black text-white drop-shadow">{noVotes ? '—' : `${awayPct}%`}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const FuturesPickBar = ({ item, totalUsers }) => {
+  const pct = totalUsers > 0 ? Math.round(item.count / totalUsers * 100) : 0;
+  return (
+    <div className="flex items-center gap-3 py-2">
+      <img src={item.team.logo_url} alt="" className="w-7 h-7 shrink-0" onError={e => e.target.style.display='none'} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-bold text-white">{item.team.name}</span>
+          <span className="text-xs text-slate-400">{item.count} picks ({pct}%)</span>
+        </div>
+        <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+          <div className="h-full bg-orange-500/70 rounded-full transition-all duration-500" style={{ width: `${Math.max(pct, 3)}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const GlobalStatsTab = () => {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.getGlobalStats('2026').then(setStats).catch(console.error).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return (
+    <div className="space-y-3">
+      {[1,2,3,4].map(i => (
+        <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 animate-pulse h-20" />
+      ))}
+    </div>
+  );
+  if (!stats) return <p className="text-slate-500 text-center py-8">Could not load stats.</p>;
+
+  // Group series by round label
+  const ROUND_ORDER = ['First Round', 'Conference Semifinals', 'Conference Finals', 'NBA Finals'];
+  const byRound = {};
+  stats.series.forEach(s => {
+    const key = s.round;
+    if (!byRound[key]) byRound[key] = [];
+    byRound[key].push(s);
+  });
+  const sortedRounds = ROUND_ORDER.filter(r => byRound[r]);
+
+  const hasFutures = stats.futures.top_champions.length > 0
+    || stats.futures.top_west_champs.length > 0
+    || stats.futures.top_east_champs.length > 0;
+
+  return (
+    <div className="space-y-6">
+      {/* Participation banner */}
+      <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-4 text-center">
+        <span className="text-2xl font-black text-orange-400">{stats.total_users}</span>
+        <span className="text-slate-400 ml-2 text-sm">participants with predictions</span>
+      </div>
+
+      {/* Series votes per round */}
+      {sortedRounds.map(round => (
+        <div key={round}>
+          <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">{round}</h3>
+          <div className="space-y-2">
+            {byRound[round].map(s => <SeriesVoteBar key={s.series_id} s={s} />)}
+          </div>
+        </div>
+      ))}
+
+      {/* Futures top picks */}
+      {hasFutures && (
+        <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4">
+          <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-4">Top Futures Picks</h3>
+          {stats.futures.top_champions.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-bold text-amber-400 mb-2">🏆 NBA Champions</p>
+              {stats.futures.top_champions.map((item, i) => (
+                <FuturesPickBar key={i} item={item} totalUsers={stats.total_users} />
+              ))}
+            </div>
+          )}
+          {stats.futures.top_west_champs.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-bold text-blue-400 mb-2">🌵 West Champs</p>
+              {stats.futures.top_west_champs.map((item, i) => (
+                <FuturesPickBar key={i} item={item} totalUsers={stats.total_users} />
+              ))}
+            </div>
+          )}
+          {stats.futures.top_east_champs.length > 0 && (
+            <div>
+              <p className="text-xs font-bold text-green-400 mb-2">🗽 East Champs</p>
+              {stats.futures.top_east_champs.map((item, i) => (
+                <FuturesPickBar key={i} item={item} totalUsers={stats.total_users} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const LeaderboardPage = ({ onUserClick }) => {
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
+  const [tab, setTab] = useState('rankings'); // 'rankings' | 'global'
 
   useEffect(() => { loadLeaderboard(); }, []);
 
@@ -602,11 +731,29 @@ const LeaderboardPage = ({ onUserClick }) => {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-3 mb-8">
+      <div className="flex items-center gap-3 mb-6">
         <Users className="w-7 h-7 text-orange-400" />
         <h1 className="text-4xl font-black text-white">Leaderboard</h1>
       </div>
-      {loading ? (
+
+      {/* Tab switcher */}
+      <div className="flex gap-1 bg-slate-900/70 border border-slate-800 rounded-xl p-1 mb-6">
+        {[{ id: 'rankings', label: '🏅 Rankings' }, { id: 'global', label: '🌍 Global Stats' }].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 py-2 px-4 rounded-lg text-sm font-bold transition-all ${
+              tab === t.id
+                ? 'bg-orange-500 text-white shadow'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'global' ? <GlobalStatsTab /> : loading ? (
         <div className="space-y-2">
           {[1,2,3,4,5].map(i => (
             <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex items-center gap-3 animate-pulse">
@@ -875,8 +1022,8 @@ function App() {
   };
 
   const handleUserClick = (user) => {
-    setProfileUsername(user.username);
-    setCurrentPage('profile');
+    setSelectedUser(user);
+    setCurrentPage('user-predictions');
     setMobileMenuOpen(false);
   };
 

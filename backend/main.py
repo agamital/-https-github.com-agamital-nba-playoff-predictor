@@ -963,6 +963,79 @@ async def leaderboard(season: str = "2026"):
     conn.close()
     return board
 
+@app.get("/api/stats/global")
+async def global_stats(season: str = "2026"):
+    """Aggregate community prediction stats for the Global Stats tab."""
+    conn = get_db_conn()
+    c = conn.cursor()
+
+    # Per-series vote breakdown
+    c.execute("""
+        SELECT s.id, s.round, s.conference,
+               s.home_team_id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
+               s.away_team_id, at.name, at.abbreviation, at.logo_url, s.away_seed,
+               s.status,
+               COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.home_team_id THEN 1 ELSE 0 END), 0) AS home_votes,
+               COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.away_team_id THEN 1 ELSE 0 END), 0) AS away_votes,
+               COUNT(p.id) AS total_votes
+        FROM series s
+        JOIN teams ht ON s.home_team_id = ht.id
+        JOIN teams at ON s.away_team_id = at.id
+        LEFT JOIN predictions p ON p.series_id = s.id
+        WHERE s.season = %s
+        GROUP BY s.id, s.round, s.conference,
+                 s.home_team_id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
+                 s.away_team_id, at.name, at.abbreviation, at.logo_url, s.away_seed,
+                 s.status
+        ORDER BY s.conference, s.round
+    """, (season,))
+
+    series_stats = []
+    for row in c.fetchall():
+        total  = int(row[16]) if row[16] else 0
+        home_v = int(row[14]) if row[14] else 0
+        away_v = int(row[15]) if row[15] else 0
+        series_stats.append({
+            'series_id':  row[0],
+            'round':      row[1],
+            'conference': row[2],
+            'home_team':  {'id': row[3], 'name': row[4],  'abbreviation': row[5],  'logo_url': row[6],  'seed': row[7]},
+            'away_team':  {'id': row[8], 'name': row[9],  'abbreviation': row[10], 'logo_url': row[11], 'seed': row[12]},
+            'status':      row[13],
+            'home_votes':  home_v,
+            'away_votes':  away_v,
+            'total_votes': total,
+            'home_pct':    round(home_v / total * 100) if total > 0 else 50,
+            'away_pct':    round(away_v / total * 100) if total > 0 else 50,
+        })
+
+    def top_futures(col):
+        c.execute(f"""
+            SELECT fp.{col}, t.name, t.abbreviation, t.logo_url, COUNT(*) AS cnt
+            FROM futures_predictions fp
+            JOIN teams t ON fp.{col} = t.id
+            WHERE fp.season = %s AND fp.{col} IS NOT NULL
+            GROUP BY fp.{col}, t.name, t.abbreviation, t.logo_url
+            ORDER BY cnt DESC LIMIT 3
+        """, (season,))
+        return [{'team': {'id': r[0], 'name': r[1], 'abbreviation': r[2], 'logo_url': r[3]}, 'count': r[4]}
+                for r in c.fetchall()]
+
+    c.execute("""SELECT COUNT(DISTINCT p.user_id) FROM predictions p
+                 JOIN series s ON p.series_id = s.id WHERE s.season = %s""", (season,))
+    total_users = c.fetchone()[0] or 0
+
+    conn.close()
+    return {
+        'series':      series_stats,
+        'futures':     {
+            'top_champions':  top_futures('champion_team_id'),
+            'top_west_champs': top_futures('west_champ_team_id'),
+            'top_east_champs': top_futures('east_champ_team_id'),
+        },
+        'total_users': total_users,
+    }
+
 @app.get("/api/dashboard")
 async def dashboard(user_id: int, season: str = "2026"):
     """Lightweight dashboard counts — avoids fetching full prediction/series data."""

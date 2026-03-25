@@ -123,6 +123,12 @@ export const getDashboard = async (userId, season = '2026') => {
   return response.data;
 };
 
+// Global community stats
+export const getGlobalStats = async (season = '2026') => {
+  const response = await api.get('/api/stats/global', { params: { season } });
+  return response.data;
+};
+
 // Leaderboard
 export const getLeaderboard = async (season = '2026', limit = 100) => {
   const response = await api.get('/api/leaderboard', {
