@@ -1036,6 +1036,93 @@ async def global_stats(season: str = "2026"):
         'total_users': total_users,
     }
 
+@app.get("/api/series/{series_id}/picks")
+async def series_picks(series_id: int):
+    """All predictions for a single series — vote counts + per-user picks."""
+    conn = get_db_conn()
+    c = conn.cursor()
+
+    c.execute("""SELECT s.home_team_id, s.away_team_id,
+                        ht.abbreviation, ht.logo_url,
+                        at.abbreviation, at.logo_url
+                 FROM series s
+                 JOIN teams ht ON s.home_team_id = ht.id
+                 JOIN teams at ON s.away_team_id = at.id
+                 WHERE s.id = %s""", (series_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Series not found")
+    home_id, away_id = row[0], row[1]
+
+    c.execute("""SELECT u.username, p.predicted_winner_id, p.predicted_games,
+                        t.abbreviation, t.logo_url
+                 FROM predictions p
+                 JOIN users u ON p.user_id = u.id
+                 JOIN teams t ON p.predicted_winner_id = t.id
+                 WHERE p.series_id = %s
+                 ORDER BY u.username""", (series_id,))
+
+    picks = []
+    home_votes = away_votes = 0
+    for r in c.fetchall():
+        picks.append({'username': r[0], 'team_id': r[1], 'predicted_games': r[2],
+                      'team_abbreviation': r[3], 'team_logo_url': r[4]})
+        if r[1] == home_id:   home_votes += 1
+        elif r[1] == away_id: away_votes += 1
+
+    total = len(picks)
+    conn.close()
+    return {
+        'series_id':  series_id,
+        'picks':      picks,
+        'home_votes': home_votes,
+        'away_votes': away_votes,
+        'total_votes': total,
+        'home_pct':   round(home_votes / total * 100) if total else 50,
+        'away_pct':   round(away_votes / total * 100) if total else 50,
+    }
+
+@app.get("/api/playin/{game_id}/picks")
+async def playin_picks(game_id: int):
+    """All predictions for a single play-in game — vote counts + per-user picks."""
+    conn = get_db_conn()
+    c = conn.cursor()
+
+    c.execute("SELECT team1_id, team2_id FROM playin_games WHERE id = %s", (game_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Game not found")
+    team1_id, team2_id = row
+
+    c.execute("""SELECT u.username, pp.predicted_winner_id, t.abbreviation, t.logo_url
+                 FROM playin_predictions pp
+                 JOIN users u ON pp.user_id = u.id
+                 JOIN teams t ON pp.predicted_winner_id = t.id
+                 WHERE pp.game_id = %s
+                 ORDER BY u.username""", (game_id,))
+
+    picks = []
+    t1_votes = t2_votes = 0
+    for r in c.fetchall():
+        picks.append({'username': r[0], 'team_id': r[1],
+                      'team_abbreviation': r[2], 'team_logo_url': r[3]})
+        if r[1] == team1_id:   t1_votes += 1
+        elif r[1] == team2_id: t2_votes += 1
+
+    total = len(picks)
+    conn.close()
+    return {
+        'game_id':    game_id,
+        'picks':      picks,
+        'team1_votes': t1_votes,
+        'team2_votes': t2_votes,
+        'total_votes': total,
+        'team1_pct':  round(t1_votes / total * 100) if total else 50,
+        'team2_pct':  round(t2_votes / total * 100) if total else 50,
+    }
+
 @app.get("/api/dashboard")
 async def dashboard(user_id: int, season: str = "2026"):
     """Lightweight dashboard counts — avoids fetching full prediction/series data."""

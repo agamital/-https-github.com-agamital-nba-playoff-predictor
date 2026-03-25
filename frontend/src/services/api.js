@@ -123,6 +123,17 @@ export const getDashboard = async (userId, season = '2026') => {
   return response.data;
 };
 
+// Community picks per series / play-in game
+export const getSeriesPicks = async (seriesId) => {
+  const response = await api.get(`/api/series/${seriesId}/picks`);
+  return response.data;
+};
+
+export const getPlayInPicks = async (gameId) => {
+  const response = await api.get(`/api/playin/${gameId}/picks`);
+  return response.data;
+};
+
 // Global community stats
 export const getGlobalStats = async (season = '2026') => {
   const response = await api.get('/api/stats/global', { params: { season } });

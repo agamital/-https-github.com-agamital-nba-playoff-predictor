@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy, Lock } from 'lucide-react';
 import * as api from './services/api';
+import CommunityInsights from './components/CommunityInsights';
 
 const Card = ({ children, className }) => (
   <div className={`bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur-sm ${className}`}>
@@ -111,6 +112,12 @@ const PlayInPage = ({ currentUser }) => {
             Login to make predictions
           </div>
         )}
+        <CommunityInsights
+          gameId={game.id}
+          homeTeam={game.team1}
+          awayTeam={game.team2}
+          initialStats={null}
+        />
       </div>
     </Card>
   );

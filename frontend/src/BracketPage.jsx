@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info } from 'lucide-react';
 import * as api from './services/api';
 import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS } from './scoringConstants';
+import CommunityInsights from './components/CommunityInsights';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const BH = 640;   // bracket total height
@@ -375,7 +376,7 @@ const CFCol = ({ label }) => (
 
 // ── Mobile cards ──────────────────────────────────────────────────────────────
 
-const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved }) => {
+const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communityStats }) => {
   if (!game) return null;
   const { team1, team2 } = game;
   const p1 = pick?.teamId === team1?.id;
@@ -410,11 +411,17 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved }) => {
           {saved ? '✓ Saved!' : 'Save Pick'}
         </button>
       )}
+      <CommunityInsights
+        gameId={game.id}
+        homeTeam={team1}
+        awayTeam={team2}
+        initialStats={communityStats ?? null}
+      />
     </div>
   );
 };
 
-const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, saved }) => {
+const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, saved, communityStats }) => {
   const { home_team: h, away_team: a } = series;
   const hp = pick?.teamId === h.id;
   const ap = pick?.teamId === a.id;
@@ -517,6 +524,12 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
           </button>
         </div>
       )}
+      <CommunityInsights
+        seriesId={series.id}
+        homeTeam={h}
+        awayTeam={a}
+        initialStats={communityStats ?? null}
+      />
     </div>
   );
 };
@@ -533,6 +546,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const [saved, setSaved]             = useState({});
   const [piPicks, setPiPicks]         = useState({});
   const [piSaved, setPiSaved]         = useState({});
+  const [communityMap, setCommunityMap] = useState({}); // { [series_id]: { total_votes, home_pct, away_pct } }
   const [showFull, setShowFull]       = useState(() => {
     try { return localStorage.getItem('bracketShowFull') === 'true'; } catch { return false; }
   });
@@ -549,10 +563,26 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const loadData = () => {
     setLoading(true);
     console.time('[bracket] initial load');
-    Promise.all([api.getSeries('2026'), api.getPlayInGames('2026'), api.getTeams(), api.getStandings()])
-      .then(([s, pi, t, st]) => {
+    Promise.all([
+      api.getSeries('2026'),
+      api.getPlayInGames('2026'),
+      api.getTeams(),
+      api.getStandings(),
+      api.getGlobalStats('2026').catch(() => null), // non-blocking
+    ]).then(([s, pi, t, st, gs]) => {
         console.timeEnd('[bracket] initial load');
         setSeries(s); setPlayInGames(pi); setAllTeams(t); setStandings(st || { eastern: [], western: [] });
+        if (gs?.series) {
+          const map = {};
+          gs.series.forEach(entry => {
+            map[entry.series_id] = {
+              total_votes: entry.total_votes,
+              home_pct:    entry.home_pct,
+              away_pct:    entry.away_pct,
+            };
+          });
+          setCommunityMap(map);
+        }
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -845,7 +875,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} />
                     </div>
                   );
                 })}
@@ -860,7 +890,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {westSeries.length > 0 ? westSeries.map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onSave={handleSave} saved={saved[s.id]} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
@@ -892,7 +922,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} />
                     </div>
                   );
                 })}
@@ -907,7 +937,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {eastSeries.length > 0 ? eastSeries.map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onSave={handleSave} saved={saved[s.id]} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
