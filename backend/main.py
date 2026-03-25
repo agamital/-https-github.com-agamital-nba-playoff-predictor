@@ -8,6 +8,8 @@ import asyncio
 import time
 import threading
 import os
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 import re
 import psycopg2
 import psycopg2.extras
@@ -21,6 +23,12 @@ from scoring import (
 )
 
 _standings_cache = {"data": None, "expires": None, "fetched_at": None}
+
+# Cron sync stops after the regular season ends (exclusive upper bound)
+_STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 21)
+
+# APScheduler instance — created in startup(), referenced in shutdown()
+_scheduler = None
 
 # Headers that NBA stats.nba.com requires to not block requests
 _NBA_HEADERS = {
@@ -364,6 +372,10 @@ def _fetch_standings_from_api():
 
     standings = []
     for row in rows:
+        try:
+            games_back = float(col(row, 'ConferenceGamesBack') or 0)
+        except (ValueError, KeyError, IndexError):
+            games_back = 0.0
         standings.append({
             'team_id':    col(row, 'TeamID'),
             'team_name':  f"{col(row, 'TeamCity')} {col(row, 'TeamName')}",
@@ -373,6 +385,7 @@ def _fetch_standings_from_api():
             'win_pct':    float(col(row, 'WinPCT')),
             'conf_rank':  99,
             'playoff_rank': 99,
+            'games_back': games_back,
         })
 
     # Recompute ranks by win_pct, ties broken by wins
@@ -388,42 +401,158 @@ def _fetch_standings_from_api():
     return standings
 
 
-def _refresh_standings_cache(force=False):
-    """
-    Fetch fresh standings with up to 2 attempts (retry once after 5s delay).
-    Updates _standings_cache on success; keeps old data on failure.
-    """
-    if not NBA_API_AVAILABLE:
-        return
+def _compute_team_status(conf_rank: int) -> str:
+    """Map conference rank to human-readable playoff status."""
+    if conf_rank <= 6:  return 'Playoff'
+    if conf_rank <= 10: return 'Play-In'
+    return 'Eliminated'
 
-    now = datetime.now()
-    cache_valid = (
-        _standings_cache["data"] is not None and
-        _standings_cache["expires"] is not None and
-        now < _standings_cache["expires"]
-    )
-    if cache_valid and not force:
-        return  # Still fresh, nothing to do
 
+def _persist_standings_to_db(standings: list) -> dict:
+    """
+    Upsert standings rows to cached_standings using (team_id, season) as the
+    unique key.  Looks up team abbreviations from the teams table.
+    Returns {'rows': int, 'synced_at': datetime|None}.
+    """
+    conn = None
     try:
-        print("Standings fetch attempt…")
-        standings = _fetch_standings_from_api()
-        now = datetime.now()
-        _standings_cache["data"]       = standings
-        _standings_cache["fetched_at"] = now
-        _standings_cache["expires"]    = now + timedelta(hours=1)
-        print(f"Standings refreshed — {len(standings)} teams")
+        conn = get_db_conn()
+        c    = conn.cursor()
+
+        # Build abbreviation lookup from the teams table (populated by sync_teams)
+        c.execute("SELECT id, abbreviation FROM teams")
+        abbr_map = {r[0]: r[1] for r in c.fetchall()}
+
+        synced_at = datetime.utcnow()
+        for t in standings:
+            team_id   = t['team_id']
+            abbr      = abbr_map.get(team_id, t['team_name'].split()[-1][:3].upper())
+            status    = _compute_team_status(t.get('conf_rank', 99))
+            games_back = float(t.get('games_back', 0.0) or 0.0)
+            c.execute('''
+                INSERT INTO cached_standings
+                    (team_id, team_name, abbreviation, conference,
+                     wins, losses, win_pct, conf_rank,
+                     games_back, status, season, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, '2026', %s)
+                ON CONFLICT (team_id, season) DO UPDATE SET
+                    team_name   = EXCLUDED.team_name,
+                    wins        = EXCLUDED.wins,
+                    losses      = EXCLUDED.losses,
+                    win_pct     = EXCLUDED.win_pct,
+                    conf_rank   = EXCLUDED.conf_rank,
+                    games_back  = EXCLUDED.games_back,
+                    status      = EXCLUDED.status,
+                    updated_at  = EXCLUDED.updated_at
+            ''', (team_id, t['team_name'], abbr, t['conference'],
+                  t['wins'], t['losses'], t['win_pct'], t['conf_rank'],
+                  games_back, status, synced_at))
+
+        conn.commit()
+        print(f"[Standings] Persisted {len(standings)} rows to DB at {synced_at.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        return {'rows': len(standings), 'synced_at': synced_at}
+
     except Exception as e:
-        print(f"NBA API unavailable ({e}), using cached/hardcoded standings")
+        print(f"[Standings] DB persist error: {e}")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        return {'rows': 0, 'synced_at': None}
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _standings_sync_job():
+    """
+    Core sync job — called by APScheduler (cron: 0 */6 * * *) and by the
+    force-refresh endpoint.  Checks the cutoff date, fetches live data,
+    persists to Supabase, and updates the in-memory cache.
+    Returns True on success.
+    """
+    now = datetime.utcnow()
+    if now >= _STANDINGS_SYNC_CUTOFF:
+        print(f"[Standings] Regular season ended on {_STANDINGS_SYNC_CUTOFF.date()} — sync disabled")
+        return False
+    if not NBA_API_AVAILABLE:
+        print("[Standings] NBA API module not available — skipping sync")
+        return False
+
+    print(f"[Standings] Sync starting at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    try:
+        fresh  = _fetch_standings_from_api()
+        result = _persist_standings_to_db(fresh)
+        if result['synced_at']:
+            _standings_cache["data"]       = fresh
+            _standings_cache["fetched_at"] = result['synced_at']
+            _standings_cache["expires"]    = result['synced_at'] + timedelta(hours=6)
+            next_at = (result['synced_at'] + timedelta(hours=6)).strftime('%H:%M UTC')
+            print(f"[Standings] ✓ {result['rows']} teams synced — next run ~{next_at}")
+            return True
+    except Exception as e:
+        print(f"[Standings] Sync error: {e}")
+    return False
+
+
+def _apply_standings_migration():
+    """
+    Idempotent DDL: add games_back / status columns and the (team_id, season)
+    unique constraint needed for ON CONFLICT upserts.
+    Runs with autocommit on its own connection (safe against PgBouncer pooler).
+    """
+    try:
+        conn = get_db_conn()
+        conn.autocommit = True
+        c = conn.cursor()
+        c.execute("SET search_path TO public")
+
+        for col, defn in [("games_back", "REAL    DEFAULT 0.0"),
+                          ("status",     "TEXT    DEFAULT 'Unknown'")]:
+            try:
+                c.execute(f"ALTER TABLE cached_standings ADD COLUMN IF NOT EXISTS {col} {defn}")
+                print(f"[Migration] cached_standings.{col} ensured")
+            except Exception as e:
+                print(f"[Migration] cached_standings.{col}: {e}")
+
+        # Add UNIQUE(team_id, season) if it doesn't already exist — required
+        # by the ON CONFLICT clause in _persist_standings_to_db.
+        try:
+            c.execute("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                         WHERE conrelid = 'cached_standings'::regclass
+                           AND conname  = 'cached_standings_team_season_key'
+                    ) THEN
+                        ALTER TABLE cached_standings
+                            ADD CONSTRAINT cached_standings_team_season_key
+                            UNIQUE (team_id, season);
+                    END IF;
+                END $$;
+            """)
+            print("[Migration] cached_standings(team_id, season) unique constraint ensured")
+        except Exception as e:
+            print(f"[Migration] cached_standings unique constraint: {e}")
+
+        conn.close()
+    except Exception as e:
+        print(f"[Migration] Standings migration connection error (non-fatal): {e}")
 
 
 def _load_standings_from_db():
-    """Read manually-seeded standings from the cached_standings DB table."""
+    """Read standings from cached_standings, including games_back and status."""
     try:
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute('''SELECT team_id, team_name, conference, wins, losses, win_pct, conf_rank
-                     FROM cached_standings WHERE season = '2026' ORDER BY conference, conf_rank''')
+        c.execute('''SELECT team_id, team_name, conference, wins, losses, win_pct,
+                            conf_rank,
+                            COALESCE(games_back, 0.0),
+                            COALESCE(status, 'Unknown'),
+                            updated_at
+                     FROM cached_standings
+                     WHERE season = '2026'
+                     ORDER BY conference, conf_rank''')
         rows = c.fetchall()
         conn.close()
         if not rows:
@@ -431,7 +560,8 @@ def _load_standings_from_db():
         return [
             {'team_id': r[0], 'team_name': r[1], 'conference': r[2],
              'wins': r[3], 'losses': r[4], 'win_pct': r[5],
-             'conf_rank': r[6], 'playoff_rank': r[6]}
+             'conf_rank': r[6], 'playoff_rank': r[6],
+             'games_back': float(r[7]), 'status': r[8]}
             for r in rows
         ]
     except Exception as e:
@@ -439,15 +569,11 @@ def _load_standings_from_db():
         return []
 
 
-def get_standings(force_refresh=False):
+def get_standings():
     """
-    Returns standings instantly. Never blocks on the NBA API.
-    Priority: 1) memory cache  2) DB  3) hardcoded constant
-    force_refresh triggers a background API refresh but still returns immediately.
+    Returns standings instantly from memory cache → DB → hardcoded fallback.
+    Never blocks on the NBA API.  For a live refresh use _standings_sync_job().
     """
-    if force_refresh:
-        threading.Thread(target=_refresh_standings_cache, args=(True,), daemon=True).start()
-
     if _standings_cache["data"]:
         return _standings_cache["data"]
 
@@ -464,29 +590,17 @@ def get_standings(force_refresh=False):
     return _HARDCODED_STANDINGS
 
 
-def _background_standings_loop():
+def _initial_standings_sync():
     """
-    Background thread: tries to refresh standings from NBA API every 6 hours.
-    Starts with a jitter delay so it doesn't block startup.
-    Falls back to DB data if API is unavailable — the main cache already has DB data.
+    One-shot background thread at startup: waits for a random jitter then
+    runs the first standings sync so the DB is fresh within ~40s of boot.
+    APScheduler takes over every 6 h after that.
     """
     import random
-    delay = random.uniform(10, 40)
-    print(f"Background NBA API standings refresh starts in {delay:.0f}s")
+    delay = random.uniform(15, 45)
+    print(f"[Standings] Initial sync starts in {delay:.0f}s")
     time.sleep(delay)
-
-    while True:
-        try:
-            print("Background: attempting live standings fetch…")
-            fresh = _fetch_standings_from_api()
-            now = datetime.now()
-            _standings_cache["data"]       = fresh
-            _standings_cache["fetched_at"] = now
-            _standings_cache["expires"]    = now + timedelta(minutes=5)
-            print(f"Background: standings updated from NBA API — {len(fresh)} teams")
-        except Exception as e:
-            print(f"Background: NBA API unavailable ({e}), keeping current standings")
-        time.sleep(6 * 60 * 60)
+    _standings_sync_job()
 
 def generate_matchups(force_conference=None):
     standings = get_standings()
@@ -642,6 +756,9 @@ async def startup():
     except Exception as e:
         print(f"ERROR loading DB standings: {e}")
 
+    # Apply standings schema migration (games_back, status, unique constraint)
+    _apply_standings_migration()
+
     # Run heavyweight / network-dependent tasks in background threads so they
     # never block the server from binding to its port.
     def _background_init():
@@ -656,9 +773,34 @@ async def startup():
 
     threading.Thread(target=_background_init, daemon=True).start()
 
-    # Background thread that refreshes standings from NBA API every 6 hours
-    threading.Thread(target=_background_standings_loop, daemon=True).start()
+    # APScheduler cron job — 0 */6 * * * UTC (every 6 hours on the hour)
+    # Stops automatically when _standings_sync_job checks _STANDINGS_SYNC_CUTOFF.
+    global _scheduler
+    _scheduler = BackgroundScheduler(timezone='UTC', daemon=True)
+    _scheduler.add_job(
+        _standings_sync_job,
+        CronTrigger.from_crontab('0 */6 * * *'),
+        id='standings_sync',
+        replace_existing=True,
+        misfire_grace_time=600,   # allow up to 10 min late start
+        max_instances=1,          # never run two syncs concurrently
+    )
+    _scheduler.start()
+    print("[Standings] APScheduler started — cron: 0 */6 * * * UTC"
+          f" (active until {_STANDINGS_SYNC_CUTOFF.date()})")
+
+    # Fire-and-forget initial sync so DB is populated shortly after boot
+    threading.Thread(target=_initial_standings_sync, daemon=True).start()
     print("Server startup complete")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global _scheduler
+    if _scheduler and _scheduler.running:
+        _scheduler.shutdown(wait=False)
+        print("[Standings] APScheduler stopped")
+
 
 @app.get("/")
 async def root():
@@ -666,19 +808,43 @@ async def root():
 
 @app.get("/api/standings")
 async def api_standings(force_refresh: bool = False):
-    standings = get_standings(force_refresh=force_refresh)
+    sync_triggered = False
+    if force_refresh:
+        # Run in a daemon thread — returns immediately, UI refreshes on next load
+        threading.Thread(target=_standings_sync_job, daemon=True).start()
+        sync_triggered = True
+
+    standings = get_standings()
     eastern = sorted([t for t in standings if t['conference'] == 'East'], key=lambda x: x['conf_rank'])
     western = sorted([t for t in standings if t['conference'] == 'West'], key=lambda x: x['conf_rank'])
-    fetched_at = _standings_cache.get("fetched_at")
+
+    # Pull last_synced_at from DB (most recent updated_at across all rows)
+    last_synced_at = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+        c.execute("SELECT MAX(updated_at) FROM cached_standings WHERE season = '2026'")
+        row = c.fetchone()
+        conn.close()
+        if row and row[0]:
+            last_synced_at = row[0].isoformat()
+    except Exception:
+        pass
+
+    fetched_at        = _standings_cache.get("fetched_at")
     cache_age_minutes = None
     if fetched_at:
         cache_age_minutes = round((datetime.now() - fetched_at).total_seconds() / 60, 1)
+
     return {
-        "eastern": eastern,
-        "western": western,
-        "last_updated": fetched_at.isoformat() if fetched_at else None,
+        "eastern":           eastern,
+        "western":           western,
+        "last_updated":      fetched_at.isoformat() if fetched_at else None,
+        "last_synced_at":    last_synced_at,
         "cache_age_minutes": cache_age_minutes,
-        "cache_expires": _standings_cache["expires"].isoformat() if _standings_cache.get("expires") else None,
+        "cache_expires":     _standings_cache["expires"].isoformat() if _standings_cache.get("expires") else None,
+        "sync_triggered":    sync_triggered,
+        "sync_cutoff":       _STANDINGS_SYNC_CUTOFF.strftime('%Y-%m-%d'),
     }
 
 @app.get("/api/health")

@@ -22,13 +22,16 @@ function useTimeSince(isoString) {
 }
 
 const StandingsPage = () => {
-  const [standings, setStandings] = useState({ eastern: [], western: [] });
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [standings, setStandings]     = useState({ eastern: [], western: [] });
+  const [loading, setLoading]         = useState(true);
+  const [refreshing, setRefreshing]   = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [error, setError] = useState(null);
+  const [lastSynced, setLastSynced]   = useState(null);
+  const [syncBanner, setSyncBanner]   = useState(false);
+  const [error, setError]             = useState(null);
   const intervalRef = useRef(null);
-  const timeSince = useTimeSince(lastUpdated);
+  const timeSince   = useTimeSince(lastUpdated);
+  const syncedSince = useTimeSince(lastSynced);
 
   const loadStandings = useCallback(async (force = false) => {
     if (force) setRefreshing(true);
@@ -38,8 +41,10 @@ const StandingsPage = () => {
       const data = await api.getStandings(force);
       setStandings(data);
       setLastUpdated(data.last_updated);
-      if (data.cache_age_minutes !== null && data.cache_age_minutes !== undefined) {
-        console.log(`Standings cache age: ${data.cache_age_minutes} min`);
+      if (data.last_synced_at) setLastSynced(data.last_synced_at);
+      if (force && data.sync_triggered) {
+        setSyncBanner(true);
+        setTimeout(() => setSyncBanner(false), 5000);
       }
     } catch (err) {
       console.error('Error loading standings:', err);
@@ -63,6 +68,16 @@ const StandingsPage = () => {
 
   const isLive = lastUpdated && (Date.now() - new Date(lastUpdated)) < 6 * 60 * 1000;
 
+  const StatusBadge = ({ status, rank }) => {
+    // Use backend status when available; fall back to rank-based derivation
+    const s = status || (rank <= 6 ? 'Playoff' : rank <= 10 ? 'Play-In' : 'Eliminated');
+    if (s === 'Playoff')
+      return <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] font-black">Playoff</span>;
+    if (s === 'Play-In')
+      return <span className="px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-black">Play-In</span>;
+    return null;
+  };
+
   const StandingsTable = ({ teams, conference }) => {
     const color = conference === 'Eastern' ? 'from-blue-600 to-blue-800' : 'from-red-600 to-red-800';
     return (
@@ -82,13 +97,15 @@ const StandingsPage = () => {
                 <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">W</th>
                 <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">L</th>
                 <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">PCT</th>
+                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase hidden sm:table-cell">GB</th>
                 <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {teams.map((team, idx) => {
-                const isPlayoff = idx < 6;
-                const isPlayIn = idx >= 6 && idx < 10;
+              {teams.map((team) => {
+                const rank      = team.conf_rank;
+                const isPlayoff = rank <= 6;
+                const isPlayIn  = rank >= 7 && rank <= 10;
                 return (
                   <tr key={team.team_id}
                     className={`transition-colors hover:bg-slate-800/40 ${
@@ -97,7 +114,7 @@ const StandingsPage = () => {
                     <td className="px-4 py-3">
                       <span className={`text-sm font-black ${
                         isPlayoff ? 'text-green-400' : isPlayIn ? 'text-yellow-400' : 'text-slate-500'
-                      }`}>{team.conf_rank}</span>
+                      }`}>{rank}</span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -115,17 +132,11 @@ const StandingsPage = () => {
                     <td className="px-3 py-3 text-center text-slate-300 text-sm">
                       {(team.win_pct * 100).toFixed(1)}%
                     </td>
+                    <td className="px-3 py-3 text-center text-slate-500 text-sm hidden sm:table-cell">
+                      {rank === 1 ? '—' : (team.games_back != null ? team.games_back.toFixed(1) : '—')}
+                    </td>
                     <td className="px-3 py-3 text-center">
-                      {isPlayoff && (
-                        <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] font-black">
-                          Playoff
-                        </span>
-                      )}
-                      {isPlayIn && (
-                        <span className="px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-black">
-                          Play-In
-                        </span>
-                      )}
+                      <StatusBadge status={team.status} rank={rank} />
                     </td>
                   </tr>
                 );
@@ -143,6 +154,14 @@ const StandingsPage = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
+      {/* Sync-triggered banner */}
+      {syncBanner && (
+        <div className="mb-4 px-4 py-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-400 font-bold flex items-center gap-2">
+          <RefreshCw className="w-3 h-3 animate-spin" />
+          Live sync triggered — standings will update in ~30 seconds. Refresh the page to see latest data.
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4 mb-8">
         <div>
@@ -161,13 +180,18 @@ const StandingsPage = () => {
               ) : (
                 <>
                   <WifiOff className="w-3 h-3 text-slate-500" />
-                  <span className="text-xs text-slate-500 font-bold">Stale</span>
+                  <span className="text-xs text-slate-500 font-bold">Cached</span>
                 </>
               )}
             </div>
 
             {lastUpdated && (
-              <span className="text-xs text-slate-400">Updated {timeSince}</span>
+              <span className="text-xs text-slate-400">Cache: {timeSince}</span>
+            )}
+            {lastSynced && (
+              <span className="text-xs text-slate-500">
+                DB sync: {syncedSince}
+              </span>
             )}
           </div>
 
