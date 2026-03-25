@@ -555,34 +555,28 @@ def ensure_admin_users():
 
 def _apply_odds_migration():
     """
-    Add odds_championship / odds_conference to the teams table.
-    Runs with autocommit=True in its own connection so it is completely
-    immune to any aborted-transaction state left by init_db().
-    Checks information_schema first so it never errors on existing columns.
+    Ensure odds_championship / odds_conference exist on the teams table.
+    Uses ADD COLUMN IF NOT EXISTS (idempotent) so no information_schema
+    check is needed — works reliably on Supabase and PgBouncer poolers.
+    Each column gets its own autocommit statement and its own try/except
+    so one failure never blocks the other.
     """
     try:
         conn = get_db_conn()
         conn.autocommit = True
         c = conn.cursor()
-
-        # Check which columns are already present
-        c.execute("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'teams'
-              AND column_name IN ('odds_championship', 'odds_conference')
-        """)
-        existing = {row[0] for row in c.fetchall()}
-
+        c.execute("SET search_path TO public")
         for col in ("odds_championship", "odds_conference"):
-            if col not in existing:
-                c.execute(f"ALTER TABLE teams ADD COLUMN {col} FLOAT DEFAULT 1.0")
-                print(f"Migration: added teams.{col}")
-            else:
-                print(f"Migration: teams.{col} already exists, skipping")
-
+            try:
+                c.execute(
+                    f"ALTER TABLE teams ADD COLUMN IF NOT EXISTS {col} FLOAT DEFAULT 1.0"
+                )
+                print(f"Migration: ensured teams.{col} exists")
+            except Exception as col_err:
+                print(f"Migration: could not add teams.{col}: {col_err}")
         conn.close()
     except Exception as e:
-        print(f"Odds migration error (non-fatal): {e}")
+        print(f"Odds migration connection error (non-fatal): {e}")
 
 
 @app.on_event("startup")
@@ -966,75 +960,101 @@ async def leaderboard(season: str = "2026"):
 @app.get("/api/stats/global")
 async def global_stats(season: str = "2026"):
     """Aggregate community prediction stats for the Global Stats tab."""
-    conn = get_db_conn()
-    c = conn.cursor()
+    _EMPTY = {'series': [], 'futures': {'top_champions': [], 'top_west_champs': [], 'top_east_champs': []}, 'total_users': 0}
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
 
-    # Per-series vote breakdown
-    c.execute("""
-        SELECT s.id, s.round, s.conference,
-               s.home_team_id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
-               s.away_team_id, at.name, at.abbreviation, at.logo_url, s.away_seed,
-               s.status,
-               COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.home_team_id THEN 1 ELSE 0 END), 0) AS home_votes,
-               COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.away_team_id THEN 1 ELSE 0 END), 0) AS away_votes,
-               COUNT(p.id) AS total_votes
-        FROM series s
-        JOIN teams ht ON s.home_team_id = ht.id
-        JOIN teams at ON s.away_team_id = at.id
-        LEFT JOIN predictions p ON p.series_id = s.id
-        WHERE s.season = %s
-        GROUP BY s.id, s.round, s.conference,
-                 s.home_team_id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
-                 s.away_team_id, at.name, at.abbreviation, at.logo_url, s.away_seed,
-                 s.status
-        ORDER BY s.conference, s.round
-    """, (season,))
+        # Per-series vote breakdown — only safe columns; no odds columns touched here.
+        # home_seed / away_seed exist on series since original schema (init_db creates them).
+        try:
+            c.execute("""
+                SELECT s.id, s.round, s.conference,
+                       s.home_team_id, ht.name, ht.abbreviation, ht.logo_url,
+                       COALESCE(s.home_seed, 0),
+                       s.away_team_id, at.name, at.abbreviation, at.logo_url,
+                       COALESCE(s.away_seed, 0),
+                       s.status,
+                       COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.home_team_id THEN 1 ELSE 0 END), 0),
+                       COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.away_team_id THEN 1 ELSE 0 END), 0),
+                       COUNT(p.id)
+                FROM series s
+                JOIN teams ht ON s.home_team_id = ht.id
+                JOIN teams at ON s.away_team_id = at.id
+                LEFT JOIN predictions p ON p.series_id = s.id
+                WHERE s.season = %s
+                GROUP BY s.id, s.round, s.conference,
+                         s.home_team_id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
+                         s.away_team_id, at.name, at.abbreviation, at.logo_url, s.away_seed,
+                         s.status
+                ORDER BY s.conference, s.round
+            """, (season,))
+            series_stats = []
+            for row in c.fetchall():
+                home_v = int(row[14]) if row[14] else 0
+                away_v = int(row[15]) if row[15] else 0
+                total  = int(row[16]) if row[16] else 0
+                series_stats.append({
+                    'series_id':  row[0],
+                    'round':      row[1],
+                    'conference': row[2],
+                    'home_team':  {'id': row[3], 'name': row[4],  'abbreviation': row[5],  'logo_url': row[6],  'seed': row[7]},
+                    'away_team':  {'id': row[8], 'name': row[9],  'abbreviation': row[10], 'logo_url': row[11], 'seed': row[12]},
+                    'status':      row[13],
+                    'home_votes':  home_v,
+                    'away_votes':  away_v,
+                    'total_votes': total,
+                    'home_pct':    round(home_v / total * 100) if total > 0 else 50,
+                    'away_pct':    round(away_v / total * 100) if total > 0 else 50,
+                })
+        except Exception as e:
+            print(f"global_stats series query error: {e}")
+            conn.rollback()
+            series_stats = []
 
-    series_stats = []
-    for row in c.fetchall():
-        total  = int(row[16]) if row[16] else 0
-        home_v = int(row[14]) if row[14] else 0
-        away_v = int(row[15]) if row[15] else 0
-        series_stats.append({
-            'series_id':  row[0],
-            'round':      row[1],
-            'conference': row[2],
-            'home_team':  {'id': row[3], 'name': row[4],  'abbreviation': row[5],  'logo_url': row[6],  'seed': row[7]},
-            'away_team':  {'id': row[8], 'name': row[9],  'abbreviation': row[10], 'logo_url': row[11], 'seed': row[12]},
-            'status':      row[13],
-            'home_votes':  home_v,
-            'away_votes':  away_v,
-            'total_votes': total,
-            'home_pct':    round(home_v / total * 100) if total > 0 else 50,
-            'away_pct':    round(away_v / total * 100) if total > 0 else 50,
-        })
+        def top_futures(col):
+            try:
+                c.execute(f"""
+                    SELECT fp.{col}, t.name, t.abbreviation, t.logo_url, COUNT(*) AS cnt
+                    FROM futures_predictions fp
+                    JOIN teams t ON fp.{col} = t.id
+                    WHERE fp.season = %s AND fp.{col} IS NOT NULL
+                    GROUP BY fp.{col}, t.name, t.abbreviation, t.logo_url
+                    ORDER BY cnt DESC LIMIT 3
+                """, (season,))
+                return [{'team': {'id': r[0], 'name': r[1], 'abbreviation': r[2], 'logo_url': r[3]}, 'count': r[4]}
+                        for r in c.fetchall()]
+            except Exception as e:
+                print(f"global_stats top_futures({col}) error: {e}")
+                conn.rollback()
+                return []
 
-    def top_futures(col):
-        c.execute(f"""
-            SELECT fp.{col}, t.name, t.abbreviation, t.logo_url, COUNT(*) AS cnt
-            FROM futures_predictions fp
-            JOIN teams t ON fp.{col} = t.id
-            WHERE fp.season = %s AND fp.{col} IS NOT NULL
-            GROUP BY fp.{col}, t.name, t.abbreviation, t.logo_url
-            ORDER BY cnt DESC LIMIT 3
-        """, (season,))
-        return [{'team': {'id': r[0], 'name': r[1], 'abbreviation': r[2], 'logo_url': r[3]}, 'count': r[4]}
-                for r in c.fetchall()]
+        try:
+            c.execute("""SELECT COUNT(DISTINCT p.user_id) FROM predictions p
+                         JOIN series s ON p.series_id = s.id WHERE s.season = %s""", (season,))
+            total_users = c.fetchone()[0] or 0
+        except Exception as e:
+            print(f"global_stats total_users error: {e}")
+            conn.rollback()
+            total_users = 0
 
-    c.execute("""SELECT COUNT(DISTINCT p.user_id) FROM predictions p
-                 JOIN series s ON p.series_id = s.id WHERE s.season = %s""", (season,))
-    total_users = c.fetchone()[0] or 0
-
-    conn.close()
-    return {
-        'series':      series_stats,
-        'futures':     {
-            'top_champions':  top_futures('champion_team_id'),
-            'top_west_champs': top_futures('west_champ_team_id'),
-            'top_east_champs': top_futures('east_champ_team_id'),
-        },
-        'total_users': total_users,
-    }
+        return {
+            'series':      series_stats,
+            'futures':     {
+                'top_champions':   top_futures('champion_team_id'),
+                'top_west_champs': top_futures('west_champ_team_id'),
+                'top_east_champs': top_futures('east_champ_team_id'),
+            },
+            'total_users': total_users,
+        }
+    except Exception as e:
+        print(f"global_stats fatal error: {e}")
+        return _EMPTY
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 @app.get("/api/series/{series_id}/picks")
 async def series_picks(series_id: int):
