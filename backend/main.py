@@ -448,6 +448,84 @@ def _send_onesignal_notification(title: str, body: str, url: str = "https://nba-
         return False
 
 
+def _send_missing_picks_alert() -> None:
+    """
+    Daily cron (16:00 UTC = 18:00 Israel): find users who have at least one
+    active/unlocked series with no prediction, then send them a targeted push
+    via OneSignal external_id aliases.  Silently skips if no open series exist
+    or if OneSignal credentials are absent.
+    """
+    if datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF:
+        return
+    if not _ONESIGNAL_API_KEY:
+        print("[Alert] ONESIGNAL_API_KEY not set — skipping missing-picks alert")
+        return
+
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+
+        # Are there any active (unlocked) series right now?
+        c.execute("SELECT COUNT(*) FROM series WHERE season = '2026' AND status = 'active'")
+        active_count = c.fetchone()[0]
+        if not active_count:
+            print("[Alert] No active series — skipping missing-picks alert")
+            return
+
+        # Users who have NOT predicted at least one active series
+        c.execute("""
+            SELECT DISTINCT u.id::text
+            FROM users u
+            WHERE EXISTS (
+                SELECT 1 FROM series s
+                WHERE s.season = '2026' AND s.status = 'active'
+                AND NOT EXISTS (
+                    SELECT 1 FROM predictions p
+                    WHERE p.user_id = u.id AND p.series_id = s.id
+                )
+            )
+        """)
+        user_ids = [r[0] for r in c.fetchall()]
+        conn.close()
+        conn = None
+
+        if not user_ids:
+            print("[Alert] All users have completed their picks — no alert needed")
+            return
+
+        print(f"[Alert] Sending missing-picks push to {len(user_ids)} user(s)")
+
+        import urllib.request, json as _json
+        payload = _json.dumps({
+            "app_id":            _ONESIGNAL_APP_ID,
+            "include_aliases":   {"external_id": user_ids},
+            "target_channel":    "push",
+            "headings":          {"en": "🏀 Don't forget your picks!"},
+            "contents":          {"en": "You have open NBA playoff series waiting for your predictions. Lock them in before it's too late!"},
+            "url":               "https://nba-playoffs-2026.vercel.app",
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://onesignal.com/api/v1/notifications",
+            data=payload,
+            headers={
+                "Content-Type":  "application/json; charset=utf-8",
+                "Authorization": f"Key {_ONESIGNAL_API_KEY}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = _json.loads(resp.read())
+            print(f"[Alert] Missing-picks push sent — recipients: {result.get('recipients', '?')}")
+
+    except Exception as e:
+        print(f"[Alert] Missing-picks alert error: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
 def _persist_standings_to_db(standings: list) -> dict:
     """
     Upsert standings rows to cached_standings using (team_id, season) as the
@@ -977,20 +1055,33 @@ async def startup():
 
     threading.Thread(target=_background_init, daemon=True).start()
 
-    # APScheduler cron job — 0 */6 * * * UTC (every 6 hours on the hour)
-    # Stops automatically when _standings_sync_job checks _STANDINGS_SYNC_CUTOFF.
+    # APScheduler cron jobs
     global _scheduler
     _scheduler = BackgroundScheduler(timezone='UTC', daemon=True)
+
+    # 1) Data sync — every 6 hours
     _scheduler.add_job(
         _standings_sync_job,
         CronTrigger.from_crontab('0 */6 * * *'),
         id='standings_sync',
         replace_existing=True,
-        misfire_grace_time=600,   # allow up to 10 min late start
-        max_instances=1,          # never run two syncs concurrently
+        misfire_grace_time=600,
+        max_instances=1,
     )
+
+    # 2) Missing-picks alert — 16:00 UTC = 18:00 Israel (UTC+2)
+    _scheduler.add_job(
+        _send_missing_picks_alert,
+        CronTrigger.from_crontab('0 16 * * *'),
+        id='missing_picks_alert',
+        replace_existing=True,
+        misfire_grace_time=1800,
+        max_instances=1,
+    )
+
     _scheduler.start()
-    print("[Standings] APScheduler started — cron: 0 */6 * * * UTC"
+    print("[Scheduler] APScheduler started — data sync: 0 */6 * * * UTC,"
+          " missing-picks alert: 0 16 * * * UTC (18:00 IL)"
           f" (active until {_STANDINGS_SYNC_CUTOFF.date()})")
 
     # Fire-and-forget initial sync so DB is populated shortly after boot

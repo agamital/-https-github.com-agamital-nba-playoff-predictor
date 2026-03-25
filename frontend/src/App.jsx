@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, Share } from 'lucide-react';
+import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, Share, Bell } from 'lucide-react';
+import OneSignal from 'react-onesignal';
 import * as api from './services/api';
 import { supabase } from './lib/supabase';
 import './index.css';
@@ -1149,12 +1150,70 @@ const InstallBanner = () => {
   );
 };
 
+// ── Bell notification button ─────────────────────────────────────────────────
+const BellButton = ({ hasMissingPicks, onNavigate, className = '' }) => {
+  const [subscribed, setSubscribed] = useState(null); // null=checking
+
+  // Read OneSignal subscription state (debounced — SDK needs ~1 s to init)
+  useEffect(() => {
+    let active = true;
+    const check = async () => {
+      try {
+        await new Promise(r => setTimeout(r, 1200));
+        if (!active) return;
+        const perm    = OneSignal.Notifications?.permissionNative;
+        const opted   = OneSignal.User?.PushSubscription?.optedIn ?? false;
+        setSubscribed(perm === 'granted' && opted);
+      } catch {
+        setSubscribed(false);
+      }
+    };
+    check();
+    return () => { active = false; };
+  }, []);
+
+  const needsSubscription = subscribed === false; // not subscribed (exclude null=loading)
+  const showDot    = hasMissingPicks || needsSubscription;
+  const isCritical = hasMissingPicks; // shake when picks are missing
+
+  const handleClick = async () => {
+    if (needsSubscription) {
+      // Prompt for permission first
+      try {
+        await OneSignal.Notifications.requestPermission();
+        const perm = OneSignal.Notifications?.permissionNative;
+        if (perm === 'granted') {
+          await OneSignal.User.PushSubscription.optIn();
+          setSubscribed(true);
+        }
+      } catch { /* dismissed */ }
+    } else {
+      onNavigate('betting');
+    }
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      title={needsSubscription ? 'Enable push notifications' : hasMissingPicks ? 'You have missing picks!' : 'Notifications'}
+      className={`relative p-2 rounded-xl hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors ${className}`}
+      style={{ minWidth: 36, minHeight: 36 }}
+    >
+      <Bell className={`w-5 h-5 ${showDot ? 'text-orange-400' : 'text-slate-400'} ${isCritical ? 'bell-shake' : ''}`} />
+      {showDot && (
+        <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full ring-2 ring-slate-900 pointer-events-none" />
+      )}
+    </button>
+  );
+};
+
 function App() {
   const [currentPage, setCurrentPage] = useState('home');
   const [currentUser, setCurrentUser] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [profileUsername, setProfileUsername] = useState(null);
+  const [hasMissingPicks, setHasMissingPicks] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem('nba_user');
@@ -1190,6 +1249,21 @@ function App() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  // Sync hasMissingPicks + OneSignal external ID whenever user changes
+  useEffect(() => {
+    if (!currentUser) {
+      setHasMissingPicks(false);
+      try { OneSignal.logout(); } catch {}
+      return;
+    }
+    // Map our user ID to OneSignal so backend can target this subscriber
+    try { OneSignal.login(String(currentUser.user_id)); } catch {}
+    // Check if user has any unpredicted series
+    api.getDashboard(currentUser.user_id).then(data => {
+      setHasMissingPicks((data.series_predicted ?? 0) < (data.total_series ?? 0));
+    }).catch(() => {});
+  }, [currentUser?.user_id]);
 
   const handleLogin = (user) => {
     setCurrentUser(user);
@@ -1293,17 +1367,20 @@ function App() {
           </nav>
           {currentUser && (
             <div className="p-4 border-t border-blue-500/20 space-y-2">
-              <button
-                onClick={() => navigate('account')}
-                className={`group flex items-center w-full px-3 py-2.5 text-sm font-semibold rounded-xl transition-all ${
-                  currentPage === 'account'
-                    ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
-                    : 'text-slate-300 hover:bg-slate-800/50'
-                }`}
-              >
-                <Settings className="mr-3 h-4 w-4 shrink-0" />
-                Account Settings
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigate('account')}
+                  className={`group flex items-center flex-1 px-3 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                    currentPage === 'account'
+                      ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
+                      : 'text-slate-300 hover:bg-slate-800/50'
+                  }`}
+                >
+                  <Settings className="mr-3 h-4 w-4 shrink-0" />
+                  Account Settings
+                </button>
+                <BellButton hasMissingPicks={hasMissingPicks} onNavigate={navigate} />
+              </div>
               <div className="flex items-center px-2 py-1">
                 {currentUser.avatar_url ? (
                   <img src={currentUser.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover mr-3 shrink-0" />
@@ -1339,20 +1416,23 @@ function App() {
             </div>
           </div>
           {currentUser && (
-            <button
-              onClick={() => navigate('account')}
-              className="flex items-center gap-2 active:opacity-70 transition-opacity"
-              style={{ minHeight: 44 }}
-            >
-              {currentUser.avatar_url ? (
-                <img src={currentUser.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
-              ) : (
-                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-sm font-black shrink-0">
-                  {currentUser.username[0].toUpperCase()}
-                </div>
-              )}
-              <span className="text-xs text-slate-400 font-bold">{currentUser.points || 0}pts</span>
-            </button>
+            <div className="flex items-center gap-1">
+              <BellButton hasMissingPicks={hasMissingPicks} onNavigate={navigate} />
+              <button
+                onClick={() => navigate('account')}
+                className="flex items-center gap-2 active:opacity-70 transition-opacity px-1"
+                style={{ minHeight: 44 }}
+              >
+                {currentUser.avatar_url ? (
+                  <img src={currentUser.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+                ) : (
+                  <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-sm font-black shrink-0">
+                    {currentUser.username[0].toUpperCase()}
+                  </div>
+                )}
+                <span className="text-xs text-slate-400 font-bold">{currentUser.points || 0}pts</span>
+              </button>
+            </div>
           )}
         </div>
       </div>

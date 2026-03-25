@@ -26,6 +26,20 @@
   animation: bonus-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
+@keyframes bell-shake {
+  0%,  55%, 100% { transform: rotate(0deg); }
+  5%             { transform: rotate(-18deg); }
+  15%            { transform: rotate(18deg); }
+  25%            { transform: rotate(-12deg); }
+  35%            { transform: rotate(12deg); }
+  45%            { transform: rotate(-6deg); }
+}
+.bell-shake {
+  animation: bell-shake 2.2s ease-in-out infinite;
+  transform-origin: 50% 0%;
+  display: inline-block;
+}
+
 /* iOS safe-area support (iPhone X+ home indicator) */
 .nav-safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
