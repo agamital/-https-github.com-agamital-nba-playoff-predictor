@@ -581,52 +581,206 @@ const BettingPage = ({ currentUser }) => {
 };
 
 // ── Global Stats helpers ──────────────────────────────────────────────────────
-const SeriesVoteBar = ({ s }) => {
-  const total = s.total_votes;
+
+const SeriesVoteBar = ({ s, currentUser }) => {
+  const [expanded, setExpanded]       = useState(false);
+  const [picks, setPicks]             = useState(null);
+  const [loadingPicks, setLoadingPicks] = useState(false);
+
+  const total   = s.total_votes;
   const homePct = s.home_pct;
   const awayPct = s.away_pct;
   const noVotes = total === 0;
+
+  const handleToggle = async () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !picks) {
+      setLoadingPicks(true);
+      try {
+        const data = await api.getSeriesPicks(s.series_id);
+        setPicks(data.picks);
+      } catch (e) {
+        console.error('SeriesVoteBar picks fetch:', e);
+        setPicks([]);
+      } finally {
+        setLoadingPicks(false);
+      }
+    }
+  };
+
   return (
-    <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-3">
-      <div className="flex items-center gap-2 mb-2">
-        <img src={s.home_team.logo_url} alt="" className="w-5 h-5" onError={e => e.target.style.display='none'} />
-        <span className="text-xs font-black text-white flex-1">{s.home_team.abbreviation}</span>
-        <span className="text-[10px] text-slate-500">{noVotes ? 'no votes yet' : `${total} votes`}</span>
-        <span className="text-xs font-black text-white flex-1 text-right">{s.away_team.abbreviation}</span>
-        <img src={s.away_team.logo_url} alt="" className="w-5 h-5" onError={e => e.target.style.display='none'} />
-      </div>
-      <div className="relative h-5 rounded-full overflow-hidden bg-slate-800 flex">
-        <div className="h-full bg-blue-500/80 transition-all duration-500" style={{ width: `${homePct}%` }} />
-        <div className="h-full bg-orange-500/80 transition-all duration-500 flex-1" />
-        <div className="absolute inset-0 flex items-center justify-between px-2 pointer-events-none">
-          <span className="text-[10px] font-black text-white drop-shadow">{noVotes ? '—' : `${homePct}%`}</span>
-          <span className="text-[10px] font-black text-white drop-shadow">{noVotes ? '—' : `${awayPct}%`}</span>
+    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
+      <div className="p-4">
+        {/* Completed badge */}
+        {s.status === 'completed' && (
+          <div className="mb-3">
+            <span className="text-[9px] font-black uppercase tracking-widest text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
+              Completed
+            </span>
+          </div>
+        )}
+
+        {/* Teams row */}
+        <div className="flex items-center gap-3 mb-3">
+          {/* Home team */}
+          <div className="flex-1 flex items-center gap-2 min-w-0">
+            <img
+              src={s.home_team.logo_url} alt={s.home_team.abbreviation}
+              className="w-10 h-10 shrink-0"
+              onError={e => e.target.style.display = 'none'}
+            />
+            <div className="min-w-0">
+              <p className="font-black text-white text-sm leading-tight truncate">
+                {s.home_team.name || s.home_team.abbreviation}
+              </p>
+              <p className="text-[10px] text-slate-500 font-bold">Seed #{s.home_team.seed}</p>
+            </div>
+          </div>
+
+          <div className="text-slate-700 font-black text-xs shrink-0">VS</div>
+
+          {/* Away team */}
+          <div className="flex-1 flex items-center gap-2 justify-end min-w-0">
+            <div className="text-right min-w-0">
+              <p className="font-black text-white text-sm leading-tight truncate">
+                {s.away_team.name || s.away_team.abbreviation}
+              </p>
+              <p className="text-[10px] text-slate-500 font-bold">Seed #{s.away_team.seed}</p>
+            </div>
+            <img
+              src={s.away_team.logo_url} alt={s.away_team.abbreviation}
+              className="w-10 h-10 shrink-0"
+              onError={e => e.target.style.display = 'none'}
+            />
+          </div>
+        </div>
+
+        {/* Dual-colour vote bar */}
+        <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
+          <div
+            className="h-full bg-blue-500/80 transition-all duration-700"
+            style={{ width: noVotes ? '50%' : `${homePct}%` }}
+          />
+          <div className="h-full bg-orange-500/70 flex-1" />
+          <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
+            <span className="text-xs font-black text-white drop-shadow-md">
+              {noVotes ? '—' : `${homePct}%`}
+            </span>
+            <span className="text-xs font-black text-white drop-shadow-md">
+              {noVotes ? '—' : `${awayPct}%`}
+            </span>
+          </div>
+        </div>
+
+        {/* Footer row: abbrev + picks toggle */}
+        <div className="flex items-center justify-between mt-2 px-1">
+          <span className="text-[10px] text-blue-400 font-black">{s.home_team.abbreviation}</span>
+          <button
+            onClick={handleToggle}
+            className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors"
+          >
+            <Users className="w-3 h-3" />
+            {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
+            <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+          <span className="text-[10px] text-orange-400 font-black">{s.away_team.abbreviation}</span>
         </div>
       </div>
+
+      {/* Expandable per-user picks */}
+      {expanded && (
+        <div className="border-t border-slate-800/80 bg-slate-950/40">
+          {loadingPicks ? (
+            <div className="flex justify-center py-5">
+              <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : picks && picks.length > 0 ? (
+            <div className="divide-y divide-slate-800/40 max-h-52 overflow-y-auto">
+              {picks.map((p, i) => {
+                const isMe = currentUser && p.username === currentUser.username;
+                return (
+                  <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-orange-500/10' : ''}`}>
+                    {isMe && (
+                      <span className="text-[8px] font-black text-orange-400 bg-orange-500/20 border border-orange-500/30 px-1.5 py-0.5 rounded-full shrink-0">
+                        YOU
+                      </span>
+                    )}
+                    <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-orange-300' : 'text-slate-300'}`}>
+                      {p.username}
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <img
+                        src={p.team_logo_url} alt=""
+                        className="w-4 h-4"
+                        onError={e => e.target.style.display = 'none'}
+                      />
+                      <span className={`text-[10px] font-black ${isMe ? 'text-orange-400' : 'text-slate-400'}`}>
+                        {p.team_abbreviation}
+                      </span>
+                      {p.predicted_games && (
+                        <span className="text-[10px] text-slate-600 font-bold">in {p.predicted_games}</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-600 text-center py-4">No picks yet — be the first!</p>
+          )}
+        </div>
+      )}
     </div>
   );
 };
 
-const FuturesPickBar = ({ item, totalUsers }) => {
-  const pct = totalUsers > 0 ? Math.round(item.count / totalUsers * 100) : 0;
+const _FUTURES_RANK_STYLE = [
+  { badge: 'bg-amber-500/20 border-amber-500/40 text-amber-400',  bar: 'linear-gradient(90deg,#f59e0b,#fb923c)', label: '🥇' },
+  { badge: 'bg-slate-500/20 border-slate-400/40 text-slate-300',  bar: 'linear-gradient(90deg,#94a3b8,#64748b)', label: '🥈' },
+  { badge: 'bg-orange-700/20 border-orange-600/40 text-orange-400', bar: 'linear-gradient(90deg,#f97316,#ea580c)', label: '🥉' },
+];
+
+const FuturesPickBar = ({ item, rank, totalUsers }) => {
+  const pct   = totalUsers > 0 ? Math.round(item.count / totalUsers * 100) : 0;
+  const style = _FUTURES_RANK_STYLE[rank] ?? { badge: 'bg-slate-800 border-slate-700 text-slate-400', bar: '#475569', label: `#${rank + 1}` };
+
   return (
-    <div className="flex items-center gap-3 py-2">
-      <img src={item.team.logo_url} alt="" className="w-7 h-7 shrink-0" onError={e => e.target.style.display='none'} />
+    <div className="flex items-center gap-3 py-2.5">
+      {/* Rank badge */}
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black border shrink-0 ${style.badge}`}>
+        {style.label}
+      </div>
+
+      {/* Team logo */}
+      <img
+        src={item.team.logo_url} alt={item.team.abbreviation}
+        className="w-9 h-9 shrink-0"
+        onError={e => e.target.style.display = 'none'}
+      />
+
+      {/* Bar + labels */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-bold text-white">{item.team.name}</span>
-          <span className="text-xs text-slate-400">{item.count} picks ({pct}%)</span>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-sm font-black text-white truncate">{item.team.name}</span>
+          <span className="text-xs font-bold text-slate-500 shrink-0 ml-2">
+            {item.count} picks&nbsp;
+            <span className="text-orange-400 font-black">({pct}%)</span>
+          </span>
         </div>
-        <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-          <div className="h-full bg-orange-500/70 rounded-full transition-all duration-500" style={{ width: `${Math.max(pct, 3)}%` }} />
+        <div className="h-2.5 bg-slate-800 rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-700"
+            style={{ width: `${Math.max(pct, 4)}%`, background: style.bar }}
+          />
         </div>
       </div>
     </div>
   );
 };
 
-const GlobalStatsTab = () => {
-  const [stats, setStats] = useState(null);
+const GlobalStatsTab = ({ currentUser }) => {
+  const [stats, setStats]   = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -635,20 +789,18 @@ const GlobalStatsTab = () => {
 
   if (loading) return (
     <div className="space-y-3">
-      {[1,2,3,4].map(i => (
-        <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 animate-pulse h-20" />
+      {[1, 2, 3, 4].map(i => (
+        <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 animate-pulse h-24" />
       ))}
     </div>
   );
   if (!stats) return <p className="text-slate-500 text-center py-8">Could not load stats.</p>;
 
-  // Group series by round label
   const ROUND_ORDER = ['First Round', 'Conference Semifinals', 'Conference Finals', 'NBA Finals'];
   const byRound = {};
   stats.series.forEach(s => {
-    const key = s.round;
-    if (!byRound[key]) byRound[key] = [];
-    byRound[key].push(s);
+    if (!byRound[s.round]) byRound[s.round] = [];
+    byRound[s.round].push(s);
   });
   const sortedRounds = ROUND_ORDER.filter(r => byRound[r]);
 
@@ -658,48 +810,80 @@ const GlobalStatsTab = () => {
 
   return (
     <div className="space-y-6">
-      {/* Participation banner */}
-      <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-4 text-center">
-        <span className="text-2xl font-black text-orange-400">{stats.total_users}</span>
-        <span className="text-slate-400 ml-2 text-sm">participants with predictions</span>
+
+      {/* ── Participation banner ── */}
+      <div className="bg-gradient-to-r from-orange-500/10 to-amber-500/10 border border-orange-500/20 rounded-2xl p-5 flex items-center justify-center gap-4">
+        <div className="text-center">
+          <div className="text-4xl font-black text-orange-400 leading-none">{stats.total_users}</div>
+          <div className="text-xs text-slate-400 font-bold mt-1 uppercase tracking-wide">Total Participants</div>
+        </div>
+        <div className="w-px h-10 bg-slate-700" />
+        <div className="text-center">
+          <div className="text-4xl font-black text-blue-400 leading-none">{stats.series.length}</div>
+          <div className="text-xs text-slate-400 font-bold mt-1 uppercase tracking-wide">Active Series</div>
+        </div>
       </div>
 
-      {/* Series votes per round */}
+      {/* ── Series votes by round ── */}
       {sortedRounds.map(round => (
         <div key={round}>
-          <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">{round}</h3>
-          <div className="space-y-2">
-            {byRound[round].map(s => <SeriesVoteBar key={s.series_id} s={s} />)}
+          <div className="flex items-center gap-2 mb-3">
+            <div className="h-px flex-1 bg-slate-800" />
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-2">{round}</h3>
+            <div className="h-px flex-1 bg-slate-800" />
+          </div>
+          <div className="space-y-3">
+            {byRound[round].map(s => (
+              <SeriesVoteBar key={s.series_id} s={s} currentUser={currentUser} />
+            ))}
           </div>
         </div>
       ))}
 
-      {/* Futures top picks */}
+      {/* ── Futures top picks ── */}
       {hasFutures && (
-        <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4">
-          <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-4">Top Futures Picks</h3>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <div className="h-px flex-1 bg-slate-800" />
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-2">Top Futures Picks</h3>
+            <div className="h-px flex-1 bg-slate-800" />
+          </div>
+
           {stats.futures.top_champions.length > 0 && (
-            <div className="mb-4">
-              <p className="text-xs font-bold text-amber-400 mb-2">🏆 NBA Champions</p>
-              {stats.futures.top_champions.map((item, i) => (
-                <FuturesPickBar key={i} item={item} totalUsers={stats.total_users} />
-              ))}
+            <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+              <p className="text-xs font-black text-amber-400 mb-3 flex items-center gap-1.5">
+                🏆 <span>NBA Champions</span>
+              </p>
+              <div className="divide-y divide-slate-800/50">
+                {stats.futures.top_champions.map((item, i) => (
+                  <FuturesPickBar key={i} item={item} rank={i} totalUsers={stats.total_users} />
+                ))}
+              </div>
             </div>
           )}
-          {stats.futures.top_west_champs.length > 0 && (
-            <div className="mb-4">
-              <p className="text-xs font-bold text-blue-400 mb-2">🌵 West Champs</p>
-              {stats.futures.top_west_champs.map((item, i) => (
-                <FuturesPickBar key={i} item={item} totalUsers={stats.total_users} />
-              ))}
-            </div>
-          )}
-          {stats.futures.top_east_champs.length > 0 && (
-            <div>
-              <p className="text-xs font-bold text-green-400 mb-2">🗽 East Champs</p>
-              {stats.futures.top_east_champs.map((item, i) => (
-                <FuturesPickBar key={i} item={item} totalUsers={stats.total_users} />
-              ))}
+
+          {(stats.futures.top_west_champs.length > 0 || stats.futures.top_east_champs.length > 0) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {stats.futures.top_west_champs.length > 0 && (
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+                  <p className="text-xs font-black text-blue-400 mb-3">🌵 West Champs</p>
+                  <div className="divide-y divide-slate-800/50">
+                    {stats.futures.top_west_champs.map((item, i) => (
+                      <FuturesPickBar key={i} item={item} rank={i} totalUsers={stats.total_users} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {stats.futures.top_east_champs.length > 0 && (
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+                  <p className="text-xs font-black text-green-400 mb-3">🗽 East Champs</p>
+                  <div className="divide-y divide-slate-800/50">
+                    {stats.futures.top_east_champs.map((item, i) => (
+                      <FuturesPickBar key={i} item={item} rank={i} totalUsers={stats.total_users} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -708,7 +892,7 @@ const GlobalStatsTab = () => {
   );
 };
 
-const LeaderboardPage = ({ onUserClick }) => {
+const LeaderboardPage = ({ onUserClick, currentUser }) => {
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
@@ -753,7 +937,7 @@ const LeaderboardPage = ({ onUserClick }) => {
         ))}
       </div>
 
-      {tab === 'global' ? <GlobalStatsTab /> : loading ? (
+      {tab === 'global' ? <GlobalStatsTab currentUser={currentUser} /> : loading ? (
         <div className="space-y-2">
           {[1,2,3,4,5].map(i => (
             <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex items-center gap-3 animate-pulse">
@@ -1053,7 +1237,7 @@ function App() {
       case 'home':             return <HomePage {...props} />;
       case 'standings':        return <StandingsPage currentUser={currentUser} />;
       case 'betting':          return <BracketPage currentUser={currentUser} onNavigate={navigate} />;
-      case 'leaderboard':      return <LeaderboardPage onUserClick={handleUserClick} />;
+      case 'leaderboard':      return <LeaderboardPage onUserClick={handleUserClick} currentUser={currentUser} />;
       case 'mypredictions':    return <MyPredictionsPage currentUser={currentUser} />;
       case 'profile':          return <UserProfilePage username={profileUsername || currentUser?.username} currentUser={currentUser} />;
       case 'account':          return <AccountPage currentUser={currentUser} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
