@@ -143,8 +143,8 @@ def init_db():
         division TEXT,
         logo_url TEXT
     )''')
-    c.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS odds_championship FLOAT DEFAULT 1.0")
-    c.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS odds_conference FLOAT DEFAULT 1.0")
+    # NOTE: odds columns are migrated separately in _apply_odds_migration()
+    # with autocommit=True so they are never inside an abortable transaction.
 
     c.execute('''CREATE TABLE IF NOT EXISTS series (
         id SERIAL PRIMARY KEY,
@@ -546,6 +546,25 @@ def ensure_admin_users():
     conn.commit()
     conn.close()
 
+def _apply_odds_migration():
+    """
+    Add odds_championship / odds_conference to the teams table.
+    Runs with autocommit=True in its own connection so it is completely
+    immune to any aborted-transaction state left by init_db().
+    Safe to call repeatedly — IF NOT EXISTS makes it idempotent.
+    """
+    try:
+        conn = get_db_conn()
+        conn.autocommit = True          # DDL outside any transaction
+        c = conn.cursor()
+        c.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS odds_championship FLOAT DEFAULT 1.0")
+        c.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS odds_conference   FLOAT DEFAULT 1.0")
+        conn.close()
+        print("Odds columns verified/applied")
+    except Exception as e:
+        print(f"Odds migration note (non-fatal): {e}")
+
+
 @app.on_event("startup")
 async def startup():
     # Load hardcoded standings instantly — app responds to users immediately,
@@ -561,6 +580,10 @@ async def startup():
         print("DB initialised")
     except Exception as e:
         print(f"ERROR init_db: {e}")
+
+    # Apply odds columns separately with autocommit — must run even if init_db
+    # had a partial failure, so these columns always exist before any request.
+    _apply_odds_migration()
 
     try:
         ensure_admin_users()
@@ -622,20 +645,33 @@ async def api_standings(force_refresh: bool = False):
 async def api_teams(conference: Optional[str] = None):
     conn = get_db_conn()
     c = conn.cursor()
-
-    q = '''SELECT id, name, abbreviation, city, conference, division, logo_url,
-                  COALESCE(odds_championship, 1.0), COALESCE(odds_conference, 1.0)
-           FROM teams'''
-    if conference:
-        c.execute(q + ' WHERE conference = %s', (conference,))
-    else:
-        c.execute(q)
-
     teams = []
-    for row in c.fetchall():
-        teams.append({'id': row[0], 'name': row[1], 'abbreviation': row[2],
-                     'city': row[3], 'conference': row[4], 'division': row[5], 'logo_url': row[6],
-                     'odds_championship': float(row[7]), 'odds_conference': float(row[8])})
+
+    # Try with odds columns (added by _apply_odds_migration on startup)
+    try:
+        q = '''SELECT id, name, abbreviation, city, conference, division, logo_url,
+                      COALESCE(odds_championship, 1.0), COALESCE(odds_conference, 1.0)
+               FROM teams'''
+        if conference:
+            c.execute(q + ' WHERE conference = %s', (conference,))
+        else:
+            c.execute(q)
+        for row in c.fetchall():
+            teams.append({'id': row[0], 'name': row[1], 'abbreviation': row[2],
+                         'city': row[3], 'conference': row[4], 'division': row[5], 'logo_url': row[6],
+                         'odds_championship': float(row[7]), 'odds_conference': float(row[8])})
+    except Exception:
+        # Columns not yet migrated — fall back and return default odds of 1.0
+        conn.rollback()
+        q = 'SELECT id, name, abbreviation, city, conference, division, logo_url FROM teams'
+        if conference:
+            c.execute(q + ' WHERE conference = %s', (conference,))
+        else:
+            c.execute(q)
+        for row in c.fetchall():
+            teams.append({'id': row[0], 'name': row[1], 'abbreviation': row[2],
+                         'city': row[3], 'conference': row[4], 'division': row[5], 'logo_url': row[6],
+                         'odds_championship': 1.0, 'odds_conference': 1.0})
 
     conn.close()
     return teams
@@ -1775,16 +1811,28 @@ async def set_odds(champion: float = 1.0, west_champ: float = 1.0, east_champ: f
 async def get_team_odds():
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute('''SELECT id, name, abbreviation, conference, logo_url,
-                        COALESCE(odds_championship, 1.0), COALESCE(odds_conference, 1.0)
-                 FROM teams ORDER BY conference, name''')
     teams = []
-    for row in c.fetchall():
-        teams.append({
-            'team_id': row[0], 'name': row[1], 'abbreviation': row[2],
-            'conference': row[3], 'logo_url': row[4],
-            'odds_championship': float(row[5]), 'odds_conference': float(row[6]),
-        })
+    try:
+        c.execute('''SELECT id, name, abbreviation, conference, logo_url,
+                            COALESCE(odds_championship, 1.0), COALESCE(odds_conference, 1.0)
+                     FROM teams ORDER BY conference, name''')
+        for row in c.fetchall():
+            teams.append({
+                'team_id': row[0], 'name': row[1], 'abbreviation': row[2],
+                'conference': row[3], 'logo_url': row[4],
+                'odds_championship': float(row[5]), 'odds_conference': float(row[6]),
+            })
+    except Exception:
+        # Columns not migrated yet — trigger migration now then return defaults
+        conn.rollback()
+        _apply_odds_migration()
+        c.execute('SELECT id, name, abbreviation, conference, logo_url FROM teams ORDER BY conference, name')
+        for row in c.fetchall():
+            teams.append({
+                'team_id': row[0], 'name': row[1], 'abbreviation': row[2],
+                'conference': row[3], 'logo_url': row[4],
+                'odds_championship': 1.0, 'odds_conference': 1.0,
+            })
     conn.close()
     return teams
 
