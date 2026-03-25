@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown } from 'lucide-react';
+import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, Share } from 'lucide-react';
 import * as api from './services/api';
 import { supabase } from './lib/supabase';
 import './index.css';
@@ -935,9 +935,19 @@ const InstallBanner = () => {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-black text-white">Install NBA Picks</p>
         {isIOS ? (
-          <p className="text-xs text-slate-400 mt-0.5">
-            Tap <span className="font-bold text-slate-300">Share</span> → <span className="font-bold text-slate-300">Add to Home Screen</span>
-          </p>
+          <div className="mt-1.5 space-y-1">
+            <p className="text-xs text-slate-400 flex items-center gap-1 flex-wrap">
+              1. Tap the
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700">
+                <Share className="w-3 h-3 text-blue-400" />
+                <span className="text-[10px] font-bold text-slate-300">Share</span>
+              </span>
+              icon in Safari
+            </p>
+            <p className="text-xs text-slate-400">
+              2. Tap <span className="font-bold text-slate-200">"Add to Home Screen"</span>
+            </p>
+          </div>
         ) : (
           <p className="text-xs text-slate-400 mt-0.5">Add to home screen for a native app experience</p>
         )}

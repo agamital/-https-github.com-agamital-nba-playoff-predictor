@@ -189,9 +189,27 @@ const StandingsPage = () => {
       </div>
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20">
-          <div className="animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent mb-4" />
-          <p className="text-slate-400 text-sm">Fetching live standings…</p>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {[{ conf: 'Eastern', color: 'from-blue-600 to-blue-800' }, { conf: 'Western', color: 'from-red-600 to-red-800' }].map(({ conf, color }) => (
+            <div key={conf} className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden">
+              <div className={`bg-gradient-to-r ${color} px-5 py-4`}>
+                <div className="h-5 w-44 bg-white/20 rounded animate-pulse" />
+              </div>
+              <div className="divide-y divide-slate-800/60">
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <div key={i} className="px-4 py-3 flex items-center gap-3 animate-pulse">
+                    <div className="w-4 h-4 rounded bg-slate-800 shrink-0" />
+                    <div className="w-9 h-9 rounded-full bg-slate-800 shrink-0" />
+                    <div className="flex-1 h-3 bg-slate-800 rounded" />
+                    <div className="w-6 h-3 bg-slate-800 rounded" />
+                    <div className="w-6 h-3 bg-slate-800/60 rounded" />
+                    <div className="w-10 h-3 bg-slate-800/60 rounded" />
+                    <div className="w-14 h-4 bg-slate-800/30 rounded-full" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

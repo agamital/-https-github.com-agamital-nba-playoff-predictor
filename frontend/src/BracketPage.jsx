@@ -655,9 +655,37 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   }
 
   if (loading) {
+    const SkeletonCard = () => (
+      <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden animate-pulse shrink-0 w-44" style={{ height: CH }}>
+        <div className="h-1/2 flex items-center gap-3 px-4 border-b border-slate-800/60">
+          <div className="w-7 h-7 rounded-full bg-slate-800 shrink-0" />
+          <div className="h-2.5 flex-1 bg-slate-800 rounded" />
+        </div>
+        <div className="h-1/2 flex items-center gap-3 px-4">
+          <div className="w-7 h-7 rounded-full bg-slate-800 shrink-0" />
+          <div className="h-2.5 flex-1 bg-slate-800 rounded" />
+        </div>
+      </div>
+    );
     return (
-      <div className="flex items-center justify-center py-24">
-        <div className="animate-spin rounded-full h-14 w-14 border-4 border-orange-500 border-t-transparent" />
+      <div className="px-4 py-8">
+        {/* Header skeleton */}
+        <div className="flex items-center gap-3 mb-6 justify-center">
+          <div className="w-9 h-9 rounded-full bg-slate-800 animate-pulse" />
+          <div className="space-y-2">
+            <div className="h-7 w-56 bg-slate-800 rounded animate-pulse" />
+            <div className="h-3 w-40 bg-slate-800/60 rounded animate-pulse" />
+          </div>
+        </div>
+        {/* Conference skeletons */}
+        {['West', 'East'].map(conf => (
+          <div key={conf} className="mb-8">
+            <div className="h-3.5 w-28 bg-slate-800 rounded animate-pulse mb-3" />
+            <div className="flex gap-3 overflow-hidden">
+              {[1, 2, 3, 4].map(i => <SkeletonCard key={i} />)}
+            </div>
+          </div>
+        ))}
       </div>
     );
   }
