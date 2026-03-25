@@ -1,10 +1,29 @@
-import React, { useState, useEffect } from 'react';
-import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp, X } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className }) => (
   <div className={`bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur-sm ${className}`}>
     {children}
+  </div>
+);
+
+// Simple toast — renders at top-right; auto-dismisses after 3 s
+const Toast = ({ toasts, dismiss }) => (
+  <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
+    {toasts.map(t => (
+      <div key={t.id}
+        className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border text-sm font-bold pointer-events-auto
+          ${t.type === 'success'
+            ? 'bg-green-950/95 border-green-500/40 text-green-300'
+            : 'bg-red-950/95 border-red-500/40 text-red-300'}`}>
+        {t.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> : <X className="w-4 h-4 shrink-0" />}
+        <span className="flex-1">{t.message}</span>
+        <button onClick={() => dismiss(t.id)} className="opacity-60 hover:opacity-100 transition-opacity ml-1">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    ))}
   </div>
 );
 
@@ -345,45 +364,79 @@ const OddsCard = () => {
 };
 
 // Per-team championship and conference odds
-const TeamOddsCard = () => {
-  const [teams, setTeams] = useState([]);
-  const [edits, setEdits] = useState({}); // { team_id: { odds_championship, odds_conference } }
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+const TeamOddsCard = ({ addToast }) => {
+  const [teams, setTeams]     = useState([]);
+  // Store raw strings so user can type freely (e.g. "1.3" mid-entry)
+  const [edits, setEdits]     = useState({}); // { team_id: { champ: string, conf: string } }
+  const [savingId, setSavingId] = useState(null); // team_id currently being saved
+  const [savedIds, setSavedIds] = useState(new Set());
   const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
+    if (!expanded) return; // lazy-load only when opened
     api.getAdminTeamOdds().then(data => {
       setTeams(data);
       const init = {};
       data.forEach(t => {
-        init[t.team_id] = { odds_championship: t.odds_championship, odds_conference: t.odds_conference };
+        init[t.team_id] = {
+          champ: String(t.odds_championship ?? 1.0),
+          conf:  String(t.odds_conference   ?? 1.0),
+        };
       });
       setEdits(init);
-    }).catch(() => {});
-  }, []);
+    }).catch(e => addToast('Failed to load team odds: ' + (e.message || e), 'error'));
+  }, [expanded]);
 
   const handleChange = (teamId, field, value) => {
-    const parsed = parseFloat(value);
-    setEdits(prev => ({ ...prev, [teamId]: { ...prev[teamId], [field]: isNaN(parsed) ? 1.0 : parsed } }));
+    setEdits(prev => ({ ...prev, [teamId]: { ...prev[teamId], [field]: value } }));
   };
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const updates = Object.entries(edits).map(([team_id, vals]) => ({
-        team_id: parseInt(team_id),
-        odds_championship: vals.odds_championship,
-        odds_conference: vals.odds_conference,
-      }));
-      await api.setAdminTeamOdds(updates);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e) {
-      alert('Error: ' + (e.response?.data?.detail || e.message));
-    } finally {
-      setSaving(false);
+  const handleSaveOne = async (teamId) => {
+    const vals = edits[teamId];
+    const champ = parseFloat(vals?.champ);
+    const conf  = parseFloat(vals?.conf);
+    if (isNaN(champ) || isNaN(conf) || champ <= 0 || conf <= 0) {
+      addToast('Odds must be a positive number (e.g. 1.35)', 'error');
+      return;
     }
+    setSavingId(teamId);
+    try {
+      const result = await api.updateTeamOdds(teamId, champ, conf);
+      // Sync back the confirmed values from the server
+      setEdits(prev => ({
+        ...prev,
+        [teamId]: { champ: String(result.odds_championship), conf: String(result.odds_conference) },
+      }));
+      setSavedIds(prev => new Set([...prev, teamId]));
+      setTimeout(() => setSavedIds(prev => { const n = new Set(prev); n.delete(teamId); return n; }), 2500);
+      addToast(`✓ ${result.abbreviation} odds updated — Champ ×${result.odds_championship} · Conf ×${result.odds_conference}`, 'success');
+    } catch (e) {
+      addToast('Save failed: ' + (e.response?.data?.detail || e.message), 'error');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleSaveAll = async () => {
+    const updates = Object.entries(edits).map(([id, vals]) => ({
+      team_id: parseInt(id),
+      odds_championship: parseFloat(vals.champ) || 1.0,
+      odds_conference:   parseFloat(vals.conf)  || 1.0,
+    }));
+    setSavingId('all');
+    try {
+      await api.setAdminTeamOdds(updates);
+      addToast(`✓ All ${updates.length} teams saved successfully`, 'success');
+    } catch (e) {
+      addToast('Bulk save failed: ' + (e.response?.data?.detail || e.message), 'error');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const preview = (raw, base) => {
+    const n = parseFloat(raw);
+    return isNaN(n) ? '—' : Math.round(base * n) + 'pt';
   };
 
   const conferences = ['Eastern', 'Western'];
@@ -400,51 +453,80 @@ const TeamOddsCard = () => {
       {expanded && (
         <div className="mt-4">
           <p className="text-xs text-slate-400 mb-1">
-            Set decimal odds per team. Points = base × odds.
-            <span className="text-amber-400"> Champion: 200pts base · Conf: 100pts base.</span>
+            Decimal multiplier per team. <span className="text-amber-400">Champion base 200 pts · Conf base 100 pts.</span>
           </p>
-          <p className="text-xs text-slate-500 mb-4">e.g. OKC odds 1.35 → 200 × 1.35 = 270 pts if they win the championship.</p>
-          <div className="grid grid-cols-2 gap-4 mb-3">
-            <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider col-span-2 border-b border-slate-800 pb-1">
-              Team — Championship odds (×200pts) — Conf odds (×100pts)
-            </span>
+          <p className="text-xs text-slate-500 mb-4">
+            Example: OKC × 1.35 → 270 pts if they win championship. Hit <strong>Save</strong> per row or <strong>Save All</strong> at the bottom.
+          </p>
+
+          {/* Column headers */}
+          <div className="hidden sm:grid grid-cols-[2rem_3rem_1fr_1fr_5rem] gap-2 mb-2 px-1">
+            <span />
+            <span />
+            <span className="text-[10px] font-black text-amber-400/70 uppercase tracking-wider text-center">Champ ×200</span>
+            <span className="text-[10px] font-black text-cyan-400/70 uppercase tracking-wider text-center">Conf ×100</span>
+            <span />
           </div>
+
           {conferences.map(conf => {
             const confTeams = teams.filter(t => t.conference === conf);
             if (!confTeams.length) return null;
             return (
               <div key={conf} className="mb-5">
-                <p className="text-xs font-black text-slate-400 uppercase tracking-wider mb-2">{conf}</p>
+                <p className="text-xs font-black text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">{conf}</p>
                 <div className="space-y-2">
                   {confTeams.map(t => {
-                    const vals = edits[t.team_id] || { odds_championship: 1.0, odds_conference: 1.0 };
+                    const vals   = edits[t.team_id] || { champ: '1.0', conf: '1.0' };
+                    const isSaving = savingId === t.team_id;
+                    const wasSaved = savedIds.has(t.team_id);
                     return (
-                      <div key={t.team_id} className="flex items-center gap-2">
+                      <div key={t.team_id} className={`flex items-center gap-2 p-1.5 rounded-lg transition-colors ${wasSaved ? 'bg-green-500/5 border border-green-500/20' : ''}`}>
+                        {/* Logo */}
                         <img src={t.logo_url} alt={t.abbreviation} className="w-6 h-6 shrink-0"
                              onError={e => e.target.style.display='none'} />
+                        {/* Abbrev */}
                         <span className="text-sm text-slate-300 w-10 font-bold shrink-0">{t.abbreviation}</span>
+
+                        {/* Championship odds */}
                         <div className="flex items-center gap-1 flex-1">
                           <input
-                            type="number" min="0.5" max="10" step="0.05"
-                            value={vals.odds_championship}
-                            onChange={e => handleChange(t.team_id, 'odds_championship', e.target.value)}
-                            className="w-20 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-amber-500"
+                            type="number" min="0.01" max="100" step="0.01"
+                            value={vals.champ}
+                            onChange={e => handleChange(t.team_id, 'champ', e.target.value)}
+                            className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-amber-500 transition-colors"
                           />
-                          <span className="text-[10px] text-amber-400 font-bold w-14 text-right">
-                            ={Math.round(200 * vals.odds_championship)}pt
+                          <span className="text-[10px] text-amber-400 font-bold w-12 text-right shrink-0">
+                            {preview(vals.champ, 200)}
                           </span>
                         </div>
+
+                        {/* Conference odds */}
                         <div className="flex items-center gap-1 flex-1">
                           <input
-                            type="number" min="0.5" max="10" step="0.05"
-                            value={vals.odds_conference}
-                            onChange={e => handleChange(t.team_id, 'odds_conference', e.target.value)}
-                            className="w-20 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-cyan-500"
+                            type="number" min="0.01" max="100" step="0.01"
+                            value={vals.conf}
+                            onChange={e => handleChange(t.team_id, 'conf', e.target.value)}
+                            className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-cyan-500 transition-colors"
                           />
-                          <span className="text-[10px] text-cyan-400 font-bold w-14 text-right">
-                            ={Math.round(100 * vals.odds_conference)}pt
+                          <span className="text-[10px] text-cyan-400 font-bold w-12 text-right shrink-0">
+                            {preview(vals.conf, 100)}
                           </span>
                         </div>
+
+                        {/* Per-row save button */}
+                        <button
+                          onClick={() => handleSaveOne(t.team_id)}
+                          disabled={isSaving || savingId === 'all'}
+                          className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                            wasSaved
+                              ? 'bg-green-500/20 border border-green-500/40 text-green-400'
+                              : isSaving
+                              ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                              : 'bg-slate-800 hover:bg-amber-500 hover:text-white border border-slate-700 hover:border-amber-500 text-slate-300 transition-colors'
+                          }`}
+                        >
+                          {wasSaved ? '✓' : isSaving ? '…' : 'Save'}
+                        </button>
                       </div>
                     );
                   })}
@@ -452,11 +534,17 @@ const TeamOddsCard = () => {
               </div>
             );
           })}
-          <button onClick={handleSave} disabled={saving}
-            className={`w-full py-2 rounded-lg font-bold text-sm transition-all ${
-              saved ? 'bg-green-500 text-white' : 'bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50'
-            }`}>
-            {saved ? '✓ Team Odds Saved!' : saving ? 'Saving...' : 'Save All Team Odds'}
+
+          <button
+            onClick={handleSaveAll}
+            disabled={savingId !== null}
+            className={`w-full py-2.5 rounded-lg font-bold text-sm transition-all mt-2 ${
+              savingId === null
+                ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                : 'bg-slate-700 text-slate-400 cursor-not-allowed'
+            }`}
+          >
+            {savingId === 'all' ? 'Saving all teams…' : 'Save All Teams at Once'}
           </button>
         </div>
       )}
@@ -691,6 +779,17 @@ const AdminPage = ({ currentUser }) => {
   const [playin, setPlayin] = useState([]);
   const [allTeams, setAllTeams] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [toasts, setToasts] = useState([]);
+
+  const addToast = useCallback((message, type = 'success') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
 
   useEffect(() => {
     load();
@@ -749,6 +848,8 @@ const AdminPage = ({ currentUser }) => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
+      <Toast toasts={toasts} dismiss={dismissToast} />
+
       <div className="flex items-center justify-between mb-8">
         <div>
           <div className="flex items-center gap-3 mb-1">
@@ -764,7 +865,7 @@ const AdminPage = ({ currentUser }) => {
       </div>
 
       <FuturesLockCard />
-      <TeamOddsCard />
+      <TeamOddsCard addToast={addToast} />
       <OddsCard />
       <FuturesResultsCard teams={allTeams} />
       <LeadersResultsCard />

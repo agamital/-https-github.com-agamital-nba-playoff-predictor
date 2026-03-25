@@ -1803,6 +1803,38 @@ async def set_team_odds(updates: List[TeamOddsUpdate]):
     return {"message": f"Updated odds for {len(updates)} teams"}
 
 
+@app.post("/api/admin/update-odds")
+async def update_single_team_odds(
+    team_id: int,
+    odds_championship: float = 1.0,
+    odds_conference: float = 1.0,
+):
+    """Update championship and conference odds for a single team."""
+    if odds_championship <= 0 or odds_conference <= 0:
+        raise HTTPException(400, "Odds must be greater than 0")
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute(
+        "UPDATE teams SET odds_championship = %s, odds_conference = %s WHERE id = %s",
+        (odds_championship, odds_conference, team_id)
+    )
+    if c.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, f"Team {team_id} not found")
+    conn.commit()
+    # Return the updated values for confirmation
+    c.execute("SELECT name, abbreviation, odds_championship, odds_conference FROM teams WHERE id = %s", (team_id,))
+    row = c.fetchone()
+    conn.close()
+    return {
+        "team_id": team_id,
+        "name": row[0],
+        "abbreviation": row[1],
+        "odds_championship": float(row[2]),
+        "odds_conference": float(row[3]),
+    }
+
+
 # ── Futures actual results ────────────────────────────────────────────────────
 
 @app.get("/api/admin/futures/results")
