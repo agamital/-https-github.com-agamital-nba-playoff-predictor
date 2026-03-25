@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { User, Mail, Shield, Calendar, Trophy, Key, AlertTriangle, Check, X, Loader } from 'lucide-react';
+import { User, Mail, Shield, Calendar, Trophy, Key, AlertTriangle, Check, X, Loader, Bell, BellOff } from 'lucide-react';
 import * as api from './services/api';
 import { Avatar } from './UserProfilePage';
+import OneSignal from 'react-onesignal';
 
 const Card = ({ children, className = '' }) => (
   <div className={`bg-slate-900/50 border border-slate-800 rounded-xl backdrop-blur-sm ${className}`}>
@@ -37,6 +38,106 @@ const StatusMsg = ({ msg }) => {
       {isError ? <X className="w-4 h-4 shrink-0" /> : <Check className="w-4 h-4 shrink-0" />}
       {msg.text}
     </div>
+  );
+};
+
+// ── Push notifications helper ──────────────────────────────────────────────
+const PushNotificationsCard = () => {
+  // permission: null=unknown, 'default'=not asked, 'granted'=subscribed, 'denied'=blocked
+  const [permission, setPermission] = useState(null);
+  const [optedIn, setOptedIn]       = useState(false);
+  const [loading, setLoading]       = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    const read = async () => {
+      try {
+        // Wait briefly for OneSignal to finish initializing
+        await new Promise(r => setTimeout(r, 800));
+        if (!mounted) return;
+        const perm = OneSignal.Notifications.permissionNative || 'default';
+        const sub  = OneSignal.User?.PushSubscription?.optedIn ?? false;
+        setPermission(perm);
+        setOptedIn(sub);
+      } catch {
+        setPermission('default');
+      }
+    };
+    read();
+    return () => { mounted = false; };
+  }, []);
+
+  const handleSubscribe = async () => {
+    setLoading(true);
+    try {
+      await OneSignal.Notifications.requestPermission();
+      const perm = OneSignal.Notifications.permissionNative || 'default';
+      setPermission(perm);
+      if (perm === 'granted') {
+        await OneSignal.User.PushSubscription.optIn();
+        setOptedIn(true);
+      }
+    } catch { /* user dismissed */ }
+    setLoading(false);
+  };
+
+  const handleUnsubscribe = async () => {
+    setLoading(true);
+    try {
+      await OneSignal.User.PushSubscription.optOut();
+      setOptedIn(false);
+    } catch {}
+    setLoading(false);
+  };
+
+  const isSubscribed = permission === 'granted' && optedIn;
+  const isBlocked    = permission === 'denied';
+
+  return (
+    <Card className="p-6">
+      <SectionTitle icon={Bell} label="Push Notifications" color="text-blue-400" />
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <p className="text-sm text-slate-300 leading-relaxed">
+            {isSubscribed
+              ? 'You will receive alerts when NBA standings change significantly — teams entering or leaving playoff position.'
+              : isBlocked
+              ? 'Notifications are blocked in your browser. Enable them in your browser settings, then return here.'
+              : 'Get notified when standings shift — teams entering or exiting playoff position after each sync.'}
+          </p>
+          {isSubscribed && (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-green-400 font-bold">
+              <Check className="w-3.5 h-3.5" /> Subscribed
+            </p>
+          )}
+        </div>
+        <div className="shrink-0">
+          {permission === null ? (
+            <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+          ) : isSubscribed ? (
+            <button
+              onClick={handleUnsubscribe}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-700 text-slate-400 text-sm font-bold hover:border-red-700 hover:text-red-400 transition-colors disabled:opacity-50"
+            >
+              <BellOff className="w-4 h-4" />
+              Unsubscribe
+            </button>
+          ) : isBlocked ? (
+            <span className="text-xs text-slate-500 font-bold px-3 py-2 border border-slate-700 rounded-lg">Blocked</span>
+          ) : (
+            <button
+              onClick={handleSubscribe}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-colors disabled:opacity-50"
+            >
+              {loading ? <Loader className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />}
+              Subscribe
+            </button>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 };
 
@@ -235,6 +336,9 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate }) => {
           </p>
         </Card>
       )}
+
+      {/* ── Push Notifications ── */}
+      <PushNotificationsCard />
 
       {/* ── Danger Zone ── */}
       <Card className="p-6 border-red-900/40">

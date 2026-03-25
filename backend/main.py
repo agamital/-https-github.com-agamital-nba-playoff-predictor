@@ -27,6 +27,10 @@ _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 # Cron sync stops after the regular season ends (exclusive upper bound)
 _STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 21)
 
+# OneSignal push notification credentials
+_ONESIGNAL_APP_ID  = os.getenv("ONESIGNAL_APP_ID",  "c69b4c3e-79d1-48a4-8815-3ceabc1eae70")
+_ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY",  "")
+
 # APScheduler instance — created in startup(), referenced in shutdown()
 _scheduler = None
 
@@ -408,6 +412,41 @@ def _compute_team_status(conf_rank: int) -> str:
     return 'Eliminated'
 
 
+def _send_onesignal_notification(title: str, body: str, url: str = "https://nba-playoffs-2026.vercel.app") -> bool:
+    """
+    Send a push notification to all subscribed users via OneSignal REST API.
+    Returns True on success, False on failure.  Never raises.
+    """
+    if not _ONESIGNAL_API_KEY:
+        print("[OneSignal] ONESIGNAL_API_KEY not set — skipping push notification")
+        return False
+    import urllib.request, json as _json
+    payload = _json.dumps({
+        "app_id":            _ONESIGNAL_APP_ID,
+        "included_segments": ["All"],
+        "headings":          {"en": title},
+        "contents":          {"en": body},
+        "url":               url,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://onesignal.com/api/v1/notifications",
+        data=payload,
+        headers={
+            "Content-Type":  "application/json; charset=utf-8",
+            "Authorization": f"Key {_ONESIGNAL_API_KEY}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = _json.loads(resp.read())
+            print(f"[OneSignal] Notification sent — recipients: {result.get('recipients', '?')}")
+            return True
+    except Exception as e:
+        print(f"[OneSignal] Notification error: {e}")
+        return False
+
+
 def _persist_standings_to_db(standings: list) -> dict:
     """
     Upsert standings rows to cached_standings using (team_id, season) as the
@@ -422,6 +461,10 @@ def _persist_standings_to_db(standings: list) -> dict:
         # Build abbreviation lookup from the teams table (populated by sync_teams)
         c.execute("SELECT id, abbreviation FROM teams")
         abbr_map = {r[0]: r[1] for r in c.fetchall()}
+
+        # Snapshot existing statuses to detect significant rank changes after upsert
+        c.execute("SELECT team_id, status, team_name FROM cached_standings WHERE season = '2026'")
+        prev_status = {r[0]: {'status': r[1], 'name': r[2]} for r in c.fetchall()}
 
         synced_at = datetime.utcnow()
         for t in standings:
@@ -449,8 +492,24 @@ def _persist_standings_to_db(standings: list) -> dict:
                   games_back, status, synced_at))
 
         conn.commit()
+
+        # Detect teams that crossed a playoff/play-in boundary
+        rank_changes = []
+        for t in standings:
+            tid = t['team_id']
+            new_status = _compute_team_status(t.get('conf_rank', 99))
+            old_status = prev_status.get(tid, {}).get('status')
+            if old_status and old_status != new_status:
+                rank_changes.append({
+                    'team':   t['team_name'],
+                    'from':   old_status,
+                    'to':     new_status,
+                })
+
         print(f"[Standings] Persisted {len(standings)} rows to DB at {synced_at.strftime('%Y-%m-%d %H:%M:%S')} UTC")
-        return {'rows': len(standings), 'synced_at': synced_at}
+        if rank_changes:
+            print(f"[Standings] {len(rank_changes)} status change(s) detected: {rank_changes}")
+        return {'rows': len(standings), 'synced_at': synced_at, 'rank_changes': rank_changes}
 
     except Exception as e:
         print(f"[Standings] DB persist error: {e}")
@@ -492,6 +551,22 @@ def _standings_sync_job():
             next_at = (result['synced_at'] + timedelta(hours=6)).strftime('%H:%M UTC')
             print(f"[Standings] ✓ {result['rows']} teams synced — next run ~{next_at}")
             standings_ok = True
+            # Push notification when teams cross playoff/play-in boundaries
+            changes = result.get('rank_changes', [])
+            if changes:
+                # Build a readable summary, max 3 teams to keep it short
+                parts = []
+                for c in changes[:3]:
+                    emoji = '✅' if c['to'] == 'Playoff' else ('⚠️' if c['to'] == 'Play-In' else '❌')
+                    parts.append(f"{emoji} {c['team']}: {c['from']} → {c['to']}")
+                body = '\n'.join(parts)
+                if len(changes) > 3:
+                    body += f'\n+{len(changes) - 3} more'
+                threading.Thread(
+                    target=_send_onesignal_notification,
+                    args=("🏀 NBA Standings Update", body),
+                    daemon=True,
+                ).start()
     except Exception as e:
         print(f"[Standings] Sync error: {e}")
 
