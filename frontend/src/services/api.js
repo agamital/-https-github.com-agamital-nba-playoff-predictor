@@ -3,10 +3,10 @@
 import axios from 'axios';
 
 // Dev: empty string so Vite proxy routes /api/* to localhost:8000
-// Production: always use the Railway URL directly
+// Production: use VITE_API_URL from .env.production (Railway backend URL)
 const API_BASE_URL = import.meta.env.DEV
   ? ''
-  : 'https://nba-playoff-predictor-production.up.railway.app';
+  : (import.meta.env.VITE_API_URL || 'https://nba-playoff-predictor-production.up.railway.app');
 
 const api = axios.create({
   baseURL: API_BASE_URL,
