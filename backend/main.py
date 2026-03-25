@@ -466,20 +466,22 @@ def _persist_standings_to_db(standings: list) -> dict:
 
 def _standings_sync_job():
     """
-    Core sync job — called by APScheduler (cron: 0 */6 * * *) and by the
-    force-refresh endpoint.  Checks the cutoff date, fetches live data,
-    persists to Supabase, and updates the in-memory cache.
-    Returns True on success.
+    Master cron job — called by APScheduler (0 */6 * * * UTC) and by the
+    force-refresh endpoint.  Runs standings + player-stats sync in sequence.
+    Returns True if standings sync succeeded.
     """
     now = datetime.utcnow()
     if now >= _STANDINGS_SYNC_CUTOFF:
-        print(f"[Standings] Regular season ended on {_STANDINGS_SYNC_CUTOFF.date()} — sync disabled")
+        print(f"[Sync] Regular season ended on {_STANDINGS_SYNC_CUTOFF.date()} — all syncs disabled")
         return False
     if not NBA_API_AVAILABLE:
-        print("[Standings] NBA API module not available — skipping sync")
+        print("[Sync] NBA API module not available — skipping")
         return False
 
-    print(f"[Standings] Sync starting at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    print(f"[Sync] Starting full data sync at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    standings_ok = False
+
+    # ── 1. Standings ────────────────────────────────────────────────────
     try:
         fresh  = _fetch_standings_from_api()
         result = _persist_standings_to_db(fresh)
@@ -489,10 +491,14 @@ def _standings_sync_job():
             _standings_cache["expires"]    = result['synced_at'] + timedelta(hours=6)
             next_at = (result['synced_at'] + timedelta(hours=6)).strftime('%H:%M UTC')
             print(f"[Standings] ✓ {result['rows']} teams synced — next run ~{next_at}")
-            return True
+            standings_ok = True
     except Exception as e:
         print(f"[Standings] Sync error: {e}")
-    return False
+
+    # ── 2. Player stats (independent — standings failure doesn't block this) ──
+    _sync_player_stats_job()
+
+    return standings_ok
 
 
 def _apply_standings_migration():
@@ -588,6 +594,125 @@ def get_standings():
 
     print("Using hardcoded standings fallback")
     return _HARDCODED_STANDINGS
+
+
+def _apply_player_stats_migration():
+    """
+    Idempotent DDL: create player_stats table if it doesn't exist.
+    UNIQUE(player_id, season) is the key used by ON CONFLICT upserts.
+    """
+    try:
+        conn = get_db_conn()
+        conn.autocommit = True
+        c = conn.cursor()
+        c.execute("SET search_path TO public")
+        c.execute('''CREATE TABLE IF NOT EXISTS player_stats (
+            id                SERIAL PRIMARY KEY,
+            player_id         INTEGER NOT NULL,
+            player_name       TEXT    NOT NULL,
+            team_abbreviation TEXT,
+            season            TEXT    DEFAULT '2026',
+            games_played      INTEGER DEFAULT 0,
+            pts_per_game      REAL    DEFAULT 0,
+            ast_per_game      REAL    DEFAULT 0,
+            reb_per_game      REAL    DEFAULT 0,
+            stl_per_game      REAL    DEFAULT 0,
+            blk_per_game      REAL    DEFAULT 0,
+            fg3m_per_game     REAL    DEFAULT 0,
+            updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(player_id, season)
+        )''')
+        print("[Migration] player_stats table ensured")
+        conn.close()
+    except Exception as e:
+        print(f"[Migration] player_stats: {e}")
+
+
+def _sync_player_stats_job():
+    """
+    Fetch top 150 players by points-per-game from LeagueLeaders and upsert
+    into player_stats.  Called from _standings_sync_job() so both syncs share
+    the same 6-hour APScheduler cron cycle.
+    Returns True on success.
+    """
+    if datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF:
+        print("[Players] Cutoff reached — skipping player stats sync")
+        return False
+    if not NBA_API_AVAILABLE:
+        print("[Players] NBA API module not available — skipping")
+        return False
+
+    try:
+        from nba_api.stats.endpoints import leagueleaders
+        print("[Players] Fetching league leaders from NBA API…")
+        ll = leagueleaders.LeagueLeaders(
+            league_id='00',
+            per_mode48='PerGame',
+            scope='S',
+            season='2025-26',
+            season_type='Regular Season',
+            stat_category='PTS',
+            headers=_NBA_HEADERS,
+            timeout=_NBA_TIMEOUT,
+        )
+        raw = ll.get_dict()
+
+        # LeagueLeaders uses 'resultSet' (singular), not 'resultSets'
+        result_set = raw.get('resultSet') or raw.get('resultSets', [{}])[0]
+        col_headers = result_set['headers']
+        rows        = result_set['rowSet']
+
+        def col(row, name, default=0):
+            try:
+                return row[col_headers.index(name)]
+            except (ValueError, IndexError):
+                return default
+
+        conn      = get_db_conn()
+        c         = conn.cursor()
+        synced_at = datetime.utcnow()
+        count     = 0
+
+        for row in rows[:150]:  # top 150 by PTS covers all statistical leaders
+            pid  = col(row, 'PLAYER_ID')
+            name = col(row, 'PLAYER', '')
+            team = col(row, 'TEAM', '')
+            gp   = int(col(row, 'GP') or 0)
+            pts  = float(col(row, 'PTS') or 0)
+            ast  = float(col(row, 'AST') or 0)
+            reb  = float(col(row, 'REB') or 0)
+            stl  = float(col(row, 'STL') or 0)
+            blk  = float(col(row, 'BLK') or 0)
+            fg3m = float(col(row, 'FG3M') or 0)
+            if not pid or not name:
+                continue
+            c.execute('''
+                INSERT INTO player_stats
+                    (player_id, player_name, team_abbreviation, season,
+                     games_played, pts_per_game, ast_per_game, reb_per_game,
+                     stl_per_game, blk_per_game, fg3m_per_game, updated_at)
+                VALUES (%s, %s, %s, '2026', %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (player_id, season) DO UPDATE SET
+                    player_name       = EXCLUDED.player_name,
+                    team_abbreviation = EXCLUDED.team_abbreviation,
+                    games_played      = EXCLUDED.games_played,
+                    pts_per_game      = EXCLUDED.pts_per_game,
+                    ast_per_game      = EXCLUDED.ast_per_game,
+                    reb_per_game      = EXCLUDED.reb_per_game,
+                    stl_per_game      = EXCLUDED.stl_per_game,
+                    blk_per_game      = EXCLUDED.blk_per_game,
+                    fg3m_per_game     = EXCLUDED.fg3m_per_game,
+                    updated_at        = EXCLUDED.updated_at
+            ''', (pid, name, team, gp, pts, ast, reb, stl, blk, fg3m, synced_at))
+            count += 1
+
+        conn.commit()
+        conn.close()
+        print(f"[Players] ✓ {count} player stats upserted at {synced_at.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        return True
+    except Exception as e:
+        print(f"[Players] Sync error: {e}")
+        return False
 
 
 def _initial_standings_sync():
@@ -758,6 +883,9 @@ async def startup():
 
     # Apply standings schema migration (games_back, status, unique constraint)
     _apply_standings_migration()
+
+    # Apply player stats schema migration (create player_stats table)
+    _apply_player_stats_migration()
 
     # Run heavyweight / network-dependent tasks in background threads so they
     # never block the server from binding to its port.
@@ -1983,6 +2111,59 @@ async def get_team_roster(team_id: int):
     except Exception as e:
         print(f"Roster error for team {team_id}: {e}")
         return {"players": [], "error": "Roster temporarily unavailable"}
+
+
+@app.get("/api/players/leaders")
+async def player_leaders_endpoint(season: str = "2026", limit: int = 10):
+    """
+    Current statistical leaders from the synced player_stats table.
+    Categories: pts, ast, reb, stl, blk, fg3m — all per-game averages.
+    Returns empty lists gracefully if the table is not yet populated.
+    """
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+
+        def top_n(order_col):
+            c.execute(f'''
+                SELECT player_id, player_name, team_abbreviation,
+                       games_played, pts_per_game, ast_per_game, reb_per_game,
+                       stl_per_game, blk_per_game, fg3m_per_game, updated_at
+                FROM player_stats WHERE season = %s
+                ORDER BY {order_col} DESC NULLS LAST LIMIT %s
+            ''', (season, limit))
+            return [
+                {'player_id': r[0], 'name': r[1], 'team': r[2],
+                 'gp': r[3], 'ppg': r[4], 'apg': r[5], 'rpg': r[6],
+                 'spg': r[7], 'bpg': r[8], 'fg3m': r[9],
+                 'updated_at': r[10].isoformat() if r[10] else None}
+                for r in c.fetchall()
+            ]
+
+        c.execute("SELECT MAX(updated_at) FROM player_stats WHERE season = %s", (season,))
+        last_row    = c.fetchone()
+        last_synced = last_row[0].isoformat() if last_row and last_row[0] else None
+
+        return {
+            'top_scorers':    top_n('pts_per_game'),
+            'top_assists':    top_n('ast_per_game'),
+            'top_rebounds':   top_n('reb_per_game'),
+            'top_steals':     top_n('stl_per_game'),
+            'top_blocks':     top_n('blk_per_game'),
+            'top_threes':     top_n('fg3m_per_game'),
+            'last_synced_at': last_synced,
+            'sync_cutoff':    _STANDINGS_SYNC_CUTOFF.strftime('%Y-%m-%d'),
+        }
+    except Exception as e:
+        print(f"player_leaders error: {e}")
+        return {'top_scorers': [], 'top_assists': [], 'top_rebounds': [],
+                'top_steals': [], 'top_blocks': [], 'top_threes': [],
+                'last_synced_at': None}
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 
 @app.get("/api/players/{player_id}/stats")

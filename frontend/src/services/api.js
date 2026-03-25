@@ -357,4 +357,10 @@ export const getPlayerStats = async (playerId) => {
   return response.data;
 };
 
+// Statistical leaders from the synced player_stats table (top 10 per category)
+export const getPlayerLeaders = async (season = '2026', limit = 10) => {
+  const response = await api.get('/api/players/leaders', { params: { season, limit } });
+  return response.data;
+};
+
 export default api;
