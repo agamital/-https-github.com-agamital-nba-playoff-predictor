@@ -1660,6 +1660,121 @@ async def dashboard(user_id: int, season: str = "2026"):
         'leaders_done':     (row[3] or 0) > 0,
     }
 
+@app.get("/api/notifications/summary")
+async def notifications_summary(user_id: int, season: str = "2026"):
+    """
+    Single-call summary of everything a user still needs to predict.
+    Used by the frontend notification bell to build the badge count and popover list.
+    Returns missing series, missing futures categories, and missing leaders categories.
+    """
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+
+        # ── 1. Active series with no prediction ─────────────────────────────
+        c.execute("""
+            SELECT s.id, s.round, s.conference,
+                   ht.abbreviation, at.abbreviation
+            FROM series s
+            JOIN teams ht ON s.home_team_id = ht.id
+            JOIN teams at ON s.away_team_id = at.id
+            WHERE s.season = %s AND s.status = 'active'
+            AND NOT EXISTS (
+                SELECT 1 FROM predictions p
+                WHERE p.user_id = %s AND p.series_id = s.id
+            )
+            ORDER BY s.conference, s.round
+        """, (season, user_id))
+
+        _ROUND_LABELS = {
+            'first_round': 'R1', 'second_round': 'R2',
+            'conf_finals': 'CF', 'finals': 'Finals',
+        }
+        missing_series = []
+        for row in c.fetchall():
+            sid, rnd, conf, h_abbr, a_abbr = row
+            conf_prefix = 'EC' if conf and conf.lower().startswith('e') else 'WC'
+            round_short  = _ROUND_LABELS.get((rnd or '').lower().replace(' ', '_'), rnd or '')
+            missing_series.append({
+                'id':       sid,
+                'label':    f"{h_abbr} vs {a_abbr}",
+                'sublabel': f"{conf_prefix} · {round_short}",
+            })
+
+        # ── 2. Missing futures categories ───────────────────────────────────
+        _FUTURES_CATS = [
+            ('champion_team_id',  '🏆 NBA Champion'),
+            ('west_champ_team_id','🌎 West Champion'),
+            ('east_champ_team_id','🌏 East Champion'),
+            ('finals_mvp',        '⭐ Finals MVP'),
+            ('west_finals_mvp',   '⭐ West Finals MVP'),
+            ('east_finals_mvp',   '⭐ East Finals MVP'),
+        ]
+        c.execute("""
+            SELECT champion_team_id, west_champ_team_id, east_champ_team_id,
+                   finals_mvp, west_finals_mvp, east_finals_mvp, locked
+            FROM futures_predictions WHERE user_id = %s AND season = %s
+        """, (user_id, season))
+        fut = c.fetchone()
+        futures_locked = bool(fut[6]) if fut else False
+
+        missing_futures = []
+        if not futures_locked:
+            vals = list(fut[:6]) if fut else [None] * 6
+            for i, (key, label) in enumerate(_FUTURES_CATS):
+                if not vals[i]:
+                    missing_futures.append({'key': key, 'label': label})
+
+        # Check global lock
+        if _get_futures_lock():
+            missing_futures = []
+            futures_locked  = True
+
+        # ── 3. Missing leaders categories ───────────────────────────────────
+        _LEADERS_CATS = [
+            ('top_scorer',   '🏀 Most Points'),
+            ('top_assists',  '🎯 Most Assists'),
+            ('top_rebounds', '💪 Most Rebounds'),
+            ('top_threes',   '3️⃣ Most 3-Pointers'),
+            ('top_steals',   '🤚 Most Steals'),
+            ('top_blocks',   '🛡️ Most Blocks'),
+        ]
+        c.execute("""
+            SELECT top_scorer, top_assists, top_rebounds,
+                   top_threes, top_steals, top_blocks
+            FROM leaders_predictions WHERE user_id = %s AND season = %s
+        """, (user_id, season))
+        ldr = c.fetchone()
+
+        missing_leaders = []
+        if futures_locked:
+            missing_leaders = []   # leaders lock with futures
+        else:
+            vals = list(ldr) if ldr else [None] * 6
+            for i, (key, label) in enumerate(_LEADERS_CATS):
+                if not vals[i]:
+                    missing_leaders.append({'key': key, 'label': label})
+
+        total = len(missing_series) + len(missing_futures) + len(missing_leaders)
+        return {
+            'missing_series':  missing_series,
+            'missing_futures': missing_futures,
+            'missing_leaders': missing_leaders,
+            'futures_locked':  futures_locked,
+            'total':           total,
+        }
+
+    except Exception as e:
+        print(f"notifications_summary error: {e}")
+        return {'missing_series': [], 'missing_futures': [], 'missing_leaders': [],
+                'futures_locked': False, 'total': 0}
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
 @app.get("/api/my-predictions")
 async def my_predictions(user_id: int, season: str = "2026"):
     """Get all predictions for a user"""

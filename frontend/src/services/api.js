@@ -117,6 +117,12 @@ export const makePrediction = async (userId, seriesId, predictedWinnerId, predic
   return response.data;
 };
 
+// Notification summary — missing predictions for the bell badge + popover
+export const getNotificationsSummary = async (userId, season = '2026') => {
+  const response = await api.get(`/api/notifications/summary?user_id=${userId}&season=${season}`);
+  return response.data;
+};
+
 // Dashboard (lightweight counts for home page)
 export const getDashboard = async (userId, season = '2026') => {
   const response = await api.get(`/api/dashboard?user_id=${userId}&season=${season}`);

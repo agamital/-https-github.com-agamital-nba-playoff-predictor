@@ -1150,60 +1150,205 @@ const InstallBanner = () => {
   );
 };
 
-// ── Bell notification button ─────────────────────────────────────────────────
-const BellButton = ({ hasMissingPicks, onNavigate, className = '' }) => {
-  const [subscribed, setSubscribed] = useState(null); // null=checking
+// ── Notification Centre ──────────────────────────────────────────────────────
+const BellButton = ({ userId, onNavigate, className = '' }) => {
+  const [open,       setOpen]       = useState(false);
+  const [summary,    setSummary]    = useState(null);   // { total, missing_series, ... }
+  const [subscribed, setSubscribed] = useState(null);   // null=checking, true/false
+  const [subLoading, setSubLoading] = useState(false);
+  const popoverRef = useRef(null);
 
-  // Read OneSignal subscription state (debounced — SDK needs ~1 s to init)
+  // Fetch notification summary whenever userId changes
+  useEffect(() => {
+    if (!userId) { setSummary(null); return; }
+    api.getNotificationsSummary(userId).then(setSummary).catch(() => {});
+  }, [userId]);
+
+  // Read OneSignal subscription state
   useEffect(() => {
     let active = true;
     const check = async () => {
       try {
         await new Promise(r => setTimeout(r, 1200));
         if (!active) return;
-        const perm    = OneSignal.Notifications?.permissionNative;
-        const opted   = OneSignal.User?.PushSubscription?.optedIn ?? false;
+        const perm  = OneSignal.Notifications?.permissionNative;
+        const opted = OneSignal.User?.PushSubscription?.optedIn ?? false;
         setSubscribed(perm === 'granted' && opted);
-      } catch {
-        setSubscribed(false);
-      }
+      } catch { setSubscribed(false); }
     };
     check();
     return () => { active = false; };
-  }, []);
+  }, [userId]);
 
-  const needsSubscription = subscribed === false; // not subscribed (exclude null=loading)
-  const showDot    = hasMissingPicks || needsSubscription;
-  const isCritical = hasMissingPicks; // shake when picks are missing
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
 
-  const handleClick = async () => {
-    if (needsSubscription) {
-      // Prompt for permission first
-      try {
+  const badgeCount  = summary?.total ?? 0;
+  const isCritical  = badgeCount > 0;
+
+  const handleBellClick = () => setOpen(o => !o);
+
+  const handleSubscribeToggle = async () => {
+    setSubLoading(true);
+    try {
+      if (subscribed) {
+        await OneSignal.User.PushSubscription.optOut();
+        setSubscribed(false);
+      } else {
         await OneSignal.Notifications.requestPermission();
         const perm = OneSignal.Notifications?.permissionNative;
         if (perm === 'granted') {
           await OneSignal.User.PushSubscription.optIn();
           setSubscribed(true);
         }
-      } catch { /* dismissed */ }
-    } else {
-      onNavigate('betting');
-    }
+      }
+    } catch { /* dismissed */ }
+    setSubLoading(false);
+  };
+
+  const goTo = (page) => { setOpen(false); onNavigate(page); };
+
+  // Refresh summary after user navigates away and comes back
+  const handleItemClick = (page) => {
+    goTo(page);
+    // Re-fetch after a short delay so badge updates when they return
+    setTimeout(() => {
+      if (userId) api.getNotificationsSummary(userId).then(setSummary).catch(() => {});
+    }, 3000);
   };
 
   return (
-    <button
-      onClick={handleClick}
-      title={needsSubscription ? 'Enable push notifications' : hasMissingPicks ? 'You have missing picks!' : 'Notifications'}
-      className={`relative p-2 rounded-xl hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors ${className}`}
-      style={{ minWidth: 36, minHeight: 36 }}
-    >
-      <Bell className={`w-5 h-5 ${showDot ? 'text-orange-400' : 'text-slate-400'} ${isCritical ? 'bell-shake' : ''}`} />
-      {showDot && (
-        <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full ring-2 ring-slate-900 pointer-events-none" />
+    <div ref={popoverRef} className={`relative ${className}`}>
+      {/* ── Bell trigger ── */}
+      <button
+        onClick={handleBellClick}
+        title={isCritical ? `${badgeCount} action${badgeCount > 1 ? 's' : ''} needed` : 'Notifications'}
+        className="relative p-2 rounded-xl hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors"
+        style={{ minWidth: 36, minHeight: 36 }}
+      >
+        <Bell className={`w-5 h-5 ${isCritical ? 'text-orange-400' : 'text-slate-400'} ${isCritical ? 'bell-shake' : ''}`} />
+        {badgeCount > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-white text-[10px] font-black leading-none ring-2 ring-slate-900 pointer-events-none">
+            {badgeCount > 9 ? '9+' : badgeCount}
+          </span>
+        )}
+      </button>
+
+      {/* ── Popover ── */}
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl shadow-black/60 z-[100] overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+            <span className="text-sm font-black text-white">Notifications</span>
+            {badgeCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 text-xs font-black">
+                {badgeCount} pending
+              </span>
+            )}
+          </div>
+
+          <div className="max-h-[60vh] overflow-y-auto">
+            {summary === null ? (
+              // Loading skeleton
+              <div className="px-4 py-6 flex justify-center">
+                <div className="w-5 h-5 rounded-full border-2 border-orange-500 border-t-transparent animate-spin" />
+              </div>
+            ) : badgeCount === 0 ? (
+              // All caught up
+              <div className="px-4 py-8 text-center">
+                <p className="text-2xl mb-2">🍀</p>
+                <p className="text-sm font-black text-white">All caught up!</p>
+                <p className="text-xs text-slate-500 mt-1">Good luck in the playoffs 🏀</p>
+              </div>
+            ) : (
+              <div className="py-2">
+                {/* Missing series */}
+                {summary.missing_series.length > 0 && (
+                  <div>
+                    <p className="px-4 pt-2 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Bracket Picks</p>
+                    {summary.missing_series.map(s => (
+                      <button key={s.id} onClick={() => handleItemClick('betting')}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors text-left">
+                        <span className="text-lg shrink-0">🏀</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-white truncate">{s.label}</p>
+                          <p className="text-[11px] text-slate-500">{s.sublabel}</p>
+                        </div>
+                        <span className="text-[10px] font-black text-orange-400 shrink-0">Pick →</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Missing futures */}
+                {summary.missing_futures.length > 0 && (
+                  <div>
+                    <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Futures Picks</p>
+                    {summary.missing_futures.map(f => (
+                      <button key={f.key} onClick={() => handleItemClick('betting')}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors text-left">
+                        <span className="text-lg shrink-0">{f.label.split(' ')[0]}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-white truncate">{f.label.slice(f.label.indexOf(' ') + 1)}</p>
+                        </div>
+                        <span className="text-[10px] font-black text-orange-400 shrink-0">Pick →</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Missing leaders */}
+                {summary.missing_leaders.length > 0 && (
+                  <div>
+                    <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Playoff Leaders</p>
+                    {summary.missing_leaders.map(l => (
+                      <button key={l.key} onClick={() => handleItemClick('betting')}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors text-left">
+                        <span className="text-lg shrink-0">{l.label.split(' ')[0]}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-white truncate">{l.label.slice(l.label.indexOf(' ') + 1)}</p>
+                        </div>
+                        <span className="text-[10px] font-black text-orange-400 shrink-0">Pick →</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Footer — OneSignal toggle */}
+          <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold text-slate-300">Push notifications</p>
+              <p className="text-[10px] text-slate-600">
+                {subscribed === null ? 'Checking…' : subscribed ? 'Enabled' : 'Tap to enable alerts'}
+              </p>
+            </div>
+            <button
+              onClick={handleSubscribeToggle}
+              disabled={subLoading || subscribed === null}
+              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${
+                subscribed ? 'bg-orange-500' : 'bg-slate-700'
+              }`}
+            >
+              <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                subscribed ? 'translate-x-[22px]' : 'translate-x-0.5'
+              }`} />
+            </button>
+          </div>
+        </div>
       )}
-    </button>
+    </div>
   );
 };
 
@@ -1213,7 +1358,6 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [profileUsername, setProfileUsername] = useState(null);
-  const [hasMissingPicks, setHasMissingPicks] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem('nba_user');
@@ -1250,19 +1394,13 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Sync hasMissingPicks + OneSignal external ID whenever user changes
+  // Sync OneSignal external ID whenever user changes
   useEffect(() => {
     if (!currentUser) {
-      setHasMissingPicks(false);
       try { OneSignal.logout(); } catch {}
       return;
     }
-    // Map our user ID to OneSignal so backend can target this subscriber
     try { OneSignal.login(String(currentUser.user_id)); } catch {}
-    // Check if user has any unpredicted series
-    api.getDashboard(currentUser.user_id).then(data => {
-      setHasMissingPicks((data.series_predicted ?? 0) < (data.total_series ?? 0));
-    }).catch(() => {});
   }, [currentUser?.user_id]);
 
   const handleLogin = (user) => {
@@ -1379,7 +1517,7 @@ function App() {
                   <Settings className="mr-3 h-4 w-4 shrink-0" />
                   Account Settings
                 </button>
-                <BellButton hasMissingPicks={hasMissingPicks} onNavigate={navigate} />
+                <BellButton userId={currentUser?.user_id} onNavigate={navigate} />
               </div>
               <div className="flex items-center px-2 py-1">
                 {currentUser.avatar_url ? (
@@ -1417,7 +1555,7 @@ function App() {
           </div>
           {currentUser && (
             <div className="flex items-center gap-1">
-              <BellButton hasMissingPicks={hasMissingPicks} onNavigate={navigate} />
+              <BellButton userId={currentUser?.user_id} onNavigate={navigate} />
               <button
                 onClick={() => navigate('account')}
                 className="flex items-center gap-2 active:opacity-70 transition-opacity px-1"
