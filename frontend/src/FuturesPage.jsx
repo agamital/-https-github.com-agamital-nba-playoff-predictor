@@ -1,111 +1,64 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, Lock, CheckCircle, Star, User, X, BarChart2, Info } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Trophy, Lock, CheckCircle, Star, BarChart2, Info } from 'lucide-react';
 import * as api from './services/api';
 import { FUTURES_BASE_POINTS, LEADERS_POINTS } from './scoringConstants';
+import ScoringTooltip from './ScoringTooltip';
 
-// ── All known playoff-eligible players (search suggestions) ──────────────────
-const ALL_PLAYERS = [
-  'Nikola Jokic', 'LeBron James', 'Stephen Curry', 'Giannis Antetokounmpo',
-  'Luka Doncic', 'Jayson Tatum', 'Kevin Durant', 'Shai Gilgeous-Alexander',
-  'Anthony Davis', 'Joel Embiid', 'Tyrese Haliburton', 'Donovan Mitchell',
-  'Jimmy Butler', 'Victor Wembanyama', 'Cade Cunningham', 'Jalen Brunson',
-  'Darius Garland', 'Scottie Barnes', 'Evan Mobley', 'Paolo Banchero',
-  'Franz Wagner', 'Alperen Sengun', 'Jaren Jackson Jr.', "De'Aaron Fox",
-  'Ja Morant', 'Zion Williamson', 'Brandon Ingram', 'Devin Booker',
-  'James Harden', 'Kawhi Leonard', 'Paul George', 'Klay Thompson',
-  'Draymond Green', 'Jamal Murray', 'Michael Porter Jr.', 'Austin Reaves',
-  'Anthony Edwards', 'Karl-Anthony Towns', 'Rudy Gobert',
-];
-
-const LEADER_CATEGORIES = [
-  { key: 'top_scorer',   label: 'Most Total Points',     color: 'text-yellow-400', pts: 100, icon: '🏀' },
-  { key: 'top_assists',  label: 'Most Total Assists',    color: 'text-blue-400',   pts: 70,  icon: '🎯' },
-  { key: 'top_rebounds', label: 'Most Total Rebounds',   color: 'text-green-400',  pts: 70,  icon: '💪' },
-  { key: 'top_threes',   label: 'Most 3-Pointers Made',  color: 'text-purple-400', pts: 60,  icon: '3️⃣' },
-  { key: 'top_steals',   label: 'Most Total Steals',     color: 'text-red-400',    pts: 40,  icon: '🤚' },
-  { key: 'top_blocks',   label: 'Most Total Blocks',     color: 'text-orange-400', pts: 40,  icon: '🛡️' },
-];
-
-// ── Search/autocomplete player picker ────────────────────────────────────────
-const PlayerSearchPicker = ({ value, onChange, locked, placeholder }) => {
-  const [query, setQuery] = useState(value || '');
-  const [open, setOpen] = useState(false);
-  const inputRef = useRef(null);
-
-  useEffect(() => { setQuery(value || ''); }, [value]);
-
-  const filtered = query.trim().length > 0
-    ? ALL_PLAYERS.filter(s => s.toLowerCase().includes(query.toLowerCase()))
-    : ALL_PLAYERS.slice(0, 10);
-
-  const handleInput = (e) => {
-    const v = e.target.value;
-    setQuery(v);
-    onChange(v);
-    setOpen(true);
+// ── Numeric input for leader stat predictions ─────────────────────────────────
+const LeaderNumberInput = ({ value, onChange, locked, placeholder }) => {
+  const handleChange = (e) => {
+    const raw = e.target.value;
+    if (raw === '') { onChange(''); return; }
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0) onChange(n);
   };
-
-  const handleSelect = (name) => {
-    setQuery(name);
-    onChange(name);
-    setOpen(false);
-  };
-
-  const handleClear = () => {
-    setQuery('');
-    onChange('');
-    inputRef.current?.focus();
-  };
-
   return (
     <div className="relative">
-      <div className="relative flex items-center">
-        <User className="absolute left-3 w-4 h-4 text-slate-500 pointer-events-none" />
-        <input
-          ref={inputRef}
-          type="text"
-          value={query}
-          onChange={handleInput}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          disabled={locked}
-          placeholder={placeholder || 'Search player name…'}
-          className="w-full pl-9 pr-8 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        />
-        {query && !locked && (
-          <button
-            onMouseDown={handleClear}
-            className="absolute right-3 text-slate-500 hover:text-white transition-colors"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-      {open && !locked && filtered.length > 0 && (
-        <div className="absolute z-20 w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-xl max-h-52 overflow-y-auto">
-          {filtered.map(name => (
-            <button
-              key={name}
-              onMouseDown={() => handleSelect(name)}
-              className={`w-full text-left px-4 py-2 text-sm transition-colors flex items-center gap-2 hover:bg-slate-700 ${
-                value === name ? 'text-orange-400 font-bold bg-orange-500/10' : 'text-slate-300'
-              }`}
-            >
-              <User className="w-3.5 h-3.5 shrink-0 text-slate-500" />
-              {name}
-            </button>
-          ))}
-        </div>
-      )}
-      {value && (
-        <p className="mt-1.5 text-xs text-orange-400 font-bold flex items-center gap-1">
-          <CheckCircle className="w-3 h-3" />
-          {value}
+      <input
+        type="number"
+        inputMode="numeric"
+        min="1"
+        step="1"
+        value={value || ''}
+        onChange={handleChange}
+        disabled={locked}
+        placeholder={placeholder || 'e.g. 550'}
+        className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+      />
+      {value > 0 && (
+        <p className="mt-1.5 text-xs text-cyan-400 font-bold flex items-center gap-1">
+          ✓ Predicted: {value}
         </p>
       )}
+      <p className="mt-1 text-[10px] text-slate-600 font-bold">Exact integer match required — no partial credit</p>
     </div>
   );
 };
+
+// ── Plain text input for MVP name predictions ─────────────────────────────────
+const MvpTextInput = ({ value, onChange, locked, placeholder }) => (
+  <input
+    type="text"
+    value={value || ''}
+    onChange={e => onChange(e.target.value)}
+    disabled={locked}
+    placeholder={placeholder || 'Player name…'}
+    className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+    autoComplete="off"
+    autoCorrect="off"
+    spellCheck={false}
+  />
+);
+
+const LEADER_CATEGORIES = [
+  { key: 'top_scorer',   short: 'Most Total Points',    question: 'What will be the highest total points scored?',    color: 'text-yellow-400', pts: 100, icon: '🏀', example: 'e.g. 550' },
+  { key: 'top_assists',  short: 'Most Total Assists',   question: 'What will be the highest total assists?',          color: 'text-blue-400',   pts: 70,  icon: '🎯', example: 'e.g. 200' },
+  { key: 'top_rebounds', short: 'Most Total Rebounds',  question: 'What will be the highest total rebounds?',         color: 'text-green-400',  pts: 70,  icon: '💪', example: 'e.g. 250' },
+  { key: 'top_threes',   short: 'Most 3-Pointers Made', question: 'What will be the highest 3-pointers made?',        color: 'text-purple-400', pts: 60,  icon: '3️⃣', example: 'e.g. 55'  },
+  { key: 'top_steals',   short: 'Most Total Steals',    question: 'What will be the highest total steals?',           color: 'text-red-400',    pts: 40,  icon: '🤚', example: 'e.g. 35'  },
+  { key: 'top_blocks',   short: 'Most Total Blocks',    question: 'What will be the highest total blocks?',           color: 'text-orange-400', pts: 40,  icon: '🛡️', example: 'e.g. 40'  },
+];
+
 
 const TeamGrid = ({ teams, selectedId, onSelect, locked }) => (
   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
@@ -143,17 +96,26 @@ const TeamGrid = ({ teams, selectedId, onSelect, locked }) => (
 const Section = ({ title, icon, color, children, pts, oddsMult }) => {
   const finalPts = pts ? Math.floor(pts * (oddsMult || 1)) : null;
   const showMult = oddsMult && oddsMult !== 1 && pts;
+  const isHighMult = oddsMult && oddsMult >= 1.5;
   return (
-    <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-      <div className={`flex items-center gap-2 mb-4 ${color}`}>
+    <div className={`border rounded-2xl p-5 transition-all ${
+      isHighMult
+        ? 'bg-orange-500/5 border-orange-500/30 shadow-sm shadow-orange-500/10'
+        : 'bg-slate-900/50 border-slate-800'
+    }`}>
+      <div className={`flex items-center gap-2 mb-1 ${color}`}>
         {icon}
         <h3 className="text-base font-black uppercase tracking-wider flex-1">{title}</h3>
         {finalPts != null && (
-          <span className="ml-auto text-xs font-black text-green-400 shrink-0">
+          <span className={`ml-auto text-xs font-black shrink-0 ${isHighMult ? 'text-amber-400' : 'text-green-400'}`}>
             {showMult ? `${pts} × ${oddsMult} = ${finalPts} pts` : `${finalPts} pts`}
           </span>
         )}
       </div>
+      {isHighMult && (
+        <p className="text-[10px] text-amber-500/70 font-bold mb-3">Higher risk = more points</p>
+      )}
+      {!isHighMult && <div className="mb-4" />}
       {children}
     </div>
   );
@@ -179,12 +141,13 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
 
   // Leaders state
   const [leaders, setLeaders] = useState({
-    top_scorer: '', top_assists: '', top_rebounds: '',
-    top_threes: '', top_steals: '', top_blocks: '',
+    top_scorer: null, top_assists: null, top_rebounds: null,
+    top_threes: null, top_steals: null, top_blocks: null,
   });
   const [leadersSaving, setLeadersSaving] = useState(false);
   const [leadersSaved, setLeadersSaved] = useState(false);
   const [existingLeaders, setExistingLeaders] = useState(null);
+  const [saveError, setSaveError] = useState('');
 
   const locked = globalLocked || (existing?.locked || false);
 
@@ -219,12 +182,12 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           if (leadPred.has_prediction) {
             setExistingLeaders(leadPred);
             setLeaders({
-              top_scorer:   leadPred.top_scorer   || '',
-              top_assists:  leadPred.top_assists  || '',
-              top_rebounds: leadPred.top_rebounds || '',
-              top_threes:   leadPred.top_threes   || '',
-              top_steals:   leadPred.top_steals   || '',
-              top_blocks:   leadPred.top_blocks   || '',
+              top_scorer:   leadPred.top_scorer   || null,
+              top_assists:  leadPred.top_assists  || null,
+              top_rebounds: leadPred.top_rebounds || null,
+              top_threes:   leadPred.top_threes   || null,
+              top_steals:   leadPred.top_steals   || null,
+              top_blocks:   leadPred.top_blocks   || null,
             });
           }
         }
@@ -254,7 +217,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
-      alert('Error: ' + (err.response?.data?.detail || 'Unknown error'));
+      setSaveError(err.response?.data?.detail || 'Failed to save futures picks. Try again.');
     } finally {
       setSaving(false);
     }
@@ -270,7 +233,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
       setLeadersSaved(true);
       setTimeout(() => setLeadersSaved(false), 2500);
     } catch (err) {
-      alert('Error: ' + (err.response?.data?.detail || 'Unknown error'));
+      setSaveError(err.response?.data?.detail || 'Failed to save leaders picks. Try again.');
     } finally {
       setLeadersSaving(false);
     }
@@ -351,6 +314,13 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
       )}
 
       <div className="space-y-6">
+        {/* Champions divider */}
+        <div className="flex items-center gap-2 mb-1">
+          <div className="h-px flex-1 bg-slate-800" />
+          <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Champions</span>
+          <div className="h-px flex-1 bg-slate-800" />
+        </div>
+
         {/* NBA Champion */}
         <Section title="NBA Champion" color="text-yellow-400" icon={<Trophy className="w-5 h-5" />} pts={FUTURES_BASE_POINTS.champion} oddsMult={odds.champion}>
           <TeamGrid teams={teams} selectedId={champion} onSelect={setChampion} locked={locked} />
@@ -366,17 +336,24 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           </Section>
         </div>
 
-        {/* MVPs */}
+        {/* MVPs divider */}
+        <div className="flex items-center gap-2 mb-1">
+          <div className="h-px flex-1 bg-slate-800" />
+          <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">MVPs</span>
+          <div className="h-px flex-1 bg-slate-800" />
+        </div>
+
+        {/* Finals MVP */}
         <Section title="Finals MVP" color="text-orange-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.finals_mvp} oddsMult={odds.finals_mvp}>
-          <PlayerSearchPicker value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Search any player…" />
+          <MvpTextInput value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Type player name…" />
         </Section>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Section title="West Finals MVP" color="text-red-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_finals_mvp} oddsMult={odds.west_finals_mvp}>
-            <PlayerSearchPicker value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Search any player…" />
+            <MvpTextInput value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Type player name…" />
           </Section>
           <Section title="East Finals MVP" color="text-blue-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_finals_mvp} oddsMult={odds.east_finals_mvp}>
-            <PlayerSearchPicker value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Search any player…" />
+            <MvpTextInput value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Type player name…" />
           </Section>
         </div>
 
@@ -402,12 +379,24 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           <div className="flex items-center gap-2 mb-2">
             <BarChart2 className="w-5 h-5 text-cyan-400" />
             <h2 className="text-xl font-black text-white uppercase tracking-wide">Playoff Leaders</h2>
+            <ScoringTooltip content={
+              <div className="space-y-1.5 text-xs">
+                <p className="font-black text-white mb-1">Playoff Leaders — Points</p>
+                <p className="text-slate-500 text-[10px] mb-2">Predict the highest stat total across the entire playoffs. Exact number required.</p>
+                {LEADER_CATEGORIES.map(c => (
+                  <div key={c.key} className="flex justify-between">
+                    <span className="text-slate-400">{c.short}</span>
+                    <span className={`font-black ${c.color}`}>{c.pts} pts</span>
+                  </div>
+                ))}
+              </div>
+            } />
             <span className="ml-2 px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 text-[10px] font-black uppercase tracking-wider">New</span>
           </div>
           <p className="text-slate-400 text-sm mb-1">
-            Predict which player will lead the entire playoffs in each statistical category.
+            Predict the MAX stat total for each category across the entire playoffs.
           </p>
-          <p className="text-slate-500 text-xs mb-5 font-bold">Exact match required. Picks lock with Futures.</p>
+          <p className="text-slate-500 text-xs mb-5 font-bold">Enter a number — exact integer match required. Picks lock with Futures.</p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {LEADER_CATEGORIES.map(cat => {
@@ -421,20 +410,21 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                   }`}>
                   <div className="flex items-center gap-3 mb-3">
                     <div className="flex-1 min-w-0">
-                      <p className={`text-xs font-black uppercase tracking-wider ${cat.color}`}>{cat.label}</p>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className={`text-xl font-black ${cat.color}`}>{cat.pts}</span>
+                      <p className={`text-[11px] font-black uppercase tracking-wider ${cat.color}`}>{cat.short}</p>
+                      <p className="text-sm font-bold text-white mt-0.5 leading-snug">{cat.question}</p>
+                      <div className="flex items-center gap-1.5 mt-1.5">
+                        <span className={`text-lg font-black ${cat.color}`}>{cat.pts}</span>
                         <span className="text-slate-500 text-xs font-bold">pts</span>
-                        <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">exact match</span>
+                        <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">exact number</span>
                       </div>
                     </div>
                     {isCorrect === 1 && <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />}
                   </div>
-                  <PlayerSearchPicker
+                  <LeaderNumberInput
                     value={leaders[cat.key]}
                     onChange={v => setLeaders(prev => ({ ...prev, [cat.key]: v }))}
                     locked={locked}
-                    placeholder={`Who leads in ${cat.label.toLowerCase()}?`}
+                    placeholder={cat.example}
                   />
                 </div>
               );
@@ -459,6 +449,14 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           )}
         </div>
       </div>
+
+      {/* Save error banner (sticky at bottom on mobile) */}
+      {saveError && (
+        <div className="fixed bottom-20 md:bottom-6 left-3 right-3 md:left-auto md:right-6 md:max-w-sm z-50 flex items-center gap-3 px-4 py-3 rounded-2xl bg-red-950/95 border border-red-500/40 shadow-2xl backdrop-blur-sm">
+          <span className="text-red-400 text-sm font-bold flex-1">⚠ {saveError}</span>
+          <button onClick={() => setSaveError('')} className="text-red-400/60 hover:text-red-400 font-bold text-lg leading-none transition-colors shrink-0">×</button>
+        </div>
+      )}
     </div>
   );
 };

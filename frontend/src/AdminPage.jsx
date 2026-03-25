@@ -8,6 +8,25 @@ const Card = ({ children, className }) => (
   </div>
 );
 
+const ConfirmModal = ({ message, onConfirm, onCancel }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl">
+      <p className="text-white font-black text-lg mb-2">Confirm Action</p>
+      <p className="text-slate-400 text-sm mb-6">{message}</p>
+      <div className="flex gap-3">
+        <button onClick={onCancel}
+          className="flex-1 py-2.5 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 font-bold text-sm transition-all">
+          Cancel
+        </button>
+        <button onClick={onConfirm}
+          className="flex-1 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-sm transition-all">
+          Confirm
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
 const TeamButton = ({ team, selected, onClick }) => (
   <button
     onClick={onClick}
@@ -28,12 +47,18 @@ const SeriesCard = ({ series, onSave, onToggleLock }) => {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [locking, setLocking] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const isCompleted = series.status === 'completed';
   const isLocked = series.status === 'locked';
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!winnerId || !games) return;
+    setConfirmOpen(true);
+  };
+
+  const doSave = async () => {
+    setConfirmOpen(false);
     setSaving(true);
     try {
       await onSave(series.id, winnerId, games);
@@ -126,6 +151,13 @@ const SeriesCard = ({ series, onSave, onToggleLock }) => {
           </button>
         )}
       </div>
+      {confirmOpen && (
+        <ConfirmModal
+          message={`Set result: ${winnerId === series.home_team.id ? series.home_team.name : series.away_team.name} wins in ${games} games. This will update all user scores.`}
+          onConfirm={doSave}
+          onCancel={() => setConfirmOpen(false)}
+        />
+      )}
     </Card>
   );
 };
@@ -396,8 +428,8 @@ const FuturesResultsCard = ({ teams }) => {
 
 const LeadersResultsCard = () => {
   const [results, setResults] = useState({
-    top_scorer: '', top_assists: '', top_rebounds: '',
-    top_threes: '', top_steals: '', top_blocks: '',
+    top_scorer: null, top_assists: null, top_rebounds: null,
+    top_threes: null, top_steals: null, top_blocks: null,
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -406,12 +438,12 @@ const LeadersResultsCard = () => {
   useEffect(() => {
     api.getAdminLeadersResults().then(data => {
       setResults({
-        top_scorer:   data.scorer   || '',
-        top_assists:  data.assists  || '',
-        top_rebounds: data.rebounds || '',
-        top_threes:   data.threes   || '',
-        top_steals:   data.steals   || '',
-        top_blocks:   data.blocks   || '',
+        top_scorer:   data.scorer   || null,
+        top_assists:  data.assists  || null,
+        top_rebounds: data.rebounds || null,
+        top_threes:   data.threes   || null,
+        top_steals:   data.steals   || null,
+        top_blocks:   data.blocks   || null,
       });
     }).catch(() => {});
   }, []);
@@ -430,12 +462,12 @@ const LeadersResultsCard = () => {
   };
 
   const fields = [
-    { key: 'top_scorer',   label: 'Most Points Leader',    pts: 100 },
-    { key: 'top_assists',  label: 'Most Assists Leader',   pts: 70  },
-    { key: 'top_rebounds', label: 'Most Rebounds Leader',  pts: 70  },
-    { key: 'top_threes',   label: 'Most 3PT Made Leader',  pts: 60  },
-    { key: 'top_steals',   label: 'Most Steals Leader',    pts: 40  },
-    { key: 'top_blocks',   label: 'Most Blocks Leader',    pts: 40  },
+    { key: 'top_scorer',   label: 'Most Total Points',     pts: 100, example: 'e.g. 550' },
+    { key: 'top_assists',  label: 'Most Total Assists',    pts: 70,  example: 'e.g. 200' },
+    { key: 'top_rebounds', label: 'Most Total Rebounds',   pts: 70,  example: 'e.g. 250' },
+    { key: 'top_threes',   label: 'Most 3-Pointers Made',  pts: 60,  example: 'e.g. 55'  },
+    { key: 'top_steals',   label: 'Most Total Steals',     pts: 40,  example: 'e.g. 35'  },
+    { key: 'top_blocks',   label: 'Most Total Blocks',     pts: 40,  example: 'e.g. 40'  },
   ];
 
   return (
@@ -449,17 +481,25 @@ const LeadersResultsCard = () => {
       </button>
       {expanded && (
         <div className="mt-4 space-y-3">
-          <p className="text-xs text-slate-400">Enter the actual playoff statistical leaders. Scores update automatically.</p>
+          <p className="text-xs text-slate-400">Enter the actual max stat value for each category. Scores update automatically.</p>
           {fields.map(f => (
             <div key={f.key} className="flex items-center gap-3">
               <div className="flex-1">
                 <label className="text-xs text-slate-400 font-bold uppercase block mb-1">{f.label} ({f.pts}pts)</label>
                 <input
-                  type="text"
-                  value={results[f.key]}
-                  onChange={e => setResults(prev => ({ ...prev, [f.key]: e.target.value }))}
-                  placeholder="Player name…"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500"
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  step="1"
+                  value={results[f.key] || ''}
+                  onChange={e => {
+                    const raw = e.target.value;
+                    if (raw === '') { setResults(prev => ({ ...prev, [f.key]: null })); return; }
+                    const n = parseInt(raw, 10);
+                    if (Number.isFinite(n) && n > 0) setResults(prev => ({ ...prev, [f.key]: n }));
+                  }}
+                  placeholder={f.example}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
             </div>
@@ -479,12 +519,14 @@ const LeadersResultsCard = () => {
 const RegenerateMatchupsCard = ({ onDone }) => {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmConf, setConfirmConf] = useState(null);
 
-  const run = async (conference) => {
+  const doRun = async (conference) => {
+    setConfirmConf(null);
     setBusy(true);
     setStatus('Generating…');
     try {
-      const res = await api.regenerateMatchups(conference);
+      const res = await api.regenerateMatchups(conference === 'all' ? null : conference);
       setStatus(`Done! ${res.series_count} series, ${res.playin_count} play-in games`);
       onDone();
     } catch (e) {
@@ -502,20 +544,27 @@ const RegenerateMatchupsCard = ({ onDone }) => {
       </div>
       <p className="text-xs text-slate-400 mb-4">If seeds 3-6 are missing, use these buttons to create the missing playoff series and play-in games from live standings.</p>
       <div className="flex gap-2 flex-wrap">
-        <button onClick={() => run('Western')} disabled={busy}
+        <button onClick={() => setConfirmConf('Western')} disabled={busy}
           className="px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30 text-sm font-bold transition-all disabled:opacity-50">
           Regenerate West
         </button>
-        <button onClick={() => run('Eastern')} disabled={busy}
+        <button onClick={() => setConfirmConf('Eastern')} disabled={busy}
           className="px-4 py-2 rounded-lg bg-blue-500/20 border border-blue-500/40 text-blue-400 hover:bg-blue-500/30 text-sm font-bold transition-all disabled:opacity-50">
           Regenerate East
         </button>
-        <button onClick={() => run(null)} disabled={busy}
+        <button onClick={() => setConfirmConf('all')} disabled={busy}
           className="px-4 py-2 rounded-lg bg-orange-500/20 border border-orange-500/40 text-orange-400 hover:bg-orange-500/30 text-sm font-bold transition-all disabled:opacity-50">
           Regenerate All
         </button>
       </div>
       {status && <p className="mt-3 text-xs text-slate-300 font-bold">{status}</p>}
+      {confirmConf !== null && (
+        <ConfirmModal
+          message={`Regenerate ${confirmConf === 'all' ? 'all' : confirmConf} matchups from live standings. This may overwrite existing matchups and will affect all users.`}
+          onConfirm={() => doRun(confirmConf)}
+          onCancel={() => setConfirmConf(null)}
+        />
+      )}
     </Card>
   );
 };

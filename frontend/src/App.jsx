@@ -1018,7 +1018,7 @@ function App() {
 
       {/* ── MAIN CONTENT ── */}
       {/* pb-20 on mobile to clear the bottom nav bar */}
-      <main className="md:pl-64 min-h-screen pb-20 md:pb-0">
+      <main className="md:pl-64 min-h-screen pb-safe md:pb-0">
         <Suspense fallback={<PageSpinner />}>
           {renderPage()}
         </Suspense>
@@ -1028,7 +1028,7 @@ function App() {
       <InstallBanner />
 
       {/* ── MOBILE BOTTOM NAV BAR ── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 flex">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 flex nav-safe-bottom">
         {bottomNavItems.map((item) => {
           const Icon = item.icon;
           const active = currentPage === item.id;

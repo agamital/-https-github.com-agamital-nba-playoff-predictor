@@ -74,7 +74,8 @@ SCORING RULES SUMMARY
    Player (MVP) categories matched by case-insensitive string.
 
 4. PLAYOFF HIGHS (Leaders)  --------------------------------------------------
-   Exact-match, case-insensitive string comparison only (no partial credit).
+   Users predict the MAX stat value (integer), not the player name.
+   Exact integer match only — no partial credit.
      Most Total Points      100 pts
      Most Total Assists      70 pts
      Most Total Rebounds     70 pts
@@ -258,7 +259,12 @@ def calculate_leaders_points(
     """
     Score a playoff-highs (leaders) prediction row.
 
-    Exact-match, case-insensitive string comparison only — no partial credit.
+    Users predict the MAX stat value as a positive integer (e.g. 55 total points).
+    Exact integer match only — no partial credit, no name matching.
+
+    Args:
+        predictions  {cat: int | None}   — user's predicted max stat value
+        actuals      {cat: int | None}   — actual max stat value; falsy = result unknown
 
     Returns:
         (total_points, correctness)
@@ -271,11 +277,24 @@ def calculate_leaders_points(
         pred   = predictions.get(cat)
         actual = actuals.get(cat)
 
-        if not actual:
+        # Result not yet set
+        if actual is None or actual == '' or actual == 0:
             correct[cat] = None
             continue
 
-        is_c = 1 if (pred and str(pred).strip().lower() == str(actual).strip().lower()) else 0
+        # Coerce both to int for comparison (handles strings coming from DB/API)
+        try:
+            actual_int = int(actual)
+            pred_int   = int(pred) if pred is not None and pred != '' else None
+        except (ValueError, TypeError):
+            correct[cat] = None
+            continue
+
+        if actual_int <= 0:
+            correct[cat] = None
+            continue
+
+        is_c = 1 if (pred_int is not None and pred_int == actual_int) else 0
         correct[cat] = is_c
         if is_c:
             pts += base
@@ -351,18 +370,32 @@ if __name__ == "__main__":
     check("futures result unknown -> None", c2["champion"], None)
     check("futures result unknown -> 0 pts", pts2, 0)
 
-    print("\n-- Leaders / Playoff Highs ---------------------------")
+    print("\n-- Leaders / Playoff Highs (integer values) ----------")
     lp, lc = calculate_leaders_points(
-        {"scorer": "LeBron James", "assists": "Luka Doncic", "rebounds": "Jokic", "threes": None, "steals": "cp3", "blocks": None},
-        {"scorer": "Lebron james", "assists": "Trae Young",  "rebounds": "Jokic", "threes": "Curry", "steals": "CP3", "blocks": None},
+        {"scorer": 550, "assists": 200, "rebounds": 300, "threes": None, "steals": 80, "blocks": None},
+        {"scorer": 550, "assists": 210, "rebounds": 300, "threes": 120,  "steals": 80, "blocks": None},
     )
-    check("leaders scorer correct (case-insensitive)", lc["scorer"],   1)
-    check("leaders assists wrong",                     lc["assists"],  0)
-    check("leaders rebounds correct",                  lc["rebounds"], 1)
-    check("leaders threes not picked -> 0",             lc["threes"],   0)
-    check("leaders steals correct (case)",             lc["steals"],   1)
-    check("leaders blocks not set -> None",             lc["blocks"],   None)
-    check("leaders total pts (100+70+40)",              lp, 210)
+    check("leaders scorer exact int match",      lc["scorer"],   1)
+    check("leaders assists wrong (200 vs 210)",  lc["assists"],  0)
+    check("leaders rebounds exact match",        lc["rebounds"], 1)
+    check("leaders threes not picked -> 0",      lc["threes"],   0)
+    check("leaders steals exact match",          lc["steals"],   1)
+    check("leaders blocks not set -> None",      lc["blocks"],   None)
+    check("leaders total pts (100+70+40)",       lp, 210)
+
+    print("\n-- Leaders: string-int coercion -----------------------")
+    lp2, lc2 = calculate_leaders_points(
+        {"scorer": "550", "assists": "200"},
+        {"scorer": 550,   "assists": 200},
+    )
+    check("leaders str pred vs int actual",  lc2["scorer"],  1)
+    check("leaders str pred vs int actual2", lc2["assists"], 1)
+
+    print("\n-- Leaders: zero / missing actual -> None -------------")
+    _, lc3 = calculate_leaders_points({"scorer": 550}, {"scorer": 0})
+    check("leaders actual=0 -> None", lc3["scorer"], None)
+    _, lc4 = calculate_leaders_points({"scorer": 550}, {"scorer": None})
+    check("leaders actual=None -> None", lc4["scorer"], None)
 
     print()
     if errors:

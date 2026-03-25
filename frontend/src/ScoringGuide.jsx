@@ -192,8 +192,8 @@ export default function ScoringGuide() {
       <Card>
         <SectionHeader icon={BarChart2} title="Playoff Leaders (Highs)" color="text-cyan-400" />
         <p className="text-slate-500 text-xs mb-4">
-          Predict which player leads the entire playoffs in each stat category.
-          Points awarded only for an <strong className="text-slate-300">exact match</strong>.
+          Predict the <strong className="text-slate-300">highest total stat value</strong> across the entire playoffs — enter a number, not a player name.
+          Points awarded only for an <strong className="text-slate-300">exact integer match</strong>.
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {LEADER_ROWS.map(l => (
@@ -208,7 +208,7 @@ export default function ScoringGuide() {
         </div>
         <div className="mt-3 flex items-center gap-2 text-xs text-slate-500 bg-slate-800/40 rounded-xl px-3 py-2">
           <CheckCircle className="w-3.5 h-3.5 shrink-0 text-slate-600" />
-          Picks lock with Futures. If two players tie, the pick is considered incorrect.
+          Picks lock with Futures. Enter the exact integer — e.g. 550 total points, 55 three-pointers.
         </div>
       </Card>
 
