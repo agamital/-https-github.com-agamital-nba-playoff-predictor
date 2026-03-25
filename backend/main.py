@@ -1069,11 +1069,21 @@ async def startup():
         max_instances=1,
     )
 
-    # 2) Missing-picks alert — 16:00 UTC = 18:00 Israel (UTC+2)
+    # 2) Missing-picks morning alert — 06:00 UTC = 09:00 Jerusalem (IDT, UTC+3)
     _scheduler.add_job(
         _send_missing_picks_alert,
-        CronTrigger.from_crontab('0 16 * * *'),
-        id='missing_picks_alert',
+        CronTrigger.from_crontab('0 6 * * *'),
+        id='missing_picks_morning',
+        replace_existing=True,
+        misfire_grace_time=1800,
+        max_instances=1,
+    )
+
+    # 3) Missing-picks evening alert — 18:00 UTC = 21:00 Jerusalem (IDT, UTC+3)
+    _scheduler.add_job(
+        _send_missing_picks_alert,
+        CronTrigger.from_crontab('0 18 * * *'),
+        id='missing_picks_evening',
         replace_existing=True,
         misfire_grace_time=1800,
         max_instances=1,
@@ -1081,7 +1091,7 @@ async def startup():
 
     _scheduler.start()
     print("[Scheduler] APScheduler started — data sync: 0 */6 * * * UTC,"
-          " missing-picks alert: 0 16 * * * UTC (18:00 IL)"
+          " missing-picks: 0 6 * * * UTC (09:00 IL) + 0 18 * * * UTC (21:00 IL)"
           f" (active until {_STANDINGS_SYNC_CUTOFF.date()})")
 
     # Fire-and-forget initial sync so DB is populated shortly after boot
