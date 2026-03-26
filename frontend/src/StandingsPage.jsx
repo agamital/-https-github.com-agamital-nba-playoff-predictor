@@ -39,6 +39,7 @@ const StandingsPage = () => {
   const standings   = data || { eastern: [], western: [] };
   const lastUpdated = data?.last_updated ?? null;
   const lastSynced  = data?.last_synced_at ?? null;
+  const staticMode  = data?.static_mode ?? false;
   const error       = queryError ? 'Could not reach server. Showing last known data.' : null;
 
   const timeSince   = useTimeSince(lastUpdated);
@@ -149,6 +150,14 @@ const StandingsPage = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
+      {/* Static mode banner — shown after regular season ends (Apr 20 2026) */}
+      {staticMode && (
+        <div className="mb-4 px-4 py-3 bg-slate-700/40 border border-slate-600/40 rounded-xl text-xs text-slate-300 font-bold flex items-center gap-2">
+          <Trophy className="w-3 h-3 text-orange-400 shrink-0" />
+          Final regular-season standings — regular season has ended. These results are locked.
+        </div>
+      )}
+
       {/* Sync-triggered banner */}
       {syncBanner && (
         <div className="mb-4 px-4 py-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-400 font-bold flex items-center gap-2">

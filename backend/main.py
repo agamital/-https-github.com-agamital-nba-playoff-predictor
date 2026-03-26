@@ -24,8 +24,9 @@ from scoring import (
 
 _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 
-# Cron sync stops after the regular season ends (exclusive upper bound)
-_STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 21)
+# Sync runs every 6 h until end-of-day April 20 2026 (last regular-season day).
+# After this the app enters Static Mode: DB snapshot is served forever, no API calls.
+_STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 21, 0, 0, 0)   # exclusive — stops ON April 21
 
 # OneSignal push notification credentials
 _ONESIGNAL_APP_ID  = os.getenv("ONESIGNAL_APP_ID",  "c69b4c3e-79d1-48a4-8815-3ceabc1eae70")
@@ -359,6 +360,7 @@ def _fetch_standings_from_api():
             print(f"NBA API standings fetch attempt {attempt}/3…")
             standings_api = leaguestandingsv3.LeagueStandingsV3(
                 season='2025-26',
+                season_type_all_star='Regular Season',
                 headers=_NBA_HEADERS,
                 timeout=_NBA_TIMEOUT,
             )
@@ -695,31 +697,40 @@ def _standings_sync_job():
 
     # ── 1. Standings ────────────────────────────────────────────────────
     try:
-        fresh  = _fetch_standings_from_api()
-        result = _persist_standings_to_db(fresh)
-        if result['synced_at']:
-            _standings_cache["data"]       = fresh
-            _standings_cache["fetched_at"] = result['synced_at']
-            _standings_cache["expires"]    = result['synced_at'] + timedelta(hours=6)
-            next_at = (result['synced_at'] + timedelta(hours=6)).strftime('%H:%M UTC')
-            print(f"[Standings] ✓ {result['rows']} teams synced — next run ~{next_at}")
-            standings_ok = True
-            # Push notification when teams cross playoff/play-in boundaries
-            changes = result.get('rank_changes', [])
-            if changes:
-                # Build a readable summary, max 3 teams to keep it short
-                parts = []
-                for c in changes[:3]:
-                    emoji = '✅' if c['to'] == 'Playoff' else ('⚠️' if c['to'] == 'Play-In' else '❌')
-                    parts.append(f"{emoji} {c['team']}: {c['from']} → {c['to']}")
-                body = '\n'.join(parts)
-                if len(changes) > 3:
-                    body += f'\n+{len(changes) - 3} more'
-                threading.Thread(
-                    target=_send_onesignal_notification,
-                    args=("🏀 NBA Standings Update", body),
-                    daemon=True,
-                ).start()
+        fresh = _fetch_standings_from_api()
+
+        # Sanity-check: Detroit Pistons are a perennial bottom-dweller.
+        # > 25 wins almost certainly means the API returned mock / playoff-mode data.
+        det = next((t for t in fresh if 'Detroit' in t.get('team_name', '')), None)
+        if det and det['wins'] > 25:
+            print(
+                f"[Standings] \u2717 Validation failed \u2014 Detroit Pistons has {det['wins']} wins "
+                f"(expected \u2264 25). Aborting DB update to protect live data."
+            )
+        else:
+            result = _persist_standings_to_db(fresh)
+            if result['synced_at']:
+                _standings_cache["data"]       = fresh
+                _standings_cache["fetched_at"] = result['synced_at']
+                _standings_cache["expires"]    = result['synced_at'] + timedelta(hours=6)
+                next_at = (result['synced_at'] + timedelta(hours=6)).strftime('%H:%M UTC')
+                print(f"[Standings] \u2713 {result['rows']} teams synced \u2014 next run ~{next_at}")
+                standings_ok = True
+                # Push notification when teams cross playoff/play-in boundaries
+                changes = result.get('rank_changes', [])
+                if changes:
+                    parts = []
+                    for c in changes[:3]:
+                        emoji = '\u2705' if c['to'] == 'Playoff' else ('\u26a0\ufe0f' if c['to'] == 'Play-In' else '\u274c')
+                        parts.append(f"{emoji} {c['team']}: {c['from']} \u2192 {c['to']}")
+                    body = '\n'.join(parts)
+                    if len(changes) > 3:
+                        body += f'\n+{len(changes) - 3} more'
+                    threading.Thread(
+                        target=_send_onesignal_notification,
+                        args=("\U0001f3c0 NBA Standings Update", body),
+                        daemon=True,
+                    ).start()
     except Exception as e:
         print(f"[Standings] Sync error: {e}")
 
@@ -1215,6 +1226,8 @@ async def api_standings(force_refresh: bool = False):
     if fetched_at:
         cache_age_minutes = round((datetime.now() - fetched_at).total_seconds() / 60, 1)
 
+    is_static_mode = datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF
+
     return {
         "eastern":           eastern,
         "western":           western,
@@ -1224,6 +1237,7 @@ async def api_standings(force_refresh: bool = False):
         "cache_expires":     _standings_cache["expires"].isoformat() if _standings_cache.get("expires") else None,
         "sync_triggered":    sync_triggered,
         "sync_cutoff":       _STANDINGS_SYNC_CUTOFF.strftime('%Y-%m-%d'),
+        "static_mode":       is_static_mode,   # True after Apr 20 — serving final DB snapshot
     }
 
 @app.get("/api/health")
