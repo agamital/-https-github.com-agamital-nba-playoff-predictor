@@ -58,11 +58,11 @@ _NBA_HEADERS = {
 }
 _NBA_TIMEOUT = 20  # seconds — generous timeout for slow NBA API responses
 
-# Hardcoded standings (2025-26 season, as of 2026-03-24).
+# Hardcoded standings (2025-26 season, as of 2026-03-26).
 # Used instantly on startup so users never wait for the NBA API.
 _HARDCODED_STANDINGS = [
     # Eastern Conference
-    {'team_id': 1610612765, 'team_name': 'Detroit Pistons',        'conference': 'East', 'wins': 52, 'losses': 19, 'win_pct': 0.733, 'conf_rank': 1,  'playoff_rank': 1},
+    {'team_id': 1610612765, 'team_name': 'Detroit Pistons',        'conference': 'East', 'wins': 52, 'losses': 20, 'win_pct': 0.722, 'conf_rank': 1,  'playoff_rank': 1},
     {'team_id': 1610612738, 'team_name': 'Boston Celtics',         'conference': 'East', 'wins': 47, 'losses': 24, 'win_pct': 0.662, 'conf_rank': 2,  'playoff_rank': 2},
     {'team_id': 1610612752, 'team_name': 'New York Knicks',        'conference': 'East', 'wins': 47, 'losses': 25, 'win_pct': 0.653, 'conf_rank': 3,  'playoff_rank': 3},
     {'team_id': 1610612739, 'team_name': 'Cleveland Cavaliers',    'conference': 'East', 'wins': 44, 'losses': 27, 'win_pct': 0.620, 'conf_rank': 4,  'playoff_rank': 4},
@@ -699,15 +699,14 @@ def _standings_sync_job():
     try:
         fresh = _fetch_standings_from_api()
 
-        # Sanity-check: Detroit Pistons are a perennial bottom-dweller.
-        # > 25 wins almost certainly means the API returned mock / playoff-mode data.
-        det = next((t for t in fresh if 'Detroit' in t.get('team_name', '')), None)
-        if det and det['wins'] > 25:
-            print(
-                f"[Standings] \u2717 Validation failed \u2014 Detroit Pistons has {det['wins']} wins "
-                f"(expected \u2264 25). Aborting DB update to protect live data."
-            )
+        # Basic sanity-check: must have at least 28 teams (full NBA roster).
+        if len(fresh) < 28:
+            print(f"[Standings] \u2717 Validation failed \u2014 only {len(fresh)} teams returned (expected 30). Aborting.")
         else:
+            det = next((t for t in fresh if 'Detroit' in t.get('team_name', '')), None)
+            if det:
+                print(f"[Standings] Detroit Pistons: {det['wins']}-{det['losses']} (rank {det['conf_rank']})")
+
             result = _persist_standings_to_db(fresh)
             if result['synced_at']:
                 _standings_cache["data"]       = fresh

@@ -189,13 +189,13 @@ const StandingsPage = () => {
               )}
             </div>
 
-            {lastUpdated && (
-              <span className="text-xs text-slate-400">Cache: {timeSince}</span>
-            )}
             {lastSynced && (
-              <span className="text-xs text-slate-500">
-                DB sync: {syncedSince}
+              <span className="text-xs text-slate-400" title={lastSynced}>
+                Last sync: {syncedSince} ({new Date(lastSynced).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
               </span>
+            )}
+            {lastUpdated && !lastSynced && (
+              <span className="text-xs text-slate-400">Cache: {timeSince}</span>
             )}
           </div>
 
