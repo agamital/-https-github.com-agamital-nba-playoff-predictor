@@ -1267,7 +1267,7 @@ async def health_check():
         raise HTTPException(status_code=503, detail={"status": "error", "db": str(e)})
 
 @app.get("/api/teams")
-async def api_teams(conference: Optional[str] = None):
+async def api_teams(conference: Optional[str] = None, playoff_only: bool = False):
     conn = get_db_conn()
     c = conn.cursor()
     teams = []
@@ -1299,6 +1299,17 @@ async def api_teams(conference: Optional[str] = None):
                          'odds_championship': 1.0, 'odds_conference': 1.0})
 
     conn.close()
+
+    if playoff_only:
+        # Filter to top-10 per conference using standings (ranks 1-10 = playoff + play-in)
+        standings = get_standings()
+        rank_map = {t['team_id']: t['conf_rank'] for t in standings}
+        eligible_ids = {t['team_id'] for t in standings if t.get('conf_rank', 99) <= 10}
+        teams = [t for t in teams if t['id'] in eligible_ids]
+        for t in teams:
+            t['conf_rank'] = rank_map.get(t['id'], 99)
+        teams.sort(key=lambda t: (t['conference'], t.get('conf_rank', 99)))
+
     return teams
 
 @app.post("/api/auth/register")
@@ -2370,6 +2381,20 @@ async def save_futures(user_id: int, season: str = "2026",
     if existing and existing[0]:
         conn.close()
         raise HTTPException(status_code=400, detail="Predictions are locked")
+    # Validate team IDs are playoff-eligible (top 10 per conference)
+    standings = get_standings()
+    west_ids = {t['team_id'] for t in standings if t['conference'] == 'West' and t.get('conf_rank', 99) <= 10}
+    east_ids = {t['team_id'] for t in standings if t['conference'] == 'East' and t.get('conf_rank', 99) <= 10}
+    all_playoff_ids = west_ids | east_ids
+    if champion_team_id and champion_team_id not in all_playoff_ids:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Selected champion is not a playoff-eligible team")
+    if west_champ_team_id and west_champ_team_id not in west_ids:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Selected West champion is not in the top 10 West teams")
+    if east_champ_team_id and east_champ_team_id not in east_ids:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Selected East champion is not in the top 10 East teams")
     c.execute('''INSERT INTO futures_predictions
                  (user_id, season, champion_team_id, west_champ_team_id, east_champ_team_id,
                   finals_mvp, west_finals_mvp, east_finals_mvp, predicted_at)
@@ -2569,30 +2594,56 @@ async def get_team_roster(team_id: int):
 
 
 @app.get("/api/players/leaders")
-async def player_leaders_endpoint(season: str = "2026", limit: int = 10):
+async def player_leaders_endpoint(season: str = "2026", limit: int = 10, playoff_only: bool = True):
     """
     Current statistical leaders from the synced player_stats table.
-    Categories: pts, ast, reb, stl, blk, fg3m — all per-game averages.
-    Returns empty lists gracefully if the table is not yet populated.
+    When playoff_only=True (default), only includes players from top-10 teams per conference.
+    Includes team logo_url via JOIN with teams table.
     """
     conn = None
     try:
         conn = get_db_conn()
         c    = conn.cursor()
 
+        # Resolve playoff-eligible team abbreviations
+        playoff_abbrevs: list | None = None
+        if playoff_only:
+            standings = get_standings()
+            playoff_ids = [t['team_id'] for t in standings if t.get('conf_rank', 99) <= 10]
+            if playoff_ids:
+                c.execute("SELECT abbreviation FROM teams WHERE id = ANY(%s)", (playoff_ids,))
+                playoff_abbrevs = [row[0] for row in c.fetchall()]
+
         def top_n(order_col):
-            c.execute(f'''
-                SELECT player_id, player_name, team_abbreviation,
-                       games_played, pts_per_game, ast_per_game, reb_per_game,
-                       stl_per_game, blk_per_game, fg3m_per_game, updated_at
-                FROM player_stats WHERE season = %s
-                ORDER BY {order_col} DESC NULLS LAST LIMIT %s
-            ''', (season, limit))
+            if playoff_abbrevs:
+                c.execute(f'''
+                    SELECT ps.player_id, ps.player_name, ps.team_abbreviation,
+                           t.logo_url,
+                           ps.games_played, ps.pts_per_game, ps.ast_per_game, ps.reb_per_game,
+                           ps.stl_per_game, ps.blk_per_game, ps.fg3m_per_game, ps.updated_at
+                    FROM player_stats ps
+                    LEFT JOIN teams t ON t.abbreviation = ps.team_abbreviation
+                    WHERE ps.season = %s AND ps.team_abbreviation = ANY(%s)
+                    ORDER BY ps.{order_col} DESC NULLS LAST, ps.pts_per_game DESC NULLS LAST
+                    LIMIT %s
+                ''', (season, playoff_abbrevs, limit))
+            else:
+                c.execute(f'''
+                    SELECT ps.player_id, ps.player_name, ps.team_abbreviation,
+                           t.logo_url,
+                           ps.games_played, ps.pts_per_game, ps.ast_per_game, ps.reb_per_game,
+                           ps.stl_per_game, ps.blk_per_game, ps.fg3m_per_game, ps.updated_at
+                    FROM player_stats ps
+                    LEFT JOIN teams t ON t.abbreviation = ps.team_abbreviation
+                    WHERE ps.season = %s
+                    ORDER BY ps.{order_col} DESC NULLS LAST, ps.pts_per_game DESC NULLS LAST
+                    LIMIT %s
+                ''', (season, limit))
             return [
-                {'player_id': r[0], 'name': r[1], 'team': r[2],
-                 'gp': r[3], 'ppg': r[4], 'apg': r[5], 'rpg': r[6],
-                 'spg': r[7], 'bpg': r[8], 'fg3m': r[9],
-                 'updated_at': r[10].isoformat() if r[10] else None}
+                {'player_id': r[0], 'name': r[1], 'team': r[2], 'logo_url': r[3],
+                 'gp': r[4], 'ppg': r[5], 'apg': r[6], 'rpg': r[7],
+                 'spg': r[8], 'bpg': r[9], 'fg3m': r[10],
+                 'updated_at': r[11].isoformat() if r[11] else None}
                 for r in c.fetchall()
             ]
 
@@ -2615,6 +2666,44 @@ async def player_leaders_endpoint(season: str = "2026", limit: int = 10):
         return {'top_scorers': [], 'top_assists': [], 'top_rebounds': [],
                 'top_steals': [], 'top_blocks': [], 'top_threes': [],
                 'last_synced_at': None}
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+@app.get("/api/players/playoff-eligible")
+async def players_playoff_eligible(season: str = "2026"):
+    """All players from top-10 teams per conference, sorted by PPG descending.
+    Used to populate MVP autocomplete suggestions in the frontend."""
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+        standings = get_standings()
+        playoff_ids = [t['team_id'] for t in standings if t.get('conf_rank', 99) <= 10]
+        if not playoff_ids:
+            return []
+        c.execute("SELECT abbreviation FROM teams WHERE id = ANY(%s)", (playoff_ids,))
+        playoff_abbrevs = [row[0] for row in c.fetchall()]
+        if not playoff_abbrevs:
+            return []
+        c.execute('''
+            SELECT ps.player_id, ps.player_name, ps.team_abbreviation,
+                   t.logo_url, ps.pts_per_game
+            FROM player_stats ps
+            LEFT JOIN teams t ON t.abbreviation = ps.team_abbreviation
+            WHERE ps.season = %s AND ps.team_abbreviation = ANY(%s)
+            ORDER BY ps.pts_per_game DESC NULLS LAST
+        ''', (season, playoff_abbrevs))
+        return [
+            {'player_id': r[0], 'name': r[1], 'team': r[2],
+             'logo_url': r[3], 'ppg': r[4]}
+            for r in c.fetchall()
+        ]
+    except Exception as e:
+        print(f"players_playoff_eligible error: {e}")
+        return []
     finally:
         if conn:
             try: conn.close()

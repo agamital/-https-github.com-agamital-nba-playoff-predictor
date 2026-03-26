@@ -16,8 +16,10 @@ const api = axios.create({
 });
 
 // Teams
-export const getTeams = async (conference = null) => {
-  const params = conference ? { conference } : {};
+export const getTeams = async (conference = null, playoffOnly = false) => {
+  const params = {};
+  if (conference) params.conference = conference;
+  if (playoffOnly) params.playoff_only = true;
   const response = await api.get('/api/teams', { params });
   return response.data;
 };
@@ -364,8 +366,13 @@ export const getPlayerStats = async (playerId) => {
 };
 
 // Statistical leaders from the synced player_stats table (top 10 per category)
-export const getPlayerLeaders = async (season = '2026', limit = 10) => {
-  const response = await api.get('/api/players/leaders', { params: { season, limit } });
+export const getPlayerLeaders = async (season = '2026', limit = 10, playoffOnly = true) => {
+  const response = await api.get('/api/players/leaders', { params: { season, limit, playoff_only: playoffOnly } });
+  return response.data;
+};
+
+export const getPlayoffEligiblePlayers = async (season = '2026') => {
+  const response = await api.get('/api/players/playoff-eligible', { params: { season } });
   return response.data;
 };
 

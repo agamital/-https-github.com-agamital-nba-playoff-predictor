@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Trophy, Lock, CheckCircle, Star, BarChart2, Info } from 'lucide-react';
 import * as api from './services/api';
 import { FUTURES_BASE_POINTS, LEADERS_POINTS, LEADERS_TIERS } from './scoringConstants';
@@ -35,19 +35,28 @@ const LeaderNumberInput = ({ value, onChange, locked, placeholder }) => {
   );
 };
 
-// ── Plain text input for MVP name predictions ─────────────────────────────────
-const MvpTextInput = ({ value, onChange, locked, placeholder }) => (
-  <input
-    type="text"
-    value={value || ''}
-    onChange={e => onChange(e.target.value)}
-    disabled={locked}
-    placeholder={placeholder || 'Player name…'}
-    className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-    autoComplete="off"
-    autoCorrect="off"
-    spellCheck={false}
-  />
+// ── Player name input with datalist autocomplete ───────────────────────────────
+const MvpTextInput = ({ value, onChange, locked, placeholder, playerOptions = [], listId }) => (
+  <div>
+    <input
+      type="text"
+      value={value || ''}
+      onChange={e => onChange(e.target.value)}
+      disabled={locked}
+      placeholder={placeholder || 'Player name…'}
+      list={listId}
+      className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      autoCorrect="off"
+      spellCheck={false}
+    />
+    {listId && playerOptions.length > 0 && (
+      <datalist id={listId}>
+        {playerOptions.map(p => (
+          <option key={p.player_id} value={p.name} />
+        ))}
+      </datalist>
+    )}
+  </div>
 );
 
 const LEADER_CATEGORIES = [
@@ -61,8 +70,8 @@ const LEADER_CATEGORIES = [
 
 
 // oddsField: 'odds_championship' | 'odds_conference' — which odds column to display on each tile
-const TeamGrid = ({ teams, selectedId, onSelect, locked, oddsField }) => (
-  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+const TeamGrid = ({ teams, selectedId, onSelect, locked, oddsField, cols = 5 }) => (
+  <div className={`grid gap-3 ${cols === 5 ? 'grid-cols-4 sm:grid-cols-5' : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5'}`}>
     {teams.map(team => {
       const isSelected = selectedId === team.id;
       const odds = oddsField ? (team[oddsField] ?? 1.0) : null;
@@ -133,6 +142,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
   const [teams, setTeams] = useState([]);
   const [westTeams, setWestTeams] = useState([]);
   const [eastTeams, setEastTeams] = useState([]);
+  const [playoffPlayers, setPlayoffPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [odds, setOdds] = useState({}); // MVP category odds only
   const [saving, setSaving] = useState(false);
@@ -164,11 +174,12 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
     const load = async () => {
       try {
         api.getAdminOdds().then(setOdds).catch(() => {});
-        api.getPlayerLeaders().then(setPlayerLeaders).catch(() => {});
+        api.getPlayerLeaders('2026', 5, true).then(setPlayerLeaders).catch(() => {});
+        api.getPlayoffEligiblePlayers().then(setPlayoffPlayers).catch(() => {});
         const [allTeams, west, east, lockStatus] = await Promise.all([
-          api.getTeams(),
-          api.getTeams('Western'),
-          api.getTeams('Eastern'),
+          api.getTeams(null, true),
+          api.getTeams('Western', true),
+          api.getTeams('Eastern', true),
           api.getFuturesLockStatus(),
         ]);
         setTeams(allTeams);
@@ -275,7 +286,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
   const eastOdds   = eastTeams.find(t => t.id === eastChamp)?.odds_conference  ?? null;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-5xl mx-auto px-4 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-4 mt-2">
         <div className="flex items-center gap-2">
@@ -338,16 +349,17 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
 
         {/* NBA Champion */}
         <Section title="NBA Champion" color="text-yellow-400" icon={<Trophy className="w-5 h-5" />} pts={FUTURES_BASE_POINTS.champion} oddsMult={champOdds}>
-          <TeamGrid teams={teams} selectedId={champion} onSelect={setChampion} locked={locked} oddsField="odds_championship" />
+          <p className="text-[10px] text-slate-600 font-bold mb-2 uppercase tracking-wider">Top 10 per conference · {teams.length} playoff-eligible teams</p>
+          <TeamGrid teams={teams} selectedId={champion} onSelect={setChampion} locked={locked} oddsField="odds_championship" cols={5} />
         </Section>
 
         {/* Conference Champions */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Section title="West Champion" color="text-red-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_champ} oddsMult={westOdds}>
-            <TeamGrid teams={westTeams} selectedId={westChamp} onSelect={setWestChamp} locked={locked} oddsField="odds_conference" />
+            <TeamGrid teams={westTeams} selectedId={westChamp} onSelect={setWestChamp} locked={locked} oddsField="odds_conference" cols={5} />
           </Section>
           <Section title="East Champion" color="text-blue-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_champ} oddsMult={eastOdds}>
-            <TeamGrid teams={eastTeams} selectedId={eastChamp} onSelect={setEastChamp} locked={locked} oddsField="odds_conference" />
+            <TeamGrid teams={eastTeams} selectedId={eastChamp} onSelect={setEastChamp} locked={locked} oddsField="odds_conference" cols={5} />
           </Section>
         </div>
 
@@ -360,15 +372,16 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
 
         {/* Finals MVP */}
         <Section title="Finals MVP" color="text-orange-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.finals_mvp} oddsMult={odds.finals_mvp}>
-          <MvpTextInput value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Type player name…" />
+          <MvpTextInput value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Start typing a player name…" playerOptions={playoffPlayers} listId="finals-mvp-list" />
+          {playoffPlayers.length > 0 && <p className="text-[10px] text-slate-600 mt-1.5 font-bold">{playoffPlayers.length} playoff players available · start typing for suggestions</p>}
         </Section>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Section title="West Finals MVP" color="text-red-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_finals_mvp} oddsMult={odds.west_finals_mvp}>
-            <MvpTextInput value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Type player name…" />
+            <MvpTextInput value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Start typing a player name…" playerOptions={playoffPlayers.filter(p => westTeams.some(t => t.abbreviation === p.team))} listId="west-mvp-list" />
           </Section>
           <Section title="East Finals MVP" color="text-blue-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_finals_mvp} oddsMult={odds.east_finals_mvp}>
-            <MvpTextInput value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Type player name…" />
+            <MvpTextInput value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Start typing a player name…" playerOptions={playoffPlayers.filter(p => eastTeams.some(t => t.abbreviation === p.team))} listId="east-mvp-list" />
           </Section>
         </div>
 
@@ -471,16 +484,20 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                     locked={locked}
                     placeholder={cat.example}
                   />
-                  {/* Regular season reference leaders */}
+                  {/* Regular season reference leaders (playoff teams only) */}
                   {playerLeaders && (playerLeaders[cat.refKey] || []).length > 0 && (
                     <div className="mt-3 pt-3 border-t border-slate-800/60">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-600 mb-1.5">Reg. Season Leaders</p>
-                      <div className="space-y-1">
-                        {(playerLeaders[cat.refKey] || []).slice(0, 3).map((p, i) => (
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-600 mb-1.5">Playoff Teams — Reg. Season Leaders</p>
+                      <div className="space-y-1.5">
+                        {(playerLeaders[cat.refKey] || []).slice(0, 5).map((p, i) => (
                           <div key={p.player_id} className="flex items-center gap-2">
                             <span className="text-[10px] font-black text-slate-600 w-3">{i + 1}</span>
+                            {p.logo_url ? (
+                              <img src={p.logo_url} alt={p.team} className="w-4 h-4 shrink-0" onError={e => e.target.style.display = 'none'} />
+                            ) : (
+                              <span className="text-[9px] font-black text-slate-600 w-4 shrink-0">{p.team}</span>
+                            )}
                             <span className="text-[11px] font-bold text-slate-400 flex-1 truncate">{p.name}</span>
-                            <span className="text-[10px] font-black text-slate-600">{p.team}</span>
                             <span className={`text-[11px] font-black ${cat.color}`}>{p[cat.statField]?.toFixed(1)}</span>
                             <span className="text-[9px] text-slate-600 font-bold">{cat.statLabel}</span>
                           </div>
