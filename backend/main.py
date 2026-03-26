@@ -1354,7 +1354,15 @@ async def google_auth(email: str, name: str = "", avatar_url: str = ""):
     if not email:
         raise HTTPException(400, "Email is required")
 
-    base_username = re.sub(r'[^a-z0-9_]', '', name.lower().replace(" ", "_")) or email.split("@")[0]
+    # Derive a clean base username:
+    # 1. Try the display name — but only if it contains at least one letter
+    #    (rejects pure-numeric Google/Supabase UIDs like "7194")
+    # 2. Fall back to the part of the email address before @
+    _cleaned_name = re.sub(r'[^a-z0-9_]', '', (name or '').lower().replace(' ', '_'))
+    if _cleaned_name and re.search(r'[a-z]', _cleaned_name):
+        base_username = _cleaned_name
+    else:
+        base_username = re.sub(r'[^a-z0-9_]', '', email.split('@')[0].lower()) or 'user'
 
     conn = get_db_conn()
     c = conn.cursor()
@@ -1380,12 +1388,19 @@ async def google_auth(email: str, name: str = "", avatar_url: str = ""):
         return {"user_id": row[0], "username": row[1], "email": row[2], "role": role,
                 "points": row[5], "avatar_url": avatar_url or row[6] or ""}
 
-    # New user — ensure username is unique
+    # New user — ensure username is unique by appending an incrementing suffix
     role = 'admin' if email in _ADMIN_EMAILS else 'user'
     username = base_username
     c.execute("SELECT id FROM users WHERE username = %s", (username,))
     if c.fetchone():
-        username = base_username + "_" + str(int(time.time()))[-4:]
+        suffix = 2
+        while True:
+            candidate = f"{base_username}{suffix}"
+            c.execute("SELECT id FROM users WHERE username = %s", (candidate,))
+            if not c.fetchone():
+                username = candidate
+                break
+            suffix += 1
 
     c.execute(
         "INSERT INTO users (username, email, password, role, avatar_url) VALUES (%s, %s, %s, %s, %s) RETURNING id",
