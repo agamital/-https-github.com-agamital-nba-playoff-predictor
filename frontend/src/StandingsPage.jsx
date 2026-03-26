@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { RefreshCw, Trophy, WifiOff } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
@@ -125,7 +125,7 @@ const StandingsPage = () => {
                     <td className="px-3 py-3 text-center font-black text-white text-sm">{team.wins}</td>
                     <td className="px-3 py-3 text-center font-bold text-slate-400 text-sm">{team.losses}</td>
                     <td className="px-3 py-3 text-center text-slate-300 text-sm">
-                      {(team.win_pct * 100).toFixed(1)}%
+                      {team.win_pct != null ? (team.win_pct * 100).toFixed(1) + '%' : '—'}
                     </td>
                     <td className="px-3 py-3 text-center text-slate-500 text-sm hidden sm:table-cell">
                       {rank === 1 ? '—' : (team.games_back != null ? team.games_back.toFixed(1) : '—')}
