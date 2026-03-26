@@ -2891,6 +2891,114 @@ async def delete_account(user_id: int):
     return {"message": "Account deleted"}
 
 
+# ── Admin: User Management ────────────────────────────────────────────────────
+
+def _verify_admin(c, admin_user_id: int):
+    """Raise 403 if admin_user_id is not an admin. Cursor must be open."""
+    c.execute("SELECT role FROM users WHERE id = %s", (admin_user_id,))
+    row = c.fetchone()
+    if not row or row[0] != 'admin':
+        raise HTTPException(403, "Admin access required")
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(admin_user_id: int):
+    """Return all users with stats. Admin only."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        _verify_admin(c, admin_user_id)
+        c.execute("""
+            SELECT u.id, u.username, u.email, u.role, u.points, u.created_at,
+                   COUNT(DISTINCT p.id)  AS series_preds,
+                   COUNT(DISTINCT pp.id) AS playin_preds
+            FROM users u
+            LEFT JOIN predictions p        ON p.user_id  = u.id
+            LEFT JOIN playin_predictions pp ON pp.user_id = u.id
+            GROUP BY u.id
+            ORDER BY u.points DESC, u.username ASC
+        """)
+        return [
+            {
+                "id":               row[0],
+                "username":         row[1],
+                "email":            row[2],
+                "role":             row[3],
+                "points":           row[4] or 0,
+                "created_at":       row[5].isoformat() if row[5] else None,
+                "prediction_count": (row[6] or 0) + (row[7] or 0),
+            }
+            for row in c.fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+@app.patch("/api/admin/users/{user_id}")
+async def admin_update_user(
+    user_id: int,
+    admin_user_id: int,
+    username: Optional[str] = None,
+    points: Optional[int]   = None,
+):
+    """Edit a user's username and/or points. Admin only."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        _verify_admin(c, admin_user_id)
+        updates, values = [], []
+        if username is not None:
+            updates.append("username = %s")
+            values.append(username.strip())
+        if points is not None:
+            updates.append("points = %s")
+            values.append(points)
+        if not updates:
+            raise HTTPException(400, "Nothing to update")
+        values.append(user_id)
+        c.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = %s RETURNING id", values)
+        if not c.fetchone():
+            raise HTTPException(404, "User not found")
+        conn.commit()
+        return {"message": "User updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(400, str(e))
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: int, admin_user_id: int):
+    """Delete a user and ALL their predictions. Admin only. Cannot self-delete."""
+    if user_id == admin_user_id:
+        raise HTTPException(400, "Cannot delete your own account via the admin panel")
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        _verify_admin(c, admin_user_id)
+        c.execute("SELECT username FROM users WHERE id = %s", (user_id,))
+        row = c.fetchone()
+        if not row:
+            raise HTTPException(404, "User not found")
+        username = row[0]
+        # Cascade — remove all prediction data before removing the user row
+        for tbl in ("predictions", "playin_predictions", "futures_predictions", "leaders_predictions"):
+            c.execute(f"DELETE FROM {tbl} WHERE user_id = %s", (user_id,))
+        c.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        conn.commit()
+        return {"message": f"User '{username}' and all their data deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
 # ── Series lock/unlock ────────────────────────────────────────────────────────
 
 @app.post("/api/admin/series/{series_id}/lock")

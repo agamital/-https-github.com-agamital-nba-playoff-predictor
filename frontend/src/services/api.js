@@ -376,4 +376,23 @@ export const getPlayoffEligiblePlayers = async (season = '2026') => {
   return response.data;
 };
 
+// Admin — User Management
+export const getAdminUsers = async (adminUserId) => {
+  const response = await api.get('/api/admin/users', { params: { admin_user_id: adminUserId } });
+  return response.data;
+};
+
+export const updateAdminUser = async (adminUserId, userId, { username, points } = {}) => {
+  const params = { admin_user_id: adminUserId };
+  if (username !== undefined) params.username = username;
+  if (points   !== undefined) params.points   = points;
+  const response = await api.patch(`/api/admin/users/${userId}`, null, { params });
+  return response.data;
+};
+
+export const deleteAdminUser = async (adminUserId, userId) => {
+  const response = await api.delete(`/api/admin/users/${userId}`, { params: { admin_user_id: adminUserId } });
+  return response.data;
+};
+
 export default api;

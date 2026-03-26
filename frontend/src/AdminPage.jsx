@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp, X, Users, Search, Pencil, Trash2, Save } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className }) => (
@@ -774,6 +774,276 @@ const RegenerateMatchupsCard = ({ onDone }) => {
   );
 };
 
+const UserManagementCard = ({ currentUser, addToast }) => {
+  const [expanded, setExpanded]   = useState(false);
+  const [users, setUsers]         = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [search, setSearch]       = useState('');
+  const [editId, setEditId]       = useState(null);   // user id being edited
+  const [editVals, setEditVals]   = useState({});     // { username, points }
+  const [savingId, setSavingId]   = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null); // { id, username }
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.getAdminUsers(currentUser.user_id);
+      setUsers(data);
+    } catch (e) {
+      addToast('Failed to load users: ' + (e.response?.data?.detail || e.message), 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser.user_id]);
+
+  useEffect(() => {
+    if (expanded) load();
+  }, [expanded]);
+
+  const startEdit = (user) => {
+    setEditId(user.id);
+    setEditVals({ username: user.username, points: String(user.points) });
+  };
+
+  const cancelEdit = () => { setEditId(null); setEditVals({}); };
+
+  const saveEdit = async (userId) => {
+    const u = editVals;
+    const pts = parseInt(u.points, 10);
+    if (!u.username?.trim()) { addToast('Username cannot be empty', 'error'); return; }
+    if (isNaN(pts) || pts < 0) { addToast('Points must be a non-negative integer', 'error'); return; }
+    setSavingId(userId);
+    try {
+      await api.updateAdminUser(currentUser.user_id, userId, {
+        username: u.username.trim(),
+        points:   pts,
+      });
+      addToast('User updated', 'success');
+      setEditId(null);
+      await load();
+    } catch (e) {
+      addToast('Update failed: ' + (e.response?.data?.detail || e.message), 'error');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      const res = await api.deleteAdminUser(currentUser.user_id, deleteTarget.id);
+      addToast(res.message || 'User deleted', 'success');
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      addToast('Delete failed: ' + (e.response?.data?.detail || e.message), 'error');
+      setDeleteTarget(null);
+    }
+  };
+
+  const filtered = users.filter(u =>
+    u.username.toLowerCase().includes(search.toLowerCase()) ||
+    u.email.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const fmt = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  return (
+    <Card className="p-5 mb-4">
+      {/* Header / toggle */}
+      <button onClick={() => setExpanded(e => !e)} className="w-full flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Users className="w-5 h-5 text-violet-400" />
+          <h2 className="text-lg font-black text-white">User Management</h2>
+          {users.length > 0 && (
+            <span className="ml-1 px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-400 text-[10px] font-black">
+              {users.length}
+            </span>
+          )}
+        </div>
+        {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+      </button>
+
+      {expanded && (
+        <div className="mt-4">
+          {/* Search + refresh */}
+          <div className="flex gap-2 mb-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search by username or email…"
+                className="w-full pl-9 pr-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:border-violet-500"
+              />
+            </div>
+            <button
+              onClick={load}
+              disabled={loading}
+              className="px-3 py-2 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-800 disabled:opacity-50 transition-all"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          {loading && !users.length ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-2 border-violet-500 border-t-transparent mx-auto" />
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-800">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-800 bg-slate-900/60">
+                    <th className="text-left px-3 py-2.5">Username</th>
+                    <th className="text-left px-3 py-2.5 hidden sm:table-cell">Email</th>
+                    <th className="text-right px-3 py-2.5">Points</th>
+                    <th className="text-center px-3 py-2.5 hidden md:table-cell">Picks</th>
+                    <th className="text-center px-3 py-2.5 hidden lg:table-cell">Joined</th>
+                    <th className="text-center px-3 py-2.5">Role</th>
+                    <th className="text-right px-3 py-2.5">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="text-center text-slate-600 py-6 text-sm">
+                        {search ? 'No users match your search.' : 'No users found.'}
+                      </td>
+                    </tr>
+                  )}
+                  {filtered.map(user => {
+                    const isEditing = editId === user.id;
+                    const isSelf    = user.id === currentUser.user_id;
+                    return (
+                      <tr key={user.id} className={`transition-colors ${isEditing ? 'bg-violet-500/5' : 'hover:bg-slate-800/30'}`}>
+                        {/* Username */}
+                        <td className="px-3 py-2.5">
+                          {isEditing ? (
+                            <input
+                              value={editVals.username}
+                              onChange={e => setEditVals(p => ({ ...p, username: e.target.value }))}
+                              className="w-full px-2 py-1 bg-slate-800 border border-violet-500/50 rounded text-white text-sm focus:outline-none focus:border-violet-400"
+                            />
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-white">{user.username}</span>
+                              {isSelf && <span className="text-[9px] text-violet-400 font-black bg-violet-500/15 px-1 rounded">you</span>}
+                            </div>
+                          )}
+                        </td>
+                        {/* Email */}
+                        <td className="px-3 py-2.5 text-slate-500 text-xs hidden sm:table-cell truncate max-w-[160px]">
+                          {user.email}
+                        </td>
+                        {/* Points */}
+                        <td className="px-3 py-2.5 text-right">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              min="0"
+                              value={editVals.points}
+                              onChange={e => setEditVals(p => ({ ...p, points: e.target.value }))}
+                              className="w-20 px-2 py-1 bg-slate-800 border border-violet-500/50 rounded text-white text-sm text-right focus:outline-none focus:border-violet-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          ) : (
+                            <span className="font-black text-orange-400 tabular-nums">{user.points.toLocaleString()}</span>
+                          )}
+                        </td>
+                        {/* Picks */}
+                        <td className="px-3 py-2.5 text-center text-slate-500 text-xs hidden md:table-cell">
+                          {user.prediction_count}
+                        </td>
+                        {/* Joined */}
+                        <td className="px-3 py-2.5 text-center text-slate-500 text-xs hidden lg:table-cell">
+                          {fmt(user.created_at)}
+                        </td>
+                        {/* Role */}
+                        <td className="px-3 py-2.5 text-center">
+                          <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                            user.role === 'admin'
+                              ? 'bg-orange-500/20 text-orange-400'
+                              : 'bg-slate-700 text-slate-500'
+                          }`}>
+                            {user.role}
+                          </span>
+                        </td>
+                        {/* Actions */}
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  onClick={() => saveEdit(user.id)}
+                                  disabled={savingId === user.id}
+                                  className="p-1.5 rounded-lg bg-green-500/20 border border-green-500/30 text-green-400 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+                                  title="Save"
+                                >
+                                  <Save className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={cancelEdit}
+                                  className="p-1.5 rounded-lg bg-slate-700 border border-slate-600 text-slate-400 hover:bg-slate-600 transition-colors"
+                                  title="Cancel"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => startEdit(user)}
+                                  className="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:border-violet-500/50 hover:text-violet-400 transition-colors"
+                                  title="Edit"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => !isSelf && setDeleteTarget(user)}
+                                  disabled={isSelf}
+                                  className="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:border-red-500/50 hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                  title={isSelf ? "Can't delete yourself" : "Delete user"}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {filtered.length > 0 && !loading && (
+            <p className="text-[10px] text-slate-600 mt-2 text-right">
+              {filtered.length} of {users.length} users shown
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <ConfirmModal
+          message={`Permanently delete "${deleteTarget.username}"? This removes their account, all series picks, play-in picks, futures, and leaders predictions. This cannot be undone.`}
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+    </Card>
+  );
+};
+
 const AdminPage = ({ currentUser }) => {
   const [series, setSeries] = useState([]);
   const [playin, setPlayin] = useState([]);
@@ -864,6 +1134,7 @@ const AdminPage = ({ currentUser }) => {
         </button>
       </div>
 
+      <UserManagementCard currentUser={currentUser} addToast={addToast} />
       <FuturesLockCard />
       <TeamOddsCard addToast={addToast} />
       <OddsCard />
