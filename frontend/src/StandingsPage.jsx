@@ -49,14 +49,21 @@ const StandingsPage = () => {
     if (!force) { qc.invalidateQueries({ queryKey: ['standings'] }); return; }
     setRefreshing(true);
     try {
-      const fresh = await api.getStandings(true);
-      qc.setQueryData(['standings'], fresh);
-      if (fresh.sync_triggered) {
-        setSyncBanner(true);
-        setTimeout(() => setSyncBanner(false), 5000);
-      }
+      // Step 1: Tell the server to kick off a background NBA API fetch.
+      // The endpoint returns immediately (sync runs in a daemon thread).
+      await api.getStandings(true);
+
+      // Step 2: Wait for the background thread to finish fetching + writing to DB.
+      await new Promise(r => setTimeout(r, 3500));
+
+      // Step 3: Re-fetch fresh data from the server and update the cache.
+      const updated = await api.getStandings(false);
+      qc.setQueryData(['standings'], updated);
+
+      setSyncBanner(true);
+      setTimeout(() => setSyncBanner(false), 5000);
     } catch {
-      // ignore — stale data shown from cache
+      // Network error — stale data is still shown from the cache
     } finally {
       setRefreshing(false);
     }

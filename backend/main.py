@@ -357,7 +357,7 @@ def _fetch_standings_from_api():
     last_err = None
     for attempt in range(1, 4):
         try:
-            print(f"NBA API standings fetch attempt {attempt}/3…")
+            print(f"[Standings] NBA API fetch attempt {attempt}/3…")
             standings_api = leaguestandingsv3.LeagueStandingsV3(
                 season='2025-26',
                 season_type_all_star='Regular Season',
@@ -365,12 +365,29 @@ def _fetch_standings_from_api():
                 timeout=_NBA_TIMEOUT,
             )
             raw = standings_api.get_dict()
+            print(f"[Standings] NBA API fetch succeeded on attempt {attempt}")
             break  # success
         except Exception as e:
             last_err = e
-            print(f"NBA API attempt {attempt} failed: {e}")
+            # Try to surface HTTP status + body to diagnose rate-limiting / IP blocks
+            status_code = None
+            resp_text   = None
+            try:
+                # requests.exceptions.HTTPError carries a response object
+                resp = getattr(e, 'response', None)
+                if resp is not None:
+                    status_code = resp.status_code
+                    resp_text   = resp.text[:400]   # first 400 chars to avoid log spam
+            except Exception:
+                pass
+            if status_code:
+                print(f"[Standings] Attempt {attempt} failed — HTTP {status_code}: {resp_text}")
+            else:
+                print(f"[Standings] Attempt {attempt} failed — {type(e).__name__}: {e}")
             if attempt < 3:
-                time.sleep(2 ** attempt)  # 2s, 4s
+                backoff = 2 ** attempt  # 2s, 4s
+                print(f"[Standings] Retrying in {backoff}s…")
+                time.sleep(backoff)
     else:
         raise last_err  # all 3 attempts failed
 

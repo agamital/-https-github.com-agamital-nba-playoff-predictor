@@ -1,16 +1,26 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { QueryClientProvider } from '@tanstack/react-query'
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import App from './App.jsx'
 import './index.css'
 import OneSignal from 'react-onesignal';
-import queryClient from './lib/queryClient.js';
+import queryClient, { localStoragePersister } from './lib/queryClient.js';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{
+        persister: localStoragePersister,
+        maxAge: 24 * 60 * 60 * 1000,    // hydrate cached data up to 24 h old
+        dehydrateOptions: {
+          // Only persist successful queries — never cache errors or loading state
+          shouldDehydrateQuery: (query) => query.state.status === 'success',
+        },
+      }}
+    >
       <App />
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   </React.StrictMode>,
 )
 
