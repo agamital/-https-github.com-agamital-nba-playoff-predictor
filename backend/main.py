@@ -31,6 +31,10 @@ _STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 21)
 _ONESIGNAL_APP_ID  = os.getenv("ONESIGNAL_APP_ID",  "c69b4c3e-79d1-48a4-8815-3ceabc1eae70")
 _ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY",  "")
 
+# Resend email credentials
+_RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+_RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Picks <noreply@nba-playoffs-2026.vercel.app>")
+
 # APScheduler instance — created in startup(), referenced in shutdown()
 _scheduler = None
 
@@ -448,17 +452,63 @@ def _send_onesignal_notification(title: str, body: str, url: str = "https://nba-
         return False
 
 
+def _send_email_reminders(user_rows: list) -> None:
+    """
+    Send missing-picks email reminders via Resend to a list of (user_id, email) pairs.
+    Silently no-ops if RESEND_API_KEY is not configured.
+    """
+    if not _RESEND_API_KEY or not user_rows:
+        return
+    try:
+        import resend as _resend
+        _resend.api_key = _RESEND_API_KEY
+        emails_sent = 0
+        for _uid, email in user_rows:
+            if not email:
+                continue
+            try:
+                _resend.Emails.send({
+                    "from":    _RESEND_FROM,
+                    "to":      [email],
+                    "subject": "🏀 Don't forget your NBA playoff picks!",
+                    "html": (
+                        "<div style='font-family:sans-serif;max-width:480px;margin:auto;padding:24px;'>"
+                        "<h2 style='color:#f97316;margin-bottom:8px;'>You have open picks!</h2>"
+                        "<p style='color:#334155;'>There are active NBA playoff series waiting for your predictions.</p>"
+                        "<p style='color:#334155;'>Lock them in before it's too late — every correct pick earns you points!</p>"
+                        "<a href='https://nba-playoffs-2026.vercel.app' "
+                        "   style='display:inline-block;margin-top:16px;padding:12px 24px;"
+                        "          background:#f97316;color:#fff;border-radius:8px;"
+                        "          text-decoration:none;font-weight:bold;'>Make My Picks →</a>"
+                        "<p style='color:#94a3b8;font-size:12px;margin-top:24px;'>"
+                        "You're receiving this because you have an account on NBA Playoff Predictor 2026.</p>"
+                        "</div>"
+                    ),
+                })
+                emails_sent += 1
+            except Exception as e:
+                print(f"[Email] Failed to send to {email}: {e}")
+        print(f"[Email] Resend reminders sent: {emails_sent}/{len(user_rows)}")
+    except ImportError:
+        print("[Email] resend package not installed — skipping email reminders")
+    except Exception as e:
+        print(f"[Email] Resend error: {e}")
+
+
 def _send_missing_picks_alert() -> None:
     """
-    Daily cron (16:00 UTC = 18:00 Israel): find users who have at least one
-    active/unlocked series with no prediction, then send them a targeted push
-    via OneSignal external_id aliases.  Silently skips if no open series exist
-    or if OneSignal credentials are absent.
+    Twice-daily cron (06:00 UTC = 09:00 IDT, 18:00 UTC = 21:00 IDT):
+    find users who have at least one active/unlocked series with no prediction,
+    then send them a targeted OneSignal push AND a Resend email reminder.
+    Runs until _STANDINGS_SYNC_CUTOFF; skips silently if no credentials are set.
     """
     if datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF:
         return
-    if not _ONESIGNAL_API_KEY:
-        print("[Alert] ONESIGNAL_API_KEY not set — skipping missing-picks alert")
+
+    has_push  = bool(_ONESIGNAL_API_KEY)
+    has_email = bool(_RESEND_API_KEY)
+    if not has_push and not has_email:
+        print("[Alert] Neither ONESIGNAL_API_KEY nor RESEND_API_KEY set — skipping alert")
         return
 
     conn = None
@@ -468,14 +518,13 @@ def _send_missing_picks_alert() -> None:
 
         # Are there any active (unlocked) series right now?
         c.execute("SELECT COUNT(*) FROM series WHERE season = '2026' AND status = 'active'")
-        active_count = c.fetchone()[0]
-        if not active_count:
+        if not c.fetchone()[0]:
             print("[Alert] No active series — skipping missing-picks alert")
             return
 
-        # Users who have NOT predicted at least one active series
+        # Users (id + email) who are missing at least one active-series prediction
         c.execute("""
-            SELECT DISTINCT u.id::text
+            SELECT DISTINCT u.id::text, u.email
             FROM users u
             WHERE EXISTS (
                 SELECT 1 FROM series s
@@ -486,37 +535,47 @@ def _send_missing_picks_alert() -> None:
                 )
             )
         """)
-        user_ids = [r[0] for r in c.fetchall()]
+        rows = c.fetchall()          # list of (str_id, email)
         conn.close()
         conn = None
 
-        if not user_ids:
+        if not rows:
             print("[Alert] All users have completed their picks — no alert needed")
             return
 
-        print(f"[Alert] Sending missing-picks push to {len(user_ids)} user(s)")
+        user_ids   = [r[0] for r in rows]
+        print(f"[Alert] Notifying {len(rows)} user(s) with missing picks")
 
-        import urllib.request, json as _json
-        payload = _json.dumps({
-            "app_id":            _ONESIGNAL_APP_ID,
-            "include_aliases":   {"external_id": user_ids},
-            "target_channel":    "push",
-            "headings":          {"en": "🏀 Don't forget your picks!"},
-            "contents":          {"en": "You have open NBA playoff series waiting for your predictions. Lock them in before it's too late!"},
-            "url":               "https://nba-playoffs-2026.vercel.app",
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            "https://onesignal.com/api/v1/notifications",
-            data=payload,
-            headers={
-                "Content-Type":  "application/json; charset=utf-8",
-                "Authorization": f"Key {_ONESIGNAL_API_KEY}",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = _json.loads(resp.read())
-            print(f"[Alert] Missing-picks push sent — recipients: {result.get('recipients', '?')}")
+        # ── OneSignal push ────────────────────────────────────────────────
+        if has_push:
+            import urllib.request, json as _json
+            payload = _json.dumps({
+                "app_id":          _ONESIGNAL_APP_ID,
+                "include_aliases": {"external_id": user_ids},
+                "target_channel":  "push",
+                "headings":        {"en": "🏀 Don't forget your picks!"},
+                "contents":        {"en": "You have open NBA playoff series waiting. Lock them in before it's too late!"},
+                "url":             "https://nba-playoffs-2026.vercel.app",
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                "https://onesignal.com/api/v1/notifications",
+                data=payload,
+                headers={
+                    "Content-Type":  "application/json; charset=utf-8",
+                    "Authorization": f"Key {_ONESIGNAL_API_KEY}",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    result = _json.loads(resp.read())
+                    print(f"[Alert] Push sent — recipients: {result.get('recipients', '?')}")
+            except Exception as e:
+                print(f"[Alert] OneSignal push error: {e}")
+
+        # ── Resend email ──────────────────────────────────────────────────
+        if has_email:
+            threading.Thread(target=_send_email_reminders, args=(rows,), daemon=True).start()
 
     except Exception as e:
         print(f"[Alert] Missing-picks alert error: {e}")
