@@ -1429,6 +1429,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
           <>
             <div className="fixed inset-0 bg-black/65 z-[998]" onClick={() => setOpen(false)} />
             <div
+              ref={panelRef}
               className="fixed bottom-0 left-0 right-0 z-[999] flex flex-col bg-slate-900 border-t border-slate-700 rounded-t-2xl shadow-2xl pb-safe"
               style={{ maxHeight: '84vh' }}
             >
@@ -1451,7 +1452,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div ref={panelRef} className="overflow-y-auto overscroll-contain flex-1">
+              <div className="overflow-y-auto overscroll-contain flex-1">
                 {!summary ? (
                   <div className="px-4 py-4 space-y-3">
                     {[1, 2, 3].map(i => (
@@ -1521,7 +1522,8 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
           // ── Desktop: anchored fixed panel ──────────────────────────────
           popPos && (
             <>
-              <div className="fixed inset-0 z-[998]" onClick={() => setOpen(false)} />
+              {/* pointer-events-none: document mousedown handles outside-close; no onClick race */}
+              <div className="fixed inset-0 z-[998] pointer-events-none" />
               <div
                 className="fixed z-[999]"
                 style={{ top: popPos.top, left: popPos.left, position: 'fixed' }}
