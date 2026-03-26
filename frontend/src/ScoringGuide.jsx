@@ -1,277 +1,302 @@
 import React from 'react';
-import { Trophy, Star, BarChart2, Zap, Info, CheckCircle } from 'lucide-react';
+import { Trophy, Star, BarChart2, Zap, Info } from 'lucide-react';
 import {
   BASE_WINNER_PTS, BASE_GAMES_PTS, CLOSE_CALL_BONUS,
   PLAYIN_PTS, PLAYIN_UNDERDOG_BONUS,
-  ROUND_MULTIPLIERS, FUTURES_BASE_POINTS, LEADERS_POINTS, LEADERS_TIERS,
+  FUTURES_BASE_POINTS, LEADERS_TIERS,
 } from './scoringConstants';
 
+// ── Shared primitives ──────────────────────────────────────────────────────────
+
 const Card = ({ children, className = '' }) => (
-  <div className={`bg-slate-900/70 border border-slate-800 rounded-2xl p-5 ${className}`}>
+  <div className={`bg-slate-900/70 border border-slate-800 rounded-2xl ${className}`}>
     {children}
   </div>
 );
 
-const SectionHeader = ({ icon: Icon, title, color, badge }) => (
-  <div className={`flex items-center gap-2.5 mb-4 ${color}`}>
-    <Icon className="w-5 h-5 shrink-0" />
-    <h2 className="text-base font-black uppercase tracking-widest flex-1">{title}</h2>
-    {badge && <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-400">{badge}</span>}
-  </div>
-);
-
-const Badge = ({ children, color = 'bg-orange-500/20 text-orange-400 border-orange-500/30' }) => (
-  <span className={`inline-block px-2 py-0.5 rounded-full border text-[10px] font-black uppercase tracking-wider ${color}`}>
-    {children}
+// Weight badge — top-right corner of every card
+const WeightBadge = ({ label }) => (
+  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-500 tabular-nums">
+    {label}
   </span>
 );
 
+// Inline status pill — icons only as per spec
+const TierPill = ({ icon, label, pts, variant }) => {
+  const styles = {
+    exact: 'bg-green-500/10 border-green-500/25 text-green-300',
+    close: 'bg-yellow-500/10 border-yellow-500/25 text-yellow-300',
+    miss:  'bg-red-500/5  border-red-500/15   text-red-400',
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] font-bold ${styles[variant]}`}>
+      <span>{icon}</span>
+      <span>{label}</span>
+      {pts != null && <span className="font-black">{pts}</span>}
+    </span>
+  );
+};
+
+// ── Pre-computed table rows ────────────────────────────────────────────────────
+
 const ROUND_ROWS = [
-  { round: 'First Round',           mult: 1.0, winner: Math.floor(BASE_WINNER_PTS * 1.0), games: Math.floor(BASE_GAMES_PTS * 1.0), close: Math.floor(CLOSE_CALL_BONUS * 1.0), total: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 1.0) },
-  { round: 'Conference Semifinals', mult: 1.5, winner: Math.floor(BASE_WINNER_PTS * 1.5), games: Math.floor(BASE_GAMES_PTS * 1.5), close: Math.floor(CLOSE_CALL_BONUS * 1.5), total: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 1.5) },
-  { round: 'Conference Finals',     mult: 2.0, winner: Math.floor(BASE_WINNER_PTS * 2.0), games: Math.floor(BASE_GAMES_PTS * 2.0), close: Math.floor(CLOSE_CALL_BONUS * 2.0), total: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 2.0) },
-  { round: 'NBA Finals',            mult: 3.0, winner: Math.floor(BASE_WINNER_PTS * 3.0), games: Math.floor(BASE_GAMES_PTS * 3.0), close: Math.floor(CLOSE_CALL_BONUS * 3.0), total: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 3.0) },
-];
+  { label: 'First Round',           abbr: 'R1',     mult: 1.0 },
+  { label: 'Conference Semifinals', abbr: 'Semis',  mult: 1.5 },
+  { label: 'Conference Finals',     abbr: 'CF',     mult: 2.0 },
+  { label: 'NBA Finals',            abbr: 'Finals', mult: 3.0 },
+].map(r => ({
+  ...r,
+  winner: Math.floor(BASE_WINNER_PTS  * r.mult),
+  exact:  Math.floor(BASE_GAMES_PTS   * r.mult),
+  close:  Math.floor(CLOSE_CALL_BONUS * r.mult),
+}));
 
 const R1_UNDERDOG_ROWS = [
-  { matchup: '1 vs 8', key: '1-8', mult: 2.5, winnerPts: Math.floor(BASE_WINNER_PTS * 2.5), gamesPts: Math.floor(BASE_GAMES_PTS * 2.5), totalPts: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 2.5) },
-  { matchup: '2 vs 7', key: '2-7', mult: 2.0, winnerPts: Math.floor(BASE_WINNER_PTS * 2.0), gamesPts: Math.floor(BASE_GAMES_PTS * 2.0), totalPts: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 2.0) },
-  { matchup: '3 vs 6', key: '3-6', mult: 1.5, winnerPts: Math.floor(BASE_WINNER_PTS * 1.5), gamesPts: Math.floor(BASE_GAMES_PTS * 1.5), totalPts: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 1.5) },
-  { matchup: '4 vs 5', key: '4-5', mult: 1.0, winnerPts: Math.floor(BASE_WINNER_PTS * 1.0), gamesPts: Math.floor(BASE_GAMES_PTS * 1.0), totalPts: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 1.0) },
-];
+  { matchup: '1 vs 8', key: '1-8', udMult: 2.5 },
+  { matchup: '2 vs 7', key: '2-7', udMult: 2.0 },
+  { matchup: '3 vs 6', key: '3-6', udMult: 1.5 },
+  { matchup: '4 vs 5', key: '4-5', udMult: 1.0 },
+].map(r => ({
+  ...r,
+  winner: Math.floor(BASE_WINNER_PTS * r.udMult),
+  total:  Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * r.udMult),
+}));
 
 const LEADER_ROWS = [
-  { label: 'Most Total Points',    key: 'scorer',   color: 'text-yellow-400', exactOnly: false },
-  { label: 'Most Total Assists',   key: 'assists',  color: 'text-blue-400',   exactOnly: false },
-  { label: 'Most Total Rebounds',  key: 'rebounds', color: 'text-green-400',  exactOnly: false },
-  { label: 'Most 3-Pointers Made', key: 'threes',   color: 'text-purple-400', exactOnly: false },
-  { label: 'Most Total Steals',    key: 'steals',   color: 'text-red-400',    exactOnly: true  },
-  { label: 'Most Total Blocks',    key: 'blocks',   color: 'text-orange-400', exactOnly: true  },
+  { label: 'Most Points',      key: 'scorer',   color: 'text-yellow-400' },
+  { label: 'Most Assists',     key: 'assists',  color: 'text-blue-400'   },
+  { label: 'Most Rebounds',    key: 'rebounds', color: 'text-green-400'  },
+  { label: 'Most 3PM',         key: 'threes',   color: 'text-purple-400' },
+  { label: 'Most Steals',      key: 'steals',   color: 'text-red-400'    },
+  { label: 'Most Blocks',      key: 'blocks',   color: 'text-orange-400' },
 ];
+
+// ── Component ──────────────────────────────────────────────────────────────────
 
 export default function ScoringGuide() {
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
-      {/* Page title */}
-      <div className="text-center mb-2">
+    <div className="max-w-2xl mx-auto px-4 py-8 space-y-8">
+
+      {/* Page header */}
+      <div className="text-center">
         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/20 border border-orange-500/30 mb-4">
           <Info className="w-3.5 h-3.5 text-orange-400" />
           <span className="text-xs font-black text-orange-400 uppercase tracking-wider">Scoring System</span>
         </div>
         <h1 className="text-3xl font-black text-white">How Scoring Works</h1>
-        <p className="text-slate-400 text-sm mt-2">Earn points by correctly predicting winners, series length, and more.</p>
+        <p className="text-slate-500 text-sm mt-2">Predict winners, series length, stats &amp; futures. More risk = more reward.</p>
       </div>
 
-      {/* ── Play-In ── */}
-      <Card>
-        <SectionHeader icon={Zap} title="Play-In Tournament" color="text-cyan-400" badge="3%" />
-        <div className="space-y-2">
-          <div className="flex items-center justify-between bg-cyan-500/10 border border-cyan-500/20 rounded-xl px-4 py-3">
-            <span className="text-slate-300 text-sm font-bold">Correct winner prediction</span>
-            <span className="text-2xl font-black text-cyan-400">+{PLAYIN_PTS} pts</span>
-          </div>
-          <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
-            <div>
-              <span className="text-slate-300 text-sm font-bold">Underdog bonus</span>
-              <p className="text-slate-500 text-[11px] mt-0.5">When the higher-seeded team wins</p>
-            </div>
-            <span className="text-2xl font-black text-amber-400">+{PLAYIN_UNDERDOG_BONUS} pts</span>
-          </div>
+      {/* ══ PRIMARY — Playoff Series (50%) ════════════════════════════════════ */}
+      <Card className="p-6 border-orange-500/20 bg-gradient-to-b from-orange-500/5 to-slate-900/70">
+        {/* Header */}
+        <div className="flex items-center gap-2.5 mb-5">
+          <Trophy className="w-6 h-6 text-orange-400 shrink-0" />
+          <h2 className="text-lg font-black text-orange-400 uppercase tracking-widest flex-1">Playoff Series</h2>
+          <WeightBadge label="50%" />
         </div>
-        <p className="text-slate-500 text-xs mt-3">Max {PLAYIN_PTS + PLAYIN_UNDERDOG_BONUS} pts per game. No games prediction needed.</p>
-      </Card>
 
-      {/* ── Playoff Series ── */}
-      <Card>
-        <SectionHeader icon={Trophy} title="Playoff Series" color="text-orange-400" badge="50%" />
+        {/* Formula callout */}
+        <div className="flex flex-wrap items-center gap-2 mb-5 text-sm font-black">
+          <span className="px-3 py-1.5 rounded-lg bg-orange-500/20 border border-orange-500/30 text-orange-300">
+            Winner +{BASE_WINNER_PTS}
+          </span>
+          <span className="text-slate-600">→</span>
+          <span className="px-3 py-1.5 rounded-lg bg-blue-500/15 border border-blue-500/25 text-blue-300">
+            Exact Games +{BASE_GAMES_PTS}
+          </span>
+          <span className="text-slate-600">or</span>
+          <span className="px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-300">
+            🤏 Close +{CLOSE_CALL_BONUS}
+          </span>
+        </div>
 
-        {/* Base points by round */}
-        <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-3">Points by round (favourite pick)</p>
-        <div className="overflow-x-auto">
+        {/* Round table — no Max column */}
+        <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest mb-2">Points by round</p>
+        <div className="overflow-x-auto rounded-xl border border-slate-800 mb-5">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-                <th className="text-left pb-2">Round</th>
-                <th className="text-center pb-2">Mult</th>
-                <th className="text-right pb-2">Winner</th>
-                <th className="text-right pb-2">Close Call</th>
-                <th className="text-right pb-2">+ Exact</th>
-                <th className="text-right pb-2">Max</th>
+              <tr className="text-[10px] text-slate-600 font-black uppercase tracking-wider border-b border-slate-800">
+                <th className="text-left px-3 py-2">Round</th>
+                <th className="text-center px-3 py-2">Mult</th>
+                <th className="text-center px-3 py-2 text-orange-500/80">Winner</th>
+                <th className="text-center px-3 py-2 text-blue-500/80">+ Exact</th>
+                <th className="text-center px-3 py-2 text-yellow-500/70">🤏 Close</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
-              {ROUND_ROWS.map(r => (
-                <tr key={r.round} className="text-white">
-                  <td className="py-2.5 text-xs font-bold text-slate-300">{r.round}</td>
-                  <td className="py-2.5 text-center">
-                    <Badge color="bg-slate-800 text-slate-400 border-slate-700">{r.mult}x</Badge>
+            <tbody className="divide-y divide-slate-800/60">
+              {ROUND_ROWS.map((r, i) => (
+                <tr key={r.label} className={i === 3 ? 'bg-orange-500/5' : ''}>
+                  <td className="px-3 py-2.5 text-xs font-bold text-slate-300">{r.label}</td>
+                  <td className="px-3 py-2.5 text-center">
+                    <span className="text-[11px] font-black text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+                      {r.mult}×
+                    </span>
                   </td>
-                  <td className="py-2.5 text-right font-black text-orange-400">+{r.winner}</td>
-                  <td className="py-2.5 text-right font-black text-yellow-500">+{r.close}</td>
-                  <td className="py-2.5 text-right font-black text-blue-400">+{r.games}</td>
-                  <td className="py-2.5 text-right font-black text-green-400">{r.total}</td>
+                  <td className="px-3 py-2.5 text-center font-black text-orange-400">+{r.winner}</td>
+                  <td className="px-3 py-2.5 text-center font-black text-blue-400">+{r.exact}</td>
+                  <td className="px-3 py-2.5 text-center font-black text-yellow-500">+{r.close}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div className="mt-2 space-y-1">
-          <p className="text-slate-600 text-[11px]">Exact games bonus: winner + correct # of games (4/5/6/7).</p>
-          <p className="text-slate-600 text-[11px]">Close call bonus: winner correct but games off by 1.</p>
-        </div>
 
-        {/* R1 underdog multipliers */}
-        <div className="mt-5">
-          <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-3">First Round underdog multipliers</p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-                  <th className="text-left pb-2">Matchup</th>
-                  <th className="text-center pb-2">Underdog mult</th>
-                  <th className="text-right pb-2">Winner pts</th>
-                  <th className="text-right pb-2">Max pts</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {R1_UNDERDOG_ROWS.map(r => (
-                  <tr key={r.key} className="text-white">
-                    <td className="py-2.5 text-xs font-bold text-slate-300">Seed {r.matchup}</td>
-                    <td className="py-2.5 text-center">
-                      <Badge color={r.mult > 1 ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'}>
-                        {r.mult}x
-                      </Badge>
-                    </td>
-                    <td className="py-2.5 text-right font-black text-orange-400">+{r.winnerPts}</td>
-                    <td className="py-2.5 text-right font-black text-green-400">{r.totalPts}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="text-slate-500 text-[11px] mt-1">Underdog = higher seed number. Favourite picks always get x1.0.</p>
-        </div>
-
-        {/* Late rounds underdog */}
-        <div className="mt-4 flex items-center gap-3 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
-          <Badge color="bg-amber-500/20 text-amber-400 border-amber-500/30">1.5x</Badge>
-          <span className="text-slate-300 text-sm flex-1">
-            <strong>Semis / Conf Finals / Finals underdog pick</strong> — any correct underdog = 1.5x multiplier
-          </span>
-        </div>
-
-        {/* Worked examples */}
-        <div className="mt-5 space-y-2">
-          <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-3">Examples</p>
-          {[
-            { label: 'R1 1v8 — pick underdog, winner only',          pts: 125, note: '50 × 1.0 × 2.5',        color: 'text-orange-400' },
-            { label: 'R1 1v8 — pick underdog, winner + exact games', pts: 250, note: '100 × 1.0 × 2.5',       color: 'text-green-400'  },
-            { label: 'Conf Finals — favourite, winner + close call',  pts: 130, note: '(50+15) × 2.0 × 1.0',  color: 'text-yellow-400' },
-            { label: 'Conf Finals — underdog, winner + exact games',  pts: 300, note: '100 × 2.0 × 1.5',       color: 'text-green-400'  },
-            { label: 'NBA Finals — favourite, winner + exact games',  pts: 300, note: '100 × 3.0 × 1.0',       color: 'text-green-400'  },
-          ].map(ex => (
-            <div key={ex.label} className="flex items-center justify-between gap-3 bg-slate-800/50 rounded-xl px-3 py-2.5">
-              <span className="text-xs text-slate-400 flex-1">{ex.label}</span>
-              <span className="text-xs text-slate-600 font-bold shrink-0 hidden sm:block">{ex.note}</span>
-              <span className={`text-sm font-black shrink-0 ${ex.color}`}>+{ex.pts} pts</span>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* ── Futures ── */}
-      <Card>
-        <SectionHeader icon={Star} title="Futures Predictions" color="text-yellow-400" badge="22%" />
-        <p className="text-slate-500 text-xs mb-4">Base points shown below. Admin may apply an odds multiplier — final pts = base × multiplier.</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {[
-            { label: 'NBA Champion',    pts: FUTURES_BASE_POINTS.champion,       color: 'text-yellow-400', border: 'border-yellow-500/30', bg: 'bg-yellow-500/10' },
-            { label: 'West Champion',   pts: FUTURES_BASE_POINTS.west_champ,     color: 'text-red-400',    border: 'border-red-500/30',    bg: 'bg-red-500/10'    },
-            { label: 'East Champion',   pts: FUTURES_BASE_POINTS.east_champ,     color: 'text-blue-400',   border: 'border-blue-500/30',   bg: 'bg-blue-500/10'   },
-            { label: 'Finals MVP',      pts: FUTURES_BASE_POINTS.finals_mvp,     color: 'text-orange-400', border: 'border-orange-500/30', bg: 'bg-orange-500/10' },
-            { label: 'West Finals MVP', pts: FUTURES_BASE_POINTS.west_finals_mvp,color: 'text-red-400',    border: 'border-red-500/30',    bg: 'bg-red-500/10'    },
-            { label: 'East Finals MVP', pts: FUTURES_BASE_POINTS.east_finals_mvp,color: 'text-blue-400',   border: 'border-blue-500/30',   bg: 'bg-blue-500/10'   },
-          ].map(f => (
-            <div key={f.label} className={`rounded-xl border ${f.border} ${f.bg} p-3 text-center`}>
-              <div className={`text-2xl font-black ${f.color}`}>{f.pts}</div>
-              <div className="text-[11px] text-slate-400 font-bold mt-0.5">{f.label}</div>
-              <div className="text-[10px] text-slate-600 mt-0.5">base pts</div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 flex items-center gap-2 text-xs text-slate-500 bg-slate-800/40 rounded-xl px-3 py-2">
-          <Info className="w-3.5 h-3.5 shrink-0 text-slate-600" />
-          Picks lock before the playoffs begin and cannot be changed.
-        </div>
-      </Card>
-
-      {/* ── Playoff Highs / Leaders ── */}
-      <Card>
-        <SectionHeader icon={BarChart2} title="Playoff Leaders — Elite Scoring" color="text-cyan-400" badge="25%" />
-        <p className="text-slate-500 text-xs mb-1">
-          Predict the <strong className="text-slate-300">highest total stat value</strong> across the entire playoffs.
-          Closer guesses earn partial points — you don't need to be perfect.
+        {/* R1 Underdog 🛡️ */}
+        <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest mb-2">
+          🛡️ First Round underdog bonus
         </p>
-        <div className="flex gap-4 mb-4 mt-2">
-          {[
-            { icon: '🎯', label: 'Bullseye', sub: 'Exact match — full pts', cls: 'border-green-500/30 bg-green-500/5 text-green-400' },
-            { icon: '✅', label: 'Close',    sub: 'Near miss — partial pts', cls: 'border-yellow-500/30 bg-yellow-500/5 text-yellow-400' },
-            { icon: '❌', label: 'Miss',     sub: 'Too far — 0 pts',         cls: 'border-red-500/20 bg-red-500/5 text-red-400' },
-          ].map(b => (
-            <div key={b.label} className={`flex-1 border rounded-xl px-2.5 py-2 text-center ${b.cls}`}>
-              <div className="text-base mb-0.5">{b.icon}</div>
-              <div className="text-[11px] font-black">{b.label}</div>
-              <div className="text-[9px] text-slate-500 mt-0.5">{b.sub}</div>
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          {R1_UNDERDOG_ROWS.map(r => (
+            <div key={r.key}
+              className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-bold ${
+                r.udMult > 1
+                  ? 'border-amber-500/25 bg-amber-500/10 text-amber-300'
+                  : 'border-slate-700/50 bg-slate-800/40 text-slate-500'
+              }`}>
+              <span>Seed {r.matchup}</span>
+              <span className="font-black">{r.udMult > 1 ? `🛡️ ×${r.udMult}` : '×1.0'}</span>
             </div>
           ))}
         </div>
+        <p className="text-[11px] text-slate-600 mb-5">
+          Semis / CF / Finals underdog: flat <strong className="text-slate-400">×1.5</strong> on all points.
+        </p>
 
-        <div className="space-y-3">
+        {/* Examples */}
+        <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest mb-2">Examples</p>
+        <div className="space-y-1.5">
+          {[
+            { label: 'R1 1v8 — 🛡️ underdog, winner only',           pts: 125,  color: 'text-orange-400' },
+            { label: 'R1 1v8 — 🛡️ underdog, winner + exact games',  pts: 250,  color: 'text-green-400'  },
+            { label: 'Conf Finals — favourite, winner + 🤏 close call', pts: 130, color: 'text-yellow-400' },
+            { label: 'Conf Finals — 🛡️ underdog, winner + exact games', pts: 300, color: 'text-green-400'  },
+            { label: 'NBA Finals — favourite, winner + exact games',  pts: 300,  color: 'text-green-400'  },
+          ].map(ex => (
+            <div key={ex.label} className="flex items-center justify-between gap-2 bg-slate-800/50 rounded-lg px-3 py-2">
+              <span className="text-xs text-slate-400 flex-1">{ex.label}</span>
+              <span className={`text-sm font-black shrink-0 ${ex.color}`}>+{ex.pts}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* ══ SECONDARY — Playoff Leaders (25%) ════════════════════════════════ */}
+      <Card className="p-5">
+        <div className="flex items-center gap-2.5 mb-4">
+          <BarChart2 className="w-5 h-5 text-cyan-400 shrink-0" />
+          <h2 className="text-base font-black text-cyan-400 uppercase tracking-widest flex-1">Playoff Leaders</h2>
+          <WeightBadge label="25%" />
+        </div>
+
+        <p className="text-slate-500 text-xs mb-4">
+          Predict the highest total stat value across the entire playoffs.
+          Closer = more points. <strong className="text-slate-400">You don't need to be exact.</strong>
+        </p>
+
+        {/* Legend — icons only for status */}
+        <div className="flex gap-2 mb-5">
+          <TierPill icon="🎯" label="Exact" variant="exact" />
+          <TierPill icon="🤏" label="Close" variant="close" />
+          <TierPill icon="❌" label="Miss" variant="miss" />
+        </div>
+
+        {/* Stat rows — compact */}
+        <div className="space-y-2">
           {LEADER_ROWS.map(l => {
             const tiers = LEADERS_TIERS[l.key] || [];
             return (
-              <div key={l.key} className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+              <div key={l.key} className="bg-slate-800/40 border border-slate-700/30 rounded-xl px-3 py-2.5">
                 <div className="flex items-center justify-between mb-2">
                   <span className={`text-xs font-black ${l.color}`}>{l.label}</span>
-                  {l.exactOnly && (
-                    <Badge color="bg-slate-700 text-slate-400 border-slate-600">exact only</Badge>
-                  )}
+                  <span className="text-[10px] text-slate-600 font-bold">base pts</span>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-1.5">
                   {tiers.map(([maxDelta, pts], i) => {
                     const prevDelta = i === 0 ? -1 : tiers[i - 1][0];
-                    const isExact = maxDelta === 0;
-                    const rangeLabel = isExact ? 'Exact' : prevDelta === 0 ? `Off 1${maxDelta > 1 ? `–${maxDelta}` : ''}` : `Off ${prevDelta + 1}–${maxDelta}`;
-                    const icon = isExact ? '🎯' : '✅';
-                    const pill = isExact ? 'bg-green-500/15 border-green-500/30 text-green-300' : 'bg-yellow-500/10 border-yellow-500/25 text-yellow-300';
+                    const isExact   = maxDelta === 0;
+                    const rangeLabel = isExact
+                      ? '🎯'
+                      : (prevDelta === 0
+                          ? `🤏 ±${maxDelta}`
+                          : `🤏 ±${prevDelta + 1}–${maxDelta}`);
                     return (
-                      <div key={maxDelta} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold ${pill}`}>
-                        <span>{icon}</span>
-                        <span>{rangeLabel}</span>
-                        <span className="font-black">= {pts} pts</span>
-                      </div>
+                      <span key={maxDelta}
+                        className={`px-2 py-0.5 rounded border text-[11px] font-black tabular-nums ${
+                          isExact
+                            ? 'bg-green-500/10 border-green-500/25 text-green-300'
+                            : 'bg-yellow-500/10 border-yellow-500/20 text-yellow-300'
+                        }`}>
+                        {rangeLabel} = {pts}
+                      </span>
                     );
                   })}
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-red-500/20 bg-red-500/5 text-red-400 text-[11px] font-bold">
-                    <span>❌</span>
-                    <span>Further = 0 pts</span>
-                  </div>
+                  <span className="px-2 py-0.5 rounded border text-[11px] font-black bg-slate-800 border-slate-700 text-slate-600">
+                    ❌ = 0
+                  </span>
                 </div>
               </div>
             );
           })}
         </div>
+      </Card>
 
-        <div className="mt-3 flex items-center gap-2 text-xs text-slate-500 bg-slate-800/40 rounded-xl px-3 py-2">
-          <CheckCircle className="w-3.5 h-3.5 shrink-0 text-slate-600" />
-          Picks lock with Futures. Enter the total across all playoff games — e.g. 550 total points.
+      {/* ══ Futures (22%) ════════════════════════════════════════════════════ */}
+      <Card className="p-5">
+        <div className="flex items-center gap-2.5 mb-4">
+          <Star className="w-5 h-5 text-yellow-400 shrink-0" />
+          <h2 className="text-base font-black text-yellow-400 uppercase tracking-widest flex-1">Futures</h2>
+          <WeightBadge label="22%" />
+        </div>
+
+        <p className="text-slate-600 text-xs mb-4">Base × Vegas multiplier. Higher risk = more points.</p>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          {[
+            { label: 'NBA Champion',    pts: FUTURES_BASE_POINTS.champion,        color: 'text-yellow-400', ring: 'border-yellow-500/25 bg-yellow-500/8' },
+            { label: 'West Champion',   pts: FUTURES_BASE_POINTS.west_champ,      color: 'text-red-400',    ring: 'border-red-500/20    bg-red-500/5'    },
+            { label: 'East Champion',   pts: FUTURES_BASE_POINTS.east_champ,      color: 'text-blue-400',   ring: 'border-blue-500/20   bg-blue-500/5'   },
+            { label: 'Finals MVP',      pts: FUTURES_BASE_POINTS.finals_mvp,      color: 'text-orange-400', ring: 'border-orange-500/25 bg-orange-500/8' },
+            { label: 'West Finals MVP', pts: FUTURES_BASE_POINTS.west_finals_mvp, color: 'text-red-400',    ring: 'border-red-500/20    bg-red-500/5'    },
+            { label: 'East Finals MVP', pts: FUTURES_BASE_POINTS.east_finals_mvp, color: 'text-blue-400',   ring: 'border-blue-500/20   bg-blue-500/5'   },
+          ].map(f => (
+            <div key={f.label} className={`rounded-xl border ${f.ring} p-3 flex items-center justify-between gap-2`}>
+              <div>
+                <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">{f.label}</div>
+                <div className="text-[10px] text-slate-700 font-bold mt-0.5">base pts</div>
+              </div>
+              <div className={`text-xl font-black tabular-nums ${f.color}`}>{f.pts}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 text-[11px] text-slate-600 flex items-center gap-1.5">
+          <Info className="w-3.5 h-3.5 shrink-0" />
+          Picks lock before the playoffs begin.
         </div>
       </Card>
 
-      {/* ── Quick summary ── */}
-      <div className="text-center text-slate-600 text-xs pb-4">
-        Scoring is calculated automatically when results are entered by the admin.
-      </div>
+      {/* ══ Play-In (3%) — minimal ════════════════════════════════════════════ */}
+      <Card className="p-4">
+        <div className="flex items-center gap-2.5 mb-3">
+          <Zap className="w-4 h-4 text-cyan-500/60 shrink-0" />
+          <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest flex-1">Play-In</h2>
+          <WeightBadge label="3%" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="px-3 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700 text-xs font-bold text-slate-300">
+            Correct winner <span className="font-black text-cyan-400 ml-1">+{PLAYIN_PTS} pts</span>
+          </span>
+          <span className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs font-bold text-slate-300">
+            🛡️ Underdog bonus <span className="font-black text-amber-400 ml-1">+{PLAYIN_UNDERDOG_BONUS} pts</span>
+          </span>
+        </div>
+      </Card>
+
+      {/* Footer note */}
+      <p className="text-center text-slate-700 text-xs pb-4">
+        Scoring updates automatically when admin enters results.
+      </p>
     </div>
   );
 }

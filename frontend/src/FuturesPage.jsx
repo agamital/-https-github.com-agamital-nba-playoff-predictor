@@ -433,17 +433,15 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
             } />
             <span className="ml-2 px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 text-[10px] font-black uppercase tracking-wider">New</span>
           </div>
-          <p className="text-slate-400 text-sm mb-1">
-            Predict the MAX stat total for each category across the entire playoffs.
-          </p>
-          <p className="text-slate-500 text-xs mb-5 font-bold">Enter a number — closer to the real answer earns more points. Picks lock with Futures.</p>
+          <p className="text-slate-500 text-xs mb-5">Predict the highest total across the entire playoffs. <strong className="text-slate-400">Closer = more points.</strong> Picks lock with Futures.</p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {LEADER_CATEGORIES.map(cat => {
-              const isCorrect = existingLeaders?.[`is_correct_${cat.key.replace('top_', '')}`];
+              const isCorrect  = existingLeaders?.[`is_correct_${cat.key.replace('top_', '')}`];
               const isBullseye = isCorrect === 2;
               const isClose    = isCorrect === 1;
               const isMiss     = isCorrect === 0;
+              const tiers      = LEADERS_TIERS[cat.statKey] || [];
               return (
                 <div key={cat.key}
                   className={`bg-slate-900/50 border rounded-2xl p-4 ${
@@ -452,43 +450,55 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                     isMiss     ? 'border-red-500/30'   :
                     'border-slate-800'
                   }`}>
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-[11px] font-black uppercase tracking-wider ${cat.color}`}>{cat.short}</p>
-                      <p className="text-sm font-bold text-white mt-0.5 leading-snug">{cat.question}</p>
-                      <div className="flex items-center gap-1.5 mt-1.5">
-                        <span className={`text-lg font-black ${cat.color}`}>{cat.pts}</span>
-                        <span className="text-slate-500 text-xs font-bold">pts exact</span>
-                        <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">tiered</span>
-                      </div>
+
+                  {/* Header — stat name + base pts (top-right) + status icon */}
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className={`text-sm font-black ${cat.color}`}>{cat.short}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-xs font-black text-slate-500 tabular-nums">{cat.pts} pts</span>
+                      {isBullseye && <span className="text-base leading-none" title="Bullseye!">🎯</span>}
+                      {isClose    && <span className="text-base leading-none" title="Close">🤏</span>}
+                      {isMiss     && <span className="text-sm leading-none"   title="Miss">❌</span>}
                     </div>
-                    {isBullseye && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/20 border border-green-500/40 text-green-400 text-[10px] font-black shrink-0">
-                        🎯 Bullseye
-                      </span>
-                    )}
-                    {isClose && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 text-[10px] font-black shrink-0">
-                        ✅ Close
-                      </span>
-                    )}
-                    {isMiss && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black shrink-0">
-                        ❌ Miss
-                      </span>
-                    )}
                   </div>
+
+                  {/* Input */}
                   <LeaderNumberInput
                     value={leaders[cat.key]}
                     onChange={v => setLeaders(prev => ({ ...prev, [cat.key]: v }))}
                     locked={locked}
                     placeholder={cat.example}
                   />
-                  {/* Regular season reference leaders (playoff teams only) */}
+
+                  {/* Tier badges — horizontal row under input */}
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {tiers.map(([maxDelta, pts], i) => {
+                      const prevDelta  = i === 0 ? -1 : tiers[i - 1][0];
+                      const isExact    = maxDelta === 0;
+                      const rangeLabel = isExact
+                        ? '🎯 Exact'
+                        : (prevDelta === 0 ? `🤏 ±${maxDelta}` : `🤏 ±${prevDelta + 1}–${maxDelta}`);
+                      return (
+                        <span key={maxDelta}
+                          className={`px-2 py-0.5 rounded border text-[10px] font-black tabular-nums ${
+                            isExact
+                              ? 'bg-green-500/10 border-green-500/25 text-green-400'
+                              : 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'
+                          }`}>
+                          {rangeLabel} = {pts}
+                        </span>
+                      );
+                    })}
+                    <span className="px-2 py-0.5 rounded border text-[10px] font-black bg-slate-800 border-slate-700 text-slate-600">
+                      ❌ = 0
+                    </span>
+                  </div>
+
+                  {/* Reference leaders — compact */}
                   {playerLeaders && (playerLeaders[cat.refKey] || []).length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-800/60">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-600 mb-1.5">Playoff Teams — Reg. Season Leaders</p>
-                      <div className="space-y-1.5">
+                    <div className="mt-3 pt-2.5 border-t border-slate-800/60">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-600 mb-1.5">Reg. Season Leaders</p>
+                      <div className="space-y-1">
                         {(playerLeaders[cat.refKey] || []).slice(0, 5).map((p, i) => (
                           <div key={p.player_id} className="flex items-center gap-2">
                             <span className="text-[10px] font-black text-slate-600 w-3">{i + 1}</span>
@@ -498,7 +508,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                               <span className="text-[9px] font-black text-slate-600 w-4 shrink-0">{p.team}</span>
                             )}
                             <span className="text-[11px] font-bold text-slate-400 flex-1 truncate">{p.name}</span>
-                            <span className={`text-[11px] font-black ${cat.color}`}>{p[cat.statField]?.toFixed(1)}</span>
+                            <span className={`text-[11px] font-black tabular-nums ${cat.color}`}>{p[cat.statField]?.toFixed(1)}</span>
                             <span className="text-[9px] text-slate-600 font-bold">{cat.statLabel}</span>
                           </div>
                         ))}
