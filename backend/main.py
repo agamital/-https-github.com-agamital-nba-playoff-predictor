@@ -470,18 +470,33 @@ def _send_email_reminders(user_rows: list) -> None:
                 _resend.Emails.send({
                     "from":    _RESEND_FROM,
                     "to":      [email],
-                    "subject": "🏀 Don't forget your NBA playoff picks!",
+                    "subject": "\U0001f3c0 \u05d0\u05dc \u05ea\u05e9\u05db\u05d7 \u05d0\u05ea \u05d4\u05e0\u05d9\u05d7\u05d5\u05e9\u05d9\u05dd \u05e9\u05dc\u05da \u05dc-NBA!",
                     "html": (
-                        "<div style='font-family:sans-serif;max-width:480px;margin:auto;padding:24px;'>"
-                        "<h2 style='color:#f97316;margin-bottom:8px;'>You have open picks!</h2>"
-                        "<p style='color:#334155;'>There are active NBA playoff series waiting for your predictions.</p>"
-                        "<p style='color:#334155;'>Lock them in before it's too late — every correct pick earns you points!</p>"
-                        "<a href='https://nba-playoffs-2026.vercel.app' "
+                        "<div dir='rtl' style='font-family:sans-serif;max-width:480px;"
+                        "     margin:auto;padding:24px;text-align:right;'>"
+                        "<h2 style='color:#f97316;margin-bottom:8px;'>"
+                        "\u05d9\u05e9 \u05dc\u05da \u05e0\u05d9\u05d7\u05d5\u05e9\u05d9\u05dd \u05e4\u05ea\u05d5\u05d7\u05d9\u05dd!"
+                        "</h2>"
+                        "<p style='color:#334155;'>"
+                        "\u05d9\u05e9 \u05e1\u05d3\u05e8\u05d5\u05ea \u05e4\u05dc\u05d9\u05d9\u05d0\u05d5\u05e3 \u05e4\u05e2\u05d9\u05dc\u05d5\u05ea"
+                        " \u05e9\u05de\u05d7\u05db\u05d5\u05ea \u05dc\u05ea\u05d7\u05d6\u05d9\u05d5\u05ea \u05e9\u05dc\u05da."
+                        "</p>"
+                        "<p style='color:#334155;'>"
+                        "\u05d0\u05dc \u05ea\u05e4\u05e1\u05e4\u05e1 \u05d0\u05ea \u05d4\u05d4\u05d6\u05d3\u05de\u05e0\u05d5\u05ea"
+                        " \u05dc\u05e6\u05d1\u05d5\u05e8 \u05e0\u05e7\u05d5\u05d3\u05d5\u05ea"
+                        " \u2013 \u05db\u05dc \u05e0\u05d9\u05d7\u05d5\u05e9 \u05e0\u05db\u05d5\u05df \u05e7\u05d5\u05d1\u05e2!"
+                        "</p>"
+                        "<a href='https://nba-playoffs-2026.vercel.app'"
                         "   style='display:inline-block;margin-top:16px;padding:12px 24px;"
                         "          background:#f97316;color:#fff;border-radius:8px;"
-                        "          text-decoration:none;font-weight:bold;'>Make My Picks →</a>"
+                        "          text-decoration:none;font-weight:bold;'>"
+                        "\u05dc\u05de\u05d9\u05dc\u05d5\u05d9 \u05d4\u05e0\u05d9\u05d7\u05d5\u05e9\u05d9\u05dd \u05e9\u05dc\u05d9 \u2190"
+                        "</a>"
                         "<p style='color:#94a3b8;font-size:12px;margin-top:24px;'>"
-                        "You're receiving this because you have an account on NBA Playoff Predictor 2026.</p>"
+                        "\u05d4\u05de\u05d9\u05d9\u05dc \u05e0\u05e9\u05dc\u05d7 \u05d0\u05dc\u05d9\u05da \u05db\u05d9"
+                        " \u05d9\u05e9 \u05dc\u05da \u05d7\u05e9\u05d1\u05d5\u05df"
+                        " \u05d1-NBA Playoff Predictor 2026."
+                        "</p>"
                         "</div>"
                     ),
                 })
