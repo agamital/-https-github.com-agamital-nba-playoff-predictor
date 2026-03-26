@@ -295,7 +295,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
         )}
 
         {/* Divider before Futures/Leaders */}
-        <div className="flex items-center gap-3 mb-6">
+        <div id="futures-section" className="flex items-center gap-3 mb-6">
           <div className="h-px flex-1 bg-slate-800" />
           <span className="text-[10px] text-slate-600 font-black uppercase tracking-widest">Futures & Leaders Picks</span>
           <div className="h-px flex-1 bg-slate-800" />
@@ -1260,6 +1260,15 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
 
   const goTo = (page) => { setOpen(false); onNavigate(page); };
 
+  // Navigate to the home page then scroll to the futures/leaders section
+  const goToFutures = () => {
+    setOpen(false);
+    onNavigate('home');
+    setTimeout(() => {
+      document.getElementById('futures-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 150);
+  };
+
   // ── Item row ──────────────────────────────────────────────────────────────
   const Item = ({ emoji, label, sublabel, accent, onClick }) => (
     <button
@@ -1351,7 +1360,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                     emoji={leadingEmoji(f.label, '🏆')}
                     label={stripLeadingEmoji(f.label)}
                     accent="bg-purple-500/15 border border-purple-500/25"
-                    onClick={() => goTo('betting')}
+                    onClick={goToFutures}
                   />
                 ))}
               </>
@@ -1366,7 +1375,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                     emoji={leadingEmoji(l.label, '📊')}
                     label={stripLeadingEmoji(l.label)}
                     accent="bg-cyan-500/15 border border-cyan-500/25"
-                    onClick={() => goTo('betting')}
+                    onClick={goToFutures}
                   />
                 ))}
               </>
@@ -1485,7 +1494,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                       <>
                         <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Futures Picks</p>
                         {summary.missing_futures.map(f => (
-                          <Item key={f.key} emoji={leadingEmoji(f.label, '🏆')} label={stripLeadingEmoji(f.label)} accent="bg-purple-500/15 border border-purple-500/25" onClick={() => goTo('betting')} />
+                          <Item key={f.key} emoji={leadingEmoji(f.label, '🏆')} label={stripLeadingEmoji(f.label)} accent="bg-purple-500/15 border border-purple-500/25" onClick={goToFutures} />
                         ))}
                       </>
                     )}
@@ -1493,7 +1502,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                       <>
                         <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Playoff Leaders</p>
                         {summary.missing_leaders.map(l => (
-                          <Item key={l.key} emoji={leadingEmoji(l.label, '📊')} label={stripLeadingEmoji(l.label)} accent="bg-cyan-500/15 border border-cyan-500/25" onClick={() => goTo('betting')} />
+                          <Item key={l.key} emoji={leadingEmoji(l.label, '📊')} label={stripLeadingEmoji(l.label)} accent="bg-cyan-500/15 border border-cyan-500/25" onClick={goToFutures} />
                         ))}
                       </>
                     )}
