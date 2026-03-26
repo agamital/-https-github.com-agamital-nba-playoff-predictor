@@ -2,7 +2,7 @@ import React from 'react';
 import { Trophy, Star, BarChart2, Zap, Info, CheckCircle } from 'lucide-react';
 import {
   BASE_WINNER_PTS, BASE_GAMES_PTS, PLAYIN_PTS,
-  ROUND_MULTIPLIERS, FUTURES_BASE_POINTS, LEADERS_POINTS,
+  ROUND_MULTIPLIERS, FUTURES_BASE_POINTS, LEADERS_POINTS, LEADERS_TIERS,
 } from './scoringConstants';
 
 const Card = ({ children, className = '' }) => (
@@ -39,12 +39,12 @@ const R1_UNDERDOG_ROWS = [
 ];
 
 const LEADER_ROWS = [
-  { label: 'Most Total Points',    key: 'scorer',  pts: LEADERS_POINTS.scorer,  color: 'text-yellow-400' },
-  { label: 'Most Total Assists',   key: 'assists', pts: LEADERS_POINTS.assists, color: 'text-blue-400'   },
-  { label: 'Most Total Rebounds',  key: 'rebounds',pts: LEADERS_POINTS.rebounds,color: 'text-green-400'  },
-  { label: 'Most 3-Pointers Made', key: 'threes',  pts: LEADERS_POINTS.threes,  color: 'text-purple-400' },
-  { label: 'Most Total Steals',    key: 'steals',  pts: LEADERS_POINTS.steals,  color: 'text-red-400'    },
-  { label: 'Most Total Blocks',    key: 'blocks',  pts: LEADERS_POINTS.blocks,  color: 'text-orange-400' },
+  { label: 'Most Total Points',    key: 'scorer',   color: 'text-yellow-400', exactOnly: false },
+  { label: 'Most Total Assists',   key: 'assists',  color: 'text-blue-400',   exactOnly: false },
+  { label: 'Most Total Rebounds',  key: 'rebounds', color: 'text-green-400',  exactOnly: false },
+  { label: 'Most 3-Pointers Made', key: 'threes',   color: 'text-purple-400', exactOnly: false },
+  { label: 'Most Total Steals',    key: 'steals',   color: 'text-red-400',    exactOnly: true  },
+  { label: 'Most Total Blocks',    key: 'blocks',   color: 'text-orange-400', exactOnly: true  },
 ];
 
 export default function ScoringGuide() {
@@ -190,25 +190,64 @@ export default function ScoringGuide() {
 
       {/* ── Playoff Highs / Leaders ── */}
       <Card>
-        <SectionHeader icon={BarChart2} title="Playoff Leaders (Highs)" color="text-cyan-400" />
-        <p className="text-slate-500 text-xs mb-4">
-          Predict the <strong className="text-slate-300">highest total stat value</strong> across the entire playoffs — enter a number, not a player name.
-          Points awarded only for an <strong className="text-slate-300">exact integer match</strong>.
+        <SectionHeader icon={BarChart2} title="Playoff Leaders — Elite Scoring" color="text-cyan-400" />
+        <p className="text-slate-500 text-xs mb-1">
+          Predict the <strong className="text-slate-300">highest total stat value</strong> across the entire playoffs.
+          Closer guesses earn partial points — you don't need to be perfect.
         </p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {LEADER_ROWS.map(l => (
-            <div key={l.key} className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-3 text-center">
-              <div className={`text-2xl font-black ${l.color}`}>{l.pts}</div>
-              <div className="text-[11px] text-slate-300 font-bold mt-0.5 leading-tight">{l.label}</div>
-              <div className="mt-1.5">
-                <Badge color="bg-slate-700/60 text-slate-400 border-slate-600/40">exact match</Badge>
-              </div>
+        <div className="flex gap-4 mb-4 mt-2">
+          {[
+            { icon: '🎯', label: 'Bullseye', sub: 'Exact match — full pts', cls: 'border-green-500/30 bg-green-500/5 text-green-400' },
+            { icon: '✅', label: 'Close',    sub: 'Near miss — partial pts', cls: 'border-yellow-500/30 bg-yellow-500/5 text-yellow-400' },
+            { icon: '❌', label: 'Miss',     sub: 'Too far — 0 pts',         cls: 'border-red-500/20 bg-red-500/5 text-red-400' },
+          ].map(b => (
+            <div key={b.label} className={`flex-1 border rounded-xl px-2.5 py-2 text-center ${b.cls}`}>
+              <div className="text-base mb-0.5">{b.icon}</div>
+              <div className="text-[11px] font-black">{b.label}</div>
+              <div className="text-[9px] text-slate-500 mt-0.5">{b.sub}</div>
             </div>
           ))}
         </div>
+
+        <div className="space-y-3">
+          {LEADER_ROWS.map(l => {
+            const tiers = LEADERS_TIERS[l.key] || [];
+            return (
+              <div key={l.key} className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className={`text-xs font-black ${l.color}`}>{l.label}</span>
+                  {l.exactOnly && (
+                    <Badge color="bg-slate-700 text-slate-400 border-slate-600">exact only</Badge>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {tiers.map(([maxDelta, pts], i) => {
+                    const prevDelta = i === 0 ? -1 : tiers[i - 1][0];
+                    const isExact = maxDelta === 0;
+                    const rangeLabel = isExact ? 'Exact' : prevDelta === 0 ? `Off 1${maxDelta > 1 ? `–${maxDelta}` : ''}` : `Off ${prevDelta + 1}–${maxDelta}`;
+                    const icon = isExact ? '🎯' : '✅';
+                    const pill = isExact ? 'bg-green-500/15 border-green-500/30 text-green-300' : 'bg-yellow-500/10 border-yellow-500/25 text-yellow-300';
+                    return (
+                      <div key={maxDelta} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold ${pill}`}>
+                        <span>{icon}</span>
+                        <span>{rangeLabel}</span>
+                        <span className="font-black">= {pts} pts</span>
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-red-500/20 bg-red-500/5 text-red-400 text-[11px] font-bold">
+                    <span>❌</span>
+                    <span>Further = 0 pts</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
         <div className="mt-3 flex items-center gap-2 text-xs text-slate-500 bg-slate-800/40 rounded-xl px-3 py-2">
           <CheckCircle className="w-3.5 h-3.5 shrink-0 text-slate-600" />
-          Picks lock with Futures. Enter the exact integer — e.g. 550 total points, 55 three-pointers.
+          Picks lock with Futures. Enter the total across all playoff games — e.g. 550 total points.
         </div>
       </Card>
 

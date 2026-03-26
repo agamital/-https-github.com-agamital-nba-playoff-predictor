@@ -16,9 +16,21 @@ export const FUTURES_BASE_POINTS = {
   finals_mvp: 80, west_finals_mvp: 50, east_finals_mvp: 50,
 };
 
-export const LEADERS_POINTS = {
-  scorer: 100, assists: 70, rebounds: 70, threes: 60, steals: 40, blocks: 40,
+// Tiered proximity scoring for Leaders predictions.
+// Each tier: [maxDelta, points].  First matching delta wins.
+export const LEADERS_TIERS = {
+  scorer:   [[0, 350], [2, 100], [4, 40]],
+  assists:  [[0, 300], [1,  80], [2, 30]],
+  rebounds: [[0, 300], [1,  80], [2, 30]],
+  threes:   [[0, 250], [1,  50]],
+  steals:   [[0, 200]],
+  blocks:   [[0, 200]],
 };
+
+// Exact-match (bullseye) point values — used for display in scoring guides.
+export const LEADERS_POINTS = Object.fromEntries(
+  Object.entries(LEADERS_TIERS).map(([k, tiers]) => [k, tiers[0][1]])
+);
 
 export function getRoundMult(roundName) {
   return ROUND_MULTIPLIERS[roundName] ?? 1;

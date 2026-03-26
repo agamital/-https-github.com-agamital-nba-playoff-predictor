@@ -82,13 +82,34 @@ SCORING RULES SUMMARY
 
 4. PLAYOFF HIGHS (Leaders)  --------------------------------------------------
    Users predict the MAX stat value (integer), not the player name.
-   Exact integer match only — no partial credit.
-     Most Total Points      100 pts
-     Most Total Assists      70 pts
-     Most Total Rebounds     70 pts
-     Most 3-Pointers Made    60 pts
-     Most Total Steals       40 pts
-     Most Total Blocks       40 pts
+   Tiered proximity scoring — closer guesses earn more.
+
+   Points (scorer):
+     Exact match (delta 0)   : 350 pts  🎯 Bullseye
+     Off by 1–2  (delta 1-2) : 100 pts  ✅ Close
+     Off by 3–4  (delta 3-4) :  40 pts  🟡 Near
+     Off by 5+               :   0 pts  ❌ Miss
+
+   Rebounds & Assists:
+     Exact  (delta 0)        : 300 pts  🎯 Bullseye
+     Off by 1  (delta 1)     :  80 pts  ✅ Close
+     Off by 2  (delta 2)     :  30 pts  🟡 Near
+     Off by 3+               :   0 pts  ❌ Miss
+
+   Threes Made (3PM):
+     Exact  (delta 0)        : 250 pts  🎯 Bullseye
+     Off by 1  (delta 1)     :  50 pts  ✅ Close
+     Off by 2+               :   0 pts  ❌ Miss
+
+   Steals & Blocks (exact only):
+     Exact  (delta 0)        : 200 pts  🎯 Bullseye
+     Off by 1+               :   0 pts  ❌ Miss
+
+   correctness return values:
+     2 = "bullseye" — exact match
+     1 = "close"    — proximity hit (partial points)
+     0 = miss
+     None = result not yet set
 
 ----------------------------------------------------------------------------
 """
@@ -136,14 +157,20 @@ FUTURES_BASE_POINTS: dict[str, int] = {
 
 
 # -- Playoff Highs (Leaders) ----------------------------------------------------
-LEADERS_POINTS: dict[str, int] = {
-    "scorer":   100,
-    "assists":   70,
-    "rebounds":  70,
-    "threes":    60,
-    "steals":    40,
-    "blocks":    40,
+# Each tier: (max_delta_inclusive, points_awarded).
+# Tiers are checked in order — first matching delta wins.
+# An empty tail means "exact only"; any delta beyond the last tier = 0 pts.
+LEADERS_TIERS: dict[str, list[tuple[int, int]]] = {
+    "scorer":   [(0, 350), (2, 100), (4, 40)],   # exact=350, Δ1-2=100, Δ3-4=40
+    "assists":  [(0, 300), (1,  80), (2, 30)],   # exact=300, Δ1=80,   Δ2=30
+    "rebounds": [(0, 300), (1,  80), (2, 30)],   # exact=300, Δ1=80,   Δ2=30
+    "threes":   [(0, 250), (1,  50)],            # exact=250, Δ1=50
+    "steals":   [(0, 200)],                      # exact only
+    "blocks":   [(0, 200)],                      # exact only
 }
+
+# Convenience alias — exact-match point values used by the scoring guide / UI.
+LEADERS_POINTS: dict[str, int] = {cat: tiers[0][1] for cat, tiers in LEADERS_TIERS.items()}
 
 
 # -- Public API -----------------------------------------------------------------
@@ -268,23 +295,27 @@ def calculate_leaders_points(
     actuals: dict,
 ) -> tuple[int, dict]:
     """
-    Score a playoff-highs (leaders) prediction row.
+    Score a playoff-highs (leaders) prediction row using tiered proximity scoring.
 
-    Users predict the MAX stat value as a positive integer (e.g. 55 total points).
-    Exact integer match only — no partial credit, no name matching.
+    Users predict the MAX stat value as a positive integer (e.g. 550 total points).
+    Points scale down as the prediction moves further from the actual value.
 
     Args:
-        predictions  {cat: int | None}   — user's predicted max stat value
-        actuals      {cat: int | None}   — actual max stat value; falsy = result unknown
+        predictions  {cat: int | str | None}  — user's predicted max stat value
+        actuals      {cat: int | str | None}  — actual max stat value; falsy = not set
 
     Returns:
         (total_points, correctness)
-        correctness values: 1 = correct, 0 = wrong, None = result not yet set
+        correctness values:
+            2    = bullseye (exact match — full points)
+            1    = close    (proximity hit — partial points)
+            0    = miss     (no points)
+            None = result not yet set
     """
     pts: int = 0
     correct: dict = {}
 
-    for cat, base in LEADERS_POINTS.items():
+    for cat, tiers in LEADERS_TIERS.items():
         pred   = predictions.get(cat)
         actual = actuals.get(cat)
 
@@ -293,7 +324,7 @@ def calculate_leaders_points(
             correct[cat] = None
             continue
 
-        # Coerce both to int for comparison (handles strings coming from DB/API)
+        # Coerce both to int (handles strings from DB/API)
         try:
             actual_int = int(actual)
             pred_int   = int(pred) if pred is not None and pred != '' else None
@@ -305,10 +336,26 @@ def calculate_leaders_points(
             correct[cat] = None
             continue
 
-        is_c = 1 if (pred_int is not None and pred_int == actual_int) else 0
-        correct[cat] = is_c
-        if is_c:
-            pts += base
+        if pred_int is None:
+            correct[cat] = 0
+            continue
+
+        delta = abs(pred_int - actual_int)
+
+        # Walk tiers — first tier whose max_delta >= delta wins
+        awarded = 0
+        for max_delta, tier_pts in tiers:
+            if delta <= max_delta:
+                awarded = tier_pts
+                break
+
+        pts += awarded
+        if awarded == 0:
+            correct[cat] = 0
+        elif delta == 0:
+            correct[cat] = 2   # bullseye
+        else:
+            correct[cat] = 1   # close / proximity
 
     return pts, correct
 
@@ -381,26 +428,84 @@ if __name__ == "__main__":
     check("futures result unknown -> None", c2["champion"], None)
     check("futures result unknown -> 0 pts", pts2, 0)
 
-    print("\n-- Leaders / Playoff Highs (integer values) ----------")
+    print("\n-- Leaders / Playoff Highs — exact matches ------------")
     lp, lc = calculate_leaders_points(
-        {"scorer": 550, "assists": 200, "rebounds": 300, "threes": None, "steals": 80, "blocks": None},
-        {"scorer": 550, "assists": 210, "rebounds": 300, "threes": 120,  "steals": 80, "blocks": None},
+        {"scorer": 550, "assists": 200, "rebounds": 300, "threes": 55, "steals": 35, "blocks": 40},
+        {"scorer": 550, "assists": 200, "rebounds": 300, "threes": 55, "steals": 35, "blocks": 40},
     )
-    check("leaders scorer exact int match",      lc["scorer"],   1)
-    check("leaders assists wrong (200 vs 210)",  lc["assists"],  0)
-    check("leaders rebounds exact match",        lc["rebounds"], 1)
-    check("leaders threes not picked -> 0",      lc["threes"],   0)
-    check("leaders steals exact match",          lc["steals"],   1)
-    check("leaders blocks not set -> None",      lc["blocks"],   None)
-    check("leaders total pts (100+70+40)",       lp, 210)
+    check("leaders scorer exact -> bullseye (2)",   lc["scorer"],   2)
+    check("leaders assists exact -> bullseye (2)",  lc["assists"],  2)
+    check("leaders rebounds exact -> bullseye (2)", lc["rebounds"], 2)
+    check("leaders threes exact -> bullseye (2)",   lc["threes"],   2)
+    check("leaders steals exact -> bullseye (2)",   lc["steals"],   2)
+    check("leaders blocks exact -> bullseye (2)",   lc["blocks"],   2)
+    check("leaders total pts all exact (350+300+300+250+200+200)", lp, 1600)
+
+    print("\n-- Leaders — proximity tiers --------------------------")
+    # scorer off by 2 -> 100 pts, close (1)
+    lp2a, lc2a = calculate_leaders_points({"scorer": 548}, {"scorer": 550})
+    check("scorer off 2 -> 100 pts",   lp2a, 100)
+    check("scorer off 2 -> close (1)", lc2a["scorer"], 1)
+
+    # scorer off by 4 -> 40 pts
+    lp2b, lc2b = calculate_leaders_points({"scorer": 554}, {"scorer": 550})
+    check("scorer off 4 -> 40 pts",    lp2b, 40)
+    check("scorer off 4 -> close (1)", lc2b["scorer"], 1)
+
+    # scorer off by 5 -> 0 pts
+    lp2c, lc2c = calculate_leaders_points({"scorer": 545}, {"scorer": 550})
+    check("scorer off 5 -> 0 pts",     lp2c, 0)
+    check("scorer off 5 -> miss (0)",  lc2c["scorer"], 0)
+
+    # assists off by 1 -> 80 pts
+    lp3a, lc3a = calculate_leaders_points({"assists": 201}, {"assists": 200})
+    check("assists off 1 -> 80 pts",   lp3a, 80)
+
+    # assists off by 2 -> 30 pts
+    lp3b, lc3b = calculate_leaders_points({"assists": 198}, {"assists": 200})
+    check("assists off 2 -> 30 pts",   lp3b, 30)
+
+    # assists off by 3 -> 0 pts
+    lp3c, lc3c = calculate_leaders_points({"assists": 203}, {"assists": 200})
+    check("assists off 3 -> 0 pts",    lp3c, 0)
+
+    # threes off by 1 -> 50 pts
+    lp4a, _ = calculate_leaders_points({"threes": 56}, {"threes": 55})
+    check("threes off 1 -> 50 pts",    lp4a, 50)
+
+    # threes off by 2 -> 0 pts (exact/off-1 only for threes)
+    lp4b, _ = calculate_leaders_points({"threes": 57}, {"threes": 55})
+    check("threes off 2 -> 0 pts",     lp4b, 0)
+
+    # steals off by 1 -> 0 pts (exact only)
+    lp5, lc5 = calculate_leaders_points({"steals": 36}, {"steals": 35})
+    check("steals off 1 -> 0 pts (exact only)", lp5, 0)
+    check("steals off 1 -> miss (0)",           lc5["steals"], 0)
+
+    # blocks off by 1 -> 0 pts (exact only)
+    lp6, lc6 = calculate_leaders_points({"blocks": 39}, {"blocks": 40})
+    check("blocks off 1 -> 0 pts (exact only)", lp6, 0)
+
+    print("\n-- Leaders — mixed result -------------------------")
+    lpm, lcm = calculate_leaders_points(
+        {"scorer": 550, "assists": 201, "rebounds": 303, "threes": None, "steals": 80, "blocks": None},
+        {"scorer": 550, "assists": 200, "rebounds": 300, "threes": 55,   "steals": 80, "blocks": None},
+    )
+    check("mixed scorer exact (2)",     lcm["scorer"],   2)
+    check("mixed assists off 1 (1)",    lcm["assists"],  1)
+    check("mixed rebounds off 3 (0)",   lcm["rebounds"], 0)
+    check("mixed threes not picked (0)",lcm["threes"],   0)
+    check("mixed steals exact (2)",     lcm["steals"],   2)
+    check("mixed blocks not set (None)",lcm["blocks"],   None)
+    check("mixed total pts 350+80+200", lpm, 630)
 
     print("\n-- Leaders: string-int coercion -----------------------")
-    lp2, lc2 = calculate_leaders_points(
-        {"scorer": "550", "assists": "200"},
+    lps, lcs = calculate_leaders_points(
+        {"scorer": "550", "assists": "201"},
         {"scorer": 550,   "assists": 200},
     )
-    check("leaders str pred vs int actual",  lc2["scorer"],  1)
-    check("leaders str pred vs int actual2", lc2["assists"], 1)
+    check("str pred exact match -> 2", lcs["scorer"],  2)
+    check("str pred off 1 -> 1",       lcs["assists"], 1)
 
     print("\n-- Leaders: zero / missing actual -> None -------------")
     _, lc3 = calculate_leaders_points({"scorer": 550}, {"scorer": 0})

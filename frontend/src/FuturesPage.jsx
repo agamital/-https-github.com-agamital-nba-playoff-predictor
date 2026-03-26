@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy, Lock, CheckCircle, Star, BarChart2, Info } from 'lucide-react';
 import * as api from './services/api';
-import { FUTURES_BASE_POINTS, LEADERS_POINTS } from './scoringConstants';
+import { FUTURES_BASE_POINTS, LEADERS_POINTS, LEADERS_TIERS } from './scoringConstants';
 import ScoringTooltip from './ScoringTooltip';
 
 // ── Numeric input for leader stat predictions ─────────────────────────────────
@@ -30,7 +30,7 @@ const LeaderNumberInput = ({ value, onChange, locked, placeholder }) => {
           ✓ Predicted: {value}
         </p>
       )}
-      <p className="mt-1 text-[10px] text-slate-600 font-bold">Exact integer match required — no partial credit</p>
+      <p className="mt-1 text-[10px] text-slate-600 font-bold">Closer = more points · Exact match earns full points</p>
     </div>
   );
 };
@@ -51,12 +51,12 @@ const MvpTextInput = ({ value, onChange, locked, placeholder }) => (
 );
 
 const LEADER_CATEGORIES = [
-  { key: 'top_scorer',   short: 'Most Total Points',    question: 'What will be the highest total points scored?',    color: 'text-yellow-400', pts: 100, icon: '🏀', example: 'e.g. 550', refKey: 'top_scorers',  statField: 'ppg', statLabel: 'PPG' },
-  { key: 'top_assists',  short: 'Most Total Assists',   question: 'What will be the highest total assists?',          color: 'text-blue-400',   pts: 70,  icon: '🎯', example: 'e.g. 200', refKey: 'top_assists',  statField: 'apg', statLabel: 'APG' },
-  { key: 'top_rebounds', short: 'Most Total Rebounds',  question: 'What will be the highest total rebounds?',         color: 'text-green-400',  pts: 70,  icon: '💪', example: 'e.g. 250', refKey: 'top_rebounds', statField: 'rpg', statLabel: 'RPG' },
-  { key: 'top_threes',   short: 'Most 3-Pointers Made', question: 'What will be the highest 3-pointers made?',        color: 'text-purple-400', pts: 60,  icon: '3️⃣', example: 'e.g. 55',  refKey: 'top_threes',   statField: 'fg3m', statLabel: '3PM' },
-  { key: 'top_steals',   short: 'Most Total Steals',    question: 'What will be the highest total steals?',           color: 'text-red-400',    pts: 40,  icon: '🤚', example: 'e.g. 35',  refKey: 'top_steals',   statField: 'spg', statLabel: 'SPG' },
-  { key: 'top_blocks',   short: 'Most Total Blocks',    question: 'What will be the highest total blocks?',           color: 'text-orange-400', pts: 40,  icon: '🛡️', example: 'e.g. 40',  refKey: 'top_blocks',   statField: 'bpg', statLabel: 'BPG' },
+  { key: 'top_scorer',   statKey: 'scorer',   short: 'Most Total Points',    question: 'What will be the highest total points scored?',    color: 'text-yellow-400', pts: LEADERS_POINTS.scorer,   icon: '🏀', example: 'e.g. 550', refKey: 'top_scorers',  statField: 'ppg', statLabel: 'PPG' },
+  { key: 'top_assists',  statKey: 'assists',  short: 'Most Total Assists',   question: 'What will be the highest total assists?',          color: 'text-blue-400',   pts: LEADERS_POINTS.assists,  icon: '🎯', example: 'e.g. 200', refKey: 'top_assists',  statField: 'apg', statLabel: 'APG' },
+  { key: 'top_rebounds', statKey: 'rebounds', short: 'Most Total Rebounds',  question: 'What will be the highest total rebounds?',         color: 'text-green-400',  pts: LEADERS_POINTS.rebounds, icon: '💪', example: 'e.g. 250', refKey: 'top_rebounds', statField: 'rpg', statLabel: 'RPG' },
+  { key: 'top_threes',   statKey: 'threes',   short: 'Most 3-Pointers Made', question: 'What will be the highest 3-pointers made?',        color: 'text-purple-400', pts: LEADERS_POINTS.threes,   icon: '3️⃣', example: 'e.g. 55',  refKey: 'top_threes',   statField: 'fg3m', statLabel: '3PM' },
+  { key: 'top_steals',   statKey: 'steals',   short: 'Most Total Steals',    question: 'What will be the highest total steals?',           color: 'text-red-400',    pts: LEADERS_POINTS.steals,   icon: '🤚', example: 'e.g. 35',  refKey: 'top_steals',   statField: 'spg', statLabel: 'SPG' },
+  { key: 'top_blocks',   statKey: 'blocks',   short: 'Most Total Blocks',    question: 'What will be the highest total blocks?',           color: 'text-orange-400', pts: LEADERS_POINTS.blocks,   icon: '🛡️', example: 'e.g. 40',  refKey: 'top_blocks',   statField: 'bpg', statLabel: 'BPG' },
 ];
 
 
@@ -395,15 +395,27 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
             <BarChart2 className="w-5 h-5 text-cyan-400" />
             <h2 className="text-xl font-black text-white uppercase tracking-wide">Playoff Leaders</h2>
             <ScoringTooltip content={
-              <div className="space-y-1.5 text-xs">
-                <p className="font-black text-white mb-1">Playoff Leaders — Points</p>
-                <p className="text-slate-500 text-[10px] mb-2">Predict the highest stat total across the entire playoffs. Exact number required.</p>
-                {LEADER_CATEGORIES.map(c => (
-                  <div key={c.key} className="flex justify-between">
-                    <span className="text-slate-400">{c.short}</span>
-                    <span className={`font-black ${c.color}`}>{c.pts} pts</span>
-                  </div>
-                ))}
+              <div className="space-y-2 text-xs">
+                <p className="font-black text-white mb-1">Playoff Leaders — Elite Scoring</p>
+                <p className="text-slate-500 text-[10px] mb-2">Tiered points — closer = more. Exact match earns full points.</p>
+                {LEADER_CATEGORIES.map(c => {
+                  const tiers = LEADERS_TIERS[c.statKey] || [];
+                  return (
+                    <div key={c.key} className="mb-1.5">
+                      <p className={`font-black text-[11px] ${c.color} mb-0.5`}>{c.short}</p>
+                      {tiers.map(([maxDelta, tierPts], i) => {
+                        const prevDelta = i === 0 ? -1 : tiers[i-1][0];
+                        const label = maxDelta === 0 ? '🎯 Exact' : prevDelta === 0 ? `✅ Off by 1${maxDelta > 1 ? `–${maxDelta}` : ''}` : `🟡 Off by ${prevDelta + 1}–${maxDelta}`;
+                        return (
+                          <div key={maxDelta} className="flex justify-between pl-2">
+                            <span className="text-slate-400">{label}</span>
+                            <span className="font-black text-white">{tierPts} pts</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
               </div>
             } />
             <span className="ml-2 px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 text-[10px] font-black uppercase tracking-wider">New</span>
@@ -411,16 +423,20 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           <p className="text-slate-400 text-sm mb-1">
             Predict the MAX stat total for each category across the entire playoffs.
           </p>
-          <p className="text-slate-500 text-xs mb-5 font-bold">Enter a number — exact integer match required. Picks lock with Futures.</p>
+          <p className="text-slate-500 text-xs mb-5 font-bold">Enter a number — closer to the real answer earns more points. Picks lock with Futures.</p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {LEADER_CATEGORIES.map(cat => {
               const isCorrect = existingLeaders?.[`is_correct_${cat.key.replace('top_', '')}`];
+              const isBullseye = isCorrect === 2;
+              const isClose    = isCorrect === 1;
+              const isMiss     = isCorrect === 0;
               return (
                 <div key={cat.key}
                   className={`bg-slate-900/50 border rounded-2xl p-4 ${
-                    isCorrect === 1 ? 'border-green-500/40' :
-                    isCorrect === 0 ? 'border-red-500/40' :
+                    isBullseye ? 'border-green-500/50' :
+                    isClose    ? 'border-yellow-500/40' :
+                    isMiss     ? 'border-red-500/30'   :
                     'border-slate-800'
                   }`}>
                   <div className="flex items-center gap-3 mb-3">
@@ -429,11 +445,25 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                       <p className="text-sm font-bold text-white mt-0.5 leading-snug">{cat.question}</p>
                       <div className="flex items-center gap-1.5 mt-1.5">
                         <span className={`text-lg font-black ${cat.color}`}>{cat.pts}</span>
-                        <span className="text-slate-500 text-xs font-bold">pts</span>
-                        <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">exact number</span>
+                        <span className="text-slate-500 text-xs font-bold">pts exact</span>
+                        <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">tiered</span>
                       </div>
                     </div>
-                    {isCorrect === 1 && <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />}
+                    {isBullseye && (
+                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/20 border border-green-500/40 text-green-400 text-[10px] font-black shrink-0">
+                        🎯 Bullseye
+                      </span>
+                    )}
+                    {isClose && (
+                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 text-[10px] font-black shrink-0">
+                        ✅ Close
+                      </span>
+                    )}
+                    {isMiss && (
+                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black shrink-0">
+                        ❌ Miss
+                      </span>
+                    )}
                   </div>
                   <LeaderNumberInput
                     value={leaders[cat.key]}
