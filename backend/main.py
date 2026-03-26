@@ -1560,16 +1560,44 @@ async def leaderboard(season: str = "2026"):
     try:
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute('''SELECT u.id, u.username, u.points, COUNT(p.id),
-                     SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END)
-                     FROM users u LEFT JOIN predictions p ON u.id = p.user_id
-                     GROUP BY u.id ORDER BY u.points DESC LIMIT 100''')
+        # Tiebreaker: 1) total_points  2) bullseyes_count (series winner+games exact,
+        # plus leaders categories with is_correct_* = 2)
+        c.execute('''
+            SELECT
+                u.id, u.username, u.points,
+                COUNT(p.id)                                              AS total_preds,
+                SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END)       AS correct_preds,
+                -- Series bullseyes: winner correct AND games exact
+                COALESCE((
+                    SELECT COUNT(*) FROM predictions p2
+                    JOIN series s ON s.id = p2.series_id
+                    WHERE p2.user_id = u.id
+                      AND p2.is_correct = 1
+                      AND p2.predicted_games = s.actual_games
+                ), 0) +
+                -- Leaders bullseyes: each category with is_correct_* = 2
+                COALESCE((
+                    SELECT SUM(
+                        CASE WHEN lp.is_correct_scorer   = 2 THEN 1 ELSE 0 END +
+                        CASE WHEN lp.is_correct_assists  = 2 THEN 1 ELSE 0 END +
+                        CASE WHEN lp.is_correct_rebounds = 2 THEN 1 ELSE 0 END +
+                        CASE WHEN lp.is_correct_threes   = 2 THEN 1 ELSE 0 END +
+                        CASE WHEN lp.is_correct_steals   = 2 THEN 1 ELSE 0 END +
+                        CASE WHEN lp.is_correct_blocks   = 2 THEN 1 ELSE 0 END
+                    ) FROM leaders_predictions lp WHERE lp.user_id = u.id
+                ), 0)                                                    AS bullseyes_count
+            FROM users u LEFT JOIN predictions p ON u.id = p.user_id
+            GROUP BY u.id
+            ORDER BY u.points DESC, bullseyes_count DESC
+            LIMIT 100
+        ''')
         board = []
         for idx, row in enumerate(c.fetchall(), 1):
-            total, correct = row[3] or 0, row[4] or 0
+            total, correct, bullseyes = row[3] or 0, row[4] or 0, row[5] or 0
             board.append({'rank': idx, 'user_id': row[0], 'username': row[1], 'points': row[2],
                          'total_predictions': total, 'correct_predictions': correct,
-                         'accuracy': round((correct/total*100) if total > 0 else 0, 1)})
+                         'accuracy': round((correct/total*100) if total > 0 else 0, 1),
+                         'bullseyes_count': bullseyes})
         return board
     except Exception as e:
         print(f"leaderboard error: {e}")
@@ -2132,6 +2160,7 @@ async def set_series_result(series_id: int, winner_team_id: int, actual_games: i
     for pred_id, pred_winner_id, pred_games in c.fetchall():
         winner_correct = (pred_winner_id == winner_team_id)
         games_correct  = (pred_games == actual_games)
+        games_diff     = abs(pred_games - actual_games) if pred_games is not None else None
 
         # Determine which seed the user predicted
         if pred_winner_id == home_team_id:
@@ -2144,6 +2173,7 @@ async def set_series_result(series_id: int, winner_team_id: int, actual_games: i
         pts = calculate_series_points(
             round_name, home_seed, away_seed, pred_seed,
             winner_correct=winner_correct, games_correct=games_correct,
+            games_diff=games_diff,
         )
         is_correct = 1 if winner_correct else 0
         c.execute('UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s',
@@ -2236,18 +2266,32 @@ def _try_create_r1_from_playin(c, game_id, winner_id, season):
 async def set_playin_result(game_id: int, winner_id: int):
     conn = get_db_conn()
     c = conn.cursor()
+
+    # Fetch seeds to detect an underdog win (higher-seeded team wins)
+    c.execute('SELECT team1_id, team1_seed, team2_id, team2_seed FROM playin_games WHERE id = %s', (game_id,))
+    game_row = c.fetchone()
+    is_underdog = False
+    if game_row:
+        t1_id, t1_seed, t2_id, t2_seed = game_row
+        winner_seed = t1_seed if winner_id == t1_id else (t2_seed if winner_id == t2_id else None)
+        other_seed  = t2_seed if winner_id == t1_id else (t1_seed if winner_id == t2_id else None)
+        if winner_seed and other_seed:
+            is_underdog = winner_seed > other_seed   # higher seed number = underdog
+
+    correct_pts = calculate_play_in_points(True, is_underdog=is_underdog)
+
     c.execute('UPDATE playin_games SET winner_id = %s, status = %s WHERE id = %s',
               (winner_id, 'completed', game_id))
     c.execute('''UPDATE playin_predictions SET
                  is_correct = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END,
                  points_earned = CASE WHEN predicted_winner_id = %s THEN %s ELSE 0 END
                  WHERE game_id = %s''',
-              (winner_id, winner_id, calculate_play_in_points(True), game_id))
+              (winner_id, winner_id, correct_pts, game_id))
     _recalculate_all_points(c)
     _try_create_r1_from_playin(c, game_id, winner_id, '2026')
     conn.commit()
     conn.close()
-    return {"message": "Play-in result set"}
+    return {"message": "Play-in result set", "underdog_win": is_underdog, "points_awarded": correct_pts}
 
 def _get_futures_lock() -> bool:
     conn = get_db_conn()

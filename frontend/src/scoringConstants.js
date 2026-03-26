@@ -1,19 +1,21 @@
-export const BASE_WINNER_PTS = 20;
-export const BASE_GAMES_PTS  = 40;
-export const PLAYIN_PTS      = 5;
+export const BASE_WINNER_PTS   = 50;
+export const BASE_GAMES_PTS    = 50;
+export const CLOSE_CALL_BONUS  = 15;
+export const PLAYIN_PTS        = 20;
+export const PLAYIN_UNDERDOG_BONUS = 10;
 
 export const ROUND_MULTIPLIERS = {
-  'First Round': 1,
-  'Conference Semifinals': 2,
-  'Conference Finals': 3,
-  'NBA Finals': 4,
+  'First Round':            1.0,
+  'Conference Semifinals':  1.5,
+  'Conference Finals':      2.0,
+  'NBA Finals':             3.0,
 };
 
 const R1_UNDERDOG = { '1-8': 2.5, '2-7': 2.0, '3-6': 1.5, '4-5': 1.0 };
 
 export const FUTURES_BASE_POINTS = {
   champion: 200, west_champ: 100, east_champ: 100,
-  finals_mvp: 80, west_finals_mvp: 50, east_finals_mvp: 50,
+  finals_mvp: 150, west_finals_mvp: 50, east_finals_mvp: 50,
 };
 
 // Tiered proximity scoring for Leaders predictions.
@@ -47,11 +49,13 @@ export function getUnderdogMult(roundName, homeSeed, awaySeed, pickedSeed) {
   return 1.5;
 }
 
-/** Returns { winnerPts, gamesPts, totalPts } for a correct winner + correct games */
+/** Returns { winnerPts, gamesPts, closeCallPts, totalPts } for a correct winner.
+ *  gamesPts = exact games bonus, closeCallPts = off-by-1 bonus. */
 export function calcSeriesPts(roundName, homeSeed, awaySeed, pickedSeed) {
   const rm = getRoundMult(roundName);
   const um = getUnderdogMult(roundName, homeSeed, awaySeed, pickedSeed);
-  const winnerPts = Math.floor(BASE_WINNER_PTS * rm * um);
-  const gamesPts  = Math.floor(BASE_GAMES_PTS  * rm * um);
-  return { winnerPts, gamesPts, totalPts: winnerPts + gamesPts };
+  const winnerPts    = Math.floor(BASE_WINNER_PTS  * rm * um);
+  const gamesPts     = Math.floor(BASE_GAMES_PTS   * rm * um);
+  const closeCallPts = Math.floor(CLOSE_CALL_BONUS * rm * um);
+  return { winnerPts, gamesPts, closeCallPts, totalPts: winnerPts + gamesPts };
 }

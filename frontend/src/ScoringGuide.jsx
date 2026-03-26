@@ -1,7 +1,8 @@
 import React from 'react';
 import { Trophy, Star, BarChart2, Zap, Info, CheckCircle } from 'lucide-react';
 import {
-  BASE_WINNER_PTS, BASE_GAMES_PTS, PLAYIN_PTS,
+  BASE_WINNER_PTS, BASE_GAMES_PTS, CLOSE_CALL_BONUS,
+  PLAYIN_PTS, PLAYIN_UNDERDOG_BONUS,
   ROUND_MULTIPLIERS, FUTURES_BASE_POINTS, LEADERS_POINTS, LEADERS_TIERS,
 } from './scoringConstants';
 
@@ -11,10 +12,11 @@ const Card = ({ children, className = '' }) => (
   </div>
 );
 
-const SectionHeader = ({ icon: Icon, title, color }) => (
+const SectionHeader = ({ icon: Icon, title, color, badge }) => (
   <div className={`flex items-center gap-2.5 mb-4 ${color}`}>
     <Icon className="w-5 h-5 shrink-0" />
-    <h2 className="text-base font-black uppercase tracking-widest">{title}</h2>
+    <h2 className="text-base font-black uppercase tracking-widest flex-1">{title}</h2>
+    {badge && <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-400">{badge}</span>}
   </div>
 );
 
@@ -25,10 +27,10 @@ const Badge = ({ children, color = 'bg-orange-500/20 text-orange-400 border-oran
 );
 
 const ROUND_ROWS = [
-  { round: 'First Round',          mult: 1, winner: BASE_WINNER_PTS * 1, games: BASE_GAMES_PTS * 1, total: (BASE_WINNER_PTS + BASE_GAMES_PTS) * 1 },
-  { round: 'Conference Semifinals', mult: 2, winner: BASE_WINNER_PTS * 2, games: BASE_GAMES_PTS * 2, total: (BASE_WINNER_PTS + BASE_GAMES_PTS) * 2 },
-  { round: 'Conference Finals',    mult: 3, winner: BASE_WINNER_PTS * 3, games: BASE_GAMES_PTS * 3, total: (BASE_WINNER_PTS + BASE_GAMES_PTS) * 3 },
-  { round: 'NBA Finals',           mult: 4, winner: BASE_WINNER_PTS * 4, games: BASE_GAMES_PTS * 4, total: (BASE_WINNER_PTS + BASE_GAMES_PTS) * 4 },
+  { round: 'First Round',           mult: 1.0, winner: Math.floor(BASE_WINNER_PTS * 1.0), games: Math.floor(BASE_GAMES_PTS * 1.0), close: Math.floor(CLOSE_CALL_BONUS * 1.0), total: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 1.0) },
+  { round: 'Conference Semifinals', mult: 1.5, winner: Math.floor(BASE_WINNER_PTS * 1.5), games: Math.floor(BASE_GAMES_PTS * 1.5), close: Math.floor(CLOSE_CALL_BONUS * 1.5), total: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 1.5) },
+  { round: 'Conference Finals',     mult: 2.0, winner: Math.floor(BASE_WINNER_PTS * 2.0), games: Math.floor(BASE_GAMES_PTS * 2.0), close: Math.floor(CLOSE_CALL_BONUS * 2.0), total: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 2.0) },
+  { round: 'NBA Finals',            mult: 3.0, winner: Math.floor(BASE_WINNER_PTS * 3.0), games: Math.floor(BASE_GAMES_PTS * 3.0), close: Math.floor(CLOSE_CALL_BONUS * 3.0), total: Math.floor((BASE_WINNER_PTS + BASE_GAMES_PTS) * 3.0) },
 ];
 
 const R1_UNDERDOG_ROWS = [
@@ -62,17 +64,26 @@ export default function ScoringGuide() {
 
       {/* ── Play-In ── */}
       <Card>
-        <SectionHeader icon={Zap} title="Play-In Tournament" color="text-cyan-400" />
-        <div className="flex items-center justify-between bg-cyan-500/10 border border-cyan-500/20 rounded-xl px-4 py-3">
-          <span className="text-slate-300 text-sm font-bold">Correct winner prediction</span>
-          <span className="text-2xl font-black text-cyan-400">+{PLAYIN_PTS} pts</span>
+        <SectionHeader icon={Zap} title="Play-In Tournament" color="text-cyan-400" badge="3%" />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between bg-cyan-500/10 border border-cyan-500/20 rounded-xl px-4 py-3">
+            <span className="text-slate-300 text-sm font-bold">Correct winner prediction</span>
+            <span className="text-2xl font-black text-cyan-400">+{PLAYIN_PTS} pts</span>
+          </div>
+          <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
+            <div>
+              <span className="text-slate-300 text-sm font-bold">Underdog bonus</span>
+              <p className="text-slate-500 text-[11px] mt-0.5">When the higher-seeded team wins</p>
+            </div>
+            <span className="text-2xl font-black text-amber-400">+{PLAYIN_UNDERDOG_BONUS} pts</span>
+          </div>
         </div>
-        <p className="text-slate-500 text-xs mt-3">Flat points per correct Play-In winner. No games prediction needed.</p>
+        <p className="text-slate-500 text-xs mt-3">Max {PLAYIN_PTS + PLAYIN_UNDERDOG_BONUS} pts per game. No games prediction needed.</p>
       </Card>
 
       {/* ── Playoff Series ── */}
       <Card>
-        <SectionHeader icon={Trophy} title="Playoff Series" color="text-orange-400" />
+        <SectionHeader icon={Trophy} title="Playoff Series" color="text-orange-400" badge="50%" />
 
         {/* Base points by round */}
         <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-3">Points by round (favourite pick)</p>
@@ -83,7 +94,8 @@ export default function ScoringGuide() {
                 <th className="text-left pb-2">Round</th>
                 <th className="text-center pb-2">Mult</th>
                 <th className="text-right pb-2">Winner</th>
-                <th className="text-right pb-2">+ Games</th>
+                <th className="text-right pb-2">Close Call</th>
+                <th className="text-right pb-2">+ Exact</th>
                 <th className="text-right pb-2">Max</th>
               </tr>
             </thead>
@@ -95,6 +107,7 @@ export default function ScoringGuide() {
                     <Badge color="bg-slate-800 text-slate-400 border-slate-700">{r.mult}x</Badge>
                   </td>
                   <td className="py-2.5 text-right font-black text-orange-400">+{r.winner}</td>
+                  <td className="py-2.5 text-right font-black text-yellow-500">+{r.close}</td>
                   <td className="py-2.5 text-right font-black text-blue-400">+{r.games}</td>
                   <td className="py-2.5 text-right font-black text-green-400">{r.total}</td>
                 </tr>
@@ -102,7 +115,10 @@ export default function ScoringGuide() {
             </tbody>
           </table>
         </div>
-        <p className="text-slate-600 text-[11px] mt-1">Games bonus only awarded when both winner AND games are correct.</p>
+        <div className="mt-2 space-y-1">
+          <p className="text-slate-600 text-[11px]">Exact games bonus: winner + correct # of games (4/5/6/7).</p>
+          <p className="text-slate-600 text-[11px]">Close call bonus: winner correct but games off by 1.</p>
+        </div>
 
         {/* R1 underdog multipliers */}
         <div className="mt-5">
@@ -148,15 +164,16 @@ export default function ScoringGuide() {
         <div className="mt-5 space-y-2">
           <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-3">Examples</p>
           {[
-            { label: 'R1 1v8 — pick underdog, correct winner only', pts: 50, note: '20 × 1 × 2.5' },
-            { label: 'R1 1v8 — pick underdog, correct winner + games', pts: 150, note: '60 × 1 × 2.5' },
-            { label: 'Conf Finals — pick underdog, correct winner + games', pts: 180, note: '60 × 3 × 1.5' },
-            { label: 'NBA Finals — pick favourite, correct winner + games', pts: 240, note: '60 × 4 × 1.0' },
+            { label: 'R1 1v8 — pick underdog, winner only',          pts: 125, note: '50 × 1.0 × 2.5',        color: 'text-orange-400' },
+            { label: 'R1 1v8 — pick underdog, winner + exact games', pts: 250, note: '100 × 1.0 × 2.5',       color: 'text-green-400'  },
+            { label: 'Conf Finals — favourite, winner + close call',  pts: 130, note: '(50+15) × 2.0 × 1.0',  color: 'text-yellow-400' },
+            { label: 'Conf Finals — underdog, winner + exact games',  pts: 300, note: '100 × 2.0 × 1.5',       color: 'text-green-400'  },
+            { label: 'NBA Finals — favourite, winner + exact games',  pts: 300, note: '100 × 3.0 × 1.0',       color: 'text-green-400'  },
           ].map(ex => (
             <div key={ex.label} className="flex items-center justify-between gap-3 bg-slate-800/50 rounded-xl px-3 py-2.5">
               <span className="text-xs text-slate-400 flex-1">{ex.label}</span>
               <span className="text-xs text-slate-600 font-bold shrink-0 hidden sm:block">{ex.note}</span>
-              <span className="text-sm font-black text-green-400 shrink-0">+{ex.pts} pts</span>
+              <span className={`text-sm font-black shrink-0 ${ex.color}`}>+{ex.pts} pts</span>
             </div>
           ))}
         </div>
@@ -164,7 +181,7 @@ export default function ScoringGuide() {
 
       {/* ── Futures ── */}
       <Card>
-        <SectionHeader icon={Star} title="Futures Predictions" color="text-yellow-400" />
+        <SectionHeader icon={Star} title="Futures Predictions" color="text-yellow-400" badge="22%" />
         <p className="text-slate-500 text-xs mb-4">Base points shown below. Admin may apply an odds multiplier — final pts = base × multiplier.</p>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {[
@@ -190,7 +207,7 @@ export default function ScoringGuide() {
 
       {/* ── Playoff Highs / Leaders ── */}
       <Card>
-        <SectionHeader icon={BarChart2} title="Playoff Leaders — Elite Scoring" color="text-cyan-400" />
+        <SectionHeader icon={BarChart2} title="Playoff Leaders — Elite Scoring" color="text-cyan-400" badge="25%" />
         <p className="text-slate-500 text-xs mb-1">
           Predict the <strong className="text-slate-300">highest total stat value</strong> across the entire playoffs.
           Closer guesses earn partial points — you don't need to be perfect.
