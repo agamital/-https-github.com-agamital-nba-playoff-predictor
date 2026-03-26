@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { RefreshCw, Trophy, WifiOff } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
-
-const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
 
 function useTimeSince(isoString) {
   const [text, setText] = useState('');
@@ -22,49 +21,45 @@ function useTimeSince(isoString) {
 }
 
 const StandingsPage = () => {
-  const [standings, setStandings]     = useState({ eastern: [], western: [] });
-  const [loading, setLoading]         = useState(true);
-  const [refreshing, setRefreshing]   = useState(false);
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const [lastSynced, setLastSynced]   = useState(null);
-  const [syncBanner, setSyncBanner]   = useState(false);
-  const [error, setError]             = useState(null);
-  const intervalRef = useRef(null);
+  const qc = useQueryClient();
+  const [syncBanner, setSyncBanner] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['standings'],
+    queryFn: () => api.getStandings(),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000, // background refresh every 5 min
+  });
+
+  const standings   = data || { eastern: [], western: [] };
+  const lastUpdated = data?.last_updated ?? null;
+  const lastSynced  = data?.last_synced_at ?? null;
+  const error       = queryError ? 'Could not reach server. Showing last known data.' : null;
+
   const timeSince   = useTimeSince(lastUpdated);
   const syncedSince = useTimeSince(lastSynced);
 
   const loadStandings = useCallback(async (force = false) => {
-    if (force) setRefreshing(true);
-    else if (standings.eastern.length === 0) setLoading(true);
-    setError(null);
+    if (!force) { qc.invalidateQueries({ queryKey: ['standings'] }); return; }
+    setRefreshing(true);
     try {
-      const data = await api.getStandings(force);
-      setStandings(data);
-      setLastUpdated(data.last_updated);
-      if (data.last_synced_at) setLastSynced(data.last_synced_at);
-      if (force && data.sync_triggered) {
+      const fresh = await api.getStandings(true);
+      qc.setQueryData(['standings'], fresh);
+      if (fresh.sync_triggered) {
         setSyncBanner(true);
         setTimeout(() => setSyncBanner(false), 5000);
       }
-    } catch (err) {
-      console.error('Error loading standings:', err);
-      setError('Could not reach server. Showing last known data.');
+    } catch {
+      // ignore — stale data shown from cache
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  }, []); // eslint-disable-line
-
-  // Auto-refresh every 5 min
-  useEffect(() => {
-    loadStandings();
-
-    intervalRef.current = setInterval(() => loadStandings(), AUTO_REFRESH_MS);
-
-    return () => {
-      clearInterval(intervalRef.current);
-    };
-  }, [loadStandings]);
+  }, [qc]);
 
   const isLive = lastUpdated && (Date.now() - new Date(lastUpdated)) < 6 * 60 * 1000;
 

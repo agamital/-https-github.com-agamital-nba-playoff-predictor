@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS } from './scoringConstants';
 import CommunityInsights from './components/CommunityInsights';
@@ -537,20 +538,33 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const BracketPage = ({ currentUser, onNavigate }) => {
-  const [series, setSeries]           = useState([]);
-  const [playInGames, setPlayInGames] = useState([]);
-  const [allTeams, setAllTeams]       = useState([]);
-  const [standings, setStandings]     = useState({ eastern: [], western: [] });
-  const [loading, setLoading]         = useState(true);
+  const qc = useQueryClient();
   const [picks, setPicks]             = useState({});
   const [saved, setSaved]             = useState({});
   const [piPicks, setPiPicks]         = useState({});
   const [piSaved, setPiSaved]         = useState({});
-  const [communityMap, setCommunityMap] = useState({}); // { [series_id]: { total_votes, home_pct, away_pct } }
   const [showFull, setShowFull]       = useState(() => {
     try { return localStorage.getItem('bracketShowFull') === 'true'; } catch { return false; }
   });
   const [saveError, setSaveError]     = useState('');
+
+  // ── Cached data queries ──────────────────────────────────────────────────────
+  const { data: series = [],    isLoading: l1 } = useQuery({ queryKey: ['series', '2026'],    queryFn: () => api.getSeries('2026') });
+  const { data: playInGames = [], isLoading: l2 } = useQuery({ queryKey: ['playin', '2026'],  queryFn: () => api.getPlayInGames('2026') });
+  const { data: allTeams = [],  isLoading: l3 } = useQuery({ queryKey: ['teams'],             queryFn: () => api.getTeams() });
+  const { data: standingsRaw,   isLoading: l4 } = useQuery({ queryKey: ['standings'],         queryFn: () => api.getStandings() });
+  const { data: globalStats }                   = useQuery({ queryKey: ['globalStats', '2026'], queryFn: () => api.getGlobalStats('2026'), staleTime: 10 * 60 * 1000 });
+
+  const standings = standingsRaw || { eastern: [], western: [] };
+  const loading   = l1 || l2 || l3 || l4;
+
+  const communityMap = useMemo(() => {
+    const map = {};
+    (globalStats?.series || []).forEach(entry => {
+      map[entry.series_id] = { total_votes: entry.total_votes, home_pct: entry.home_pct, away_pct: entry.away_pct };
+    });
+    return map;
+  }, [globalStats]);
 
   const toggleShowFull = () => {
     setShowFull(v => {
@@ -559,36 +573,6 @@ const BracketPage = ({ currentUser, onNavigate }) => {
       return next;
     });
   };
-
-  const loadData = () => {
-    setLoading(true);
-    console.time('[bracket] initial load');
-    Promise.all([
-      api.getSeries('2026'),
-      api.getPlayInGames('2026'),
-      api.getTeams(),
-      api.getStandings(),
-      api.getGlobalStats('2026').catch(() => null), // non-blocking
-    ]).then(([s, pi, t, st, gs]) => {
-        console.timeEnd('[bracket] initial load');
-        setSeries(s); setPlayInGames(pi); setAllTeams(t); setStandings(st || { eastern: [], western: [] });
-        if (gs?.series) {
-          const map = {};
-          gs.series.forEach(entry => {
-            map[entry.series_id] = {
-              total_votes: entry.total_votes,
-              home_pct:    entry.home_pct,
-              away_pct:    entry.away_pct,
-            };
-          });
-          setCommunityMap(map);
-        }
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => { loadData(); }, []); // eslint-disable-line
 
   const { westSlots, eastSlots, westSeries, eastSeries, westPI, eastPI, westSeed1, westSeed2, eastSeed1, eastSeed2, westSeedTeams, eastSeedTeams } = useMemo(() => {
     const minSeed = s => Math.min(
@@ -651,11 +635,17 @@ const BracketPage = ({ currentUser, onNavigate }) => {
     if (!currentUser) return;
     const pick = picks[seriesId];
     if (!pick?.teamId || !pick?.games) return;
+    // Optimistic: show saved instantly
+    setSaved(p => ({ ...p, [seriesId]: true }));
     try {
       await api.makePrediction(currentUser.user_id, seriesId, pick.teamId, pick.games);
-      setSaved(p => ({ ...p, [seriesId]: true }));
       setTimeout(() => setSaved(p => ({ ...p, [seriesId]: false })), 2000);
-    } catch (err) { setSaveError(err.response?.data?.detail || 'Failed to save prediction. Try again.'); }
+      // Invalidate notification badge so it reflects this new pick
+      qc.invalidateQueries({ queryKey: ['notifications', currentUser.user_id] });
+    } catch (err) {
+      setSaved(p => ({ ...p, [seriesId]: false })); // revert
+      setSaveError(err.response?.data?.detail || 'Failed to save prediction. Try again.');
+    }
   };
 
   // Play-In handlers
@@ -667,11 +657,16 @@ const BracketPage = ({ currentUser, onNavigate }) => {
     if (!currentUser) return;
     const pick = piPicks[gameId];
     if (!pick?.teamId) return;
+    // Optimistic
+    setPiSaved(p => ({ ...p, [gameId]: true }));
     try {
       await api.makePlayInPrediction(currentUser.user_id, gameId, pick.teamId);
-      setPiSaved(p => ({ ...p, [gameId]: true }));
       setTimeout(() => setPiSaved(p => ({ ...p, [gameId]: false })), 2000);
-    } catch (err) { setSaveError(err.response?.data?.detail || 'Failed to save prediction. Try again.'); }
+      qc.invalidateQueries({ queryKey: ['notifications', currentUser.user_id] });
+    } catch (err) {
+      setPiSaved(p => ({ ...p, [gameId]: false })); // revert
+      setSaveError(err.response?.data?.detail || 'Failed to save prediction. Try again.');
+    }
   };
 
   if (!currentUser) {
@@ -771,7 +766,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
               Go to <strong className="text-slate-300">Admin → Regenerate Matchups</strong> to generate them from live standings, then click Reload below.
             </p>
           </div>
-          <button onClick={loadData} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/30 text-xs font-bold transition-all shrink-0">
+          <button onClick={() => { qc.invalidateQueries({ queryKey: ['series'] }); qc.invalidateQueries({ queryKey: ['playin'] }); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/30 text-xs font-bold transition-all shrink-0">
             <RefreshCw className="w-3 h-3" /> Reload
           </button>
         </div>

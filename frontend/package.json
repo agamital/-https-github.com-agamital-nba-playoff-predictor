@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",
+    "@tanstack/react-query": "^5.95.2",
     "axios": "^1.6.2",
     "lucide-react": "^0.263.1",
     "react": "^18.2.0",

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, Share, Bell } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronRight, Share, Bell } from 'lucide-react';
 import OneSignal from 'react-onesignal';
 import * as api from './services/api';
 import { supabase } from './lib/supabase';
@@ -1151,51 +1153,93 @@ const InstallBanner = () => {
 };
 
 // ── Notification Centre ──────────────────────────────────────────────────────
+// Strip leading emoji from a label like "🏆 Champion" → "Champion"
+const stripLeadingEmoji = (s) => s.replace(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)\s*/u, '').trim();
+const leadingEmoji      = (s, fallback) => {
+  const m = s.match(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/u);
+  return m ? m[0] : fallback;
+};
+
 const BellButton = ({ userId, onNavigate, className = '' }) => {
   const [open,       setOpen]       = useState(false);
-  const [summary,    setSummary]    = useState(null);   // { total, missing_series, ... }
-  const [subscribed, setSubscribed] = useState(null);   // null=checking, true/false
+  const [subscribed, setSubscribed] = useState(false);
   const [subLoading, setSubLoading] = useState(false);
-  const popoverRef = useRef(null);
+  // popPos: { top, left? right? } — computed from button rect on open
+  const [popPos,    setPopPos]      = useState(null);
+  const buttonRef  = useRef(null);
+  const panelRef   = useRef(null);
 
-  // Fetch notification summary whenever userId changes
-  useEffect(() => {
-    if (!userId) { setSummary(null); return; }
-    api.getNotificationsSummary(userId).then(setSummary).catch(() => {});
-  }, [userId]);
+  // ── Cached notification summary ──────────────────────────────────────────
+  const { data: summary } = useQuery({
+    queryKey: ['notifications', userId],
+    queryFn:  () => api.getNotificationsSummary(userId),
+    enabled:  !!userId,
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: true,
+  });
 
-  // Read OneSignal subscription state
+  // ── OneSignal subscription state (non-blocking) ──────────────────────────
   useEffect(() => {
-    let active = true;
-    const check = async () => {
+    let alive = true;
+    (async () => {
       try {
-        await new Promise(r => setTimeout(r, 1200));
-        if (!active) return;
+        await new Promise(r => setTimeout(r, 600));
+        if (!alive) return;
         const perm  = OneSignal.Notifications?.permissionNative;
         const opted = OneSignal.User?.PushSubscription?.optedIn ?? false;
         setSubscribed(perm === 'granted' && opted);
-      } catch { setSubscribed(false); }
-    };
-    check();
-    return () => { active = false; };
+      } catch { /* stays false */ }
+    })();
+    return () => { alive = false; };
   }, [userId]);
 
-  // Close on outside click
+  // ── Anchor panel to button via getBoundingClientRect — no magic numbers ──
   useEffect(() => {
-    if (!open) return;
-    const handler = (e) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    if (!open || !buttonRef.current) return;
+    const r      = buttonRef.current.getBoundingClientRect();
+    const W      = window.innerWidth;
+    const H      = window.innerHeight;
+    const PW     = 320;   // panel width  (w-80)
+    const PH     = 520;   // safe panel height estimate for clamping
+    const GAP    = 8;
+
+    if (W - r.right >= PW + GAP) {
+      // ── Sidebar bell: open to the RIGHT of the icon ─────────────────────
+      // top aligns with button top, clamped so panel never goes below viewport
+      const top = Math.max(GAP, Math.min(r.top, H - PH - GAP));
+      // arrowOffset = distance from panel top to the vertical midpoint of the button
+      const arrowOffset = (r.top + r.height / 2) - top;
+      setPopPos({ placement: 'right', top, left: r.right + GAP, arrowOffset });
+    } else {
+      // ── Header bell: open BELOW the icon, right-edge aligned to button ──
+      // left = button right edge minus panel width, clamped inside viewport
+      const left = Math.max(GAP, Math.min(r.right - PW, W - PW - GAP));
+      // arrowOffset = distance from panel left to the horizontal midpoint of the button
+      const arrowOffset = (r.left + r.width / 2) - left;
+      setPopPos({ placement: 'below', top: r.bottom + GAP, left, arrowOffset });
+    }
   }, [open]);
 
-  const badgeCount  = summary?.total ?? 0;
-  const isCritical  = badgeCount > 0;
+  // ── Outside click / touch closes panel ───────────────────────────────────
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (panelRef.current?.contains(e.target))  return;
+      if (buttonRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown',  onDown);
+    document.addEventListener('touchstart', onDown, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown',  onDown);
+      document.removeEventListener('touchstart', onDown);
+    };
+  }, [open]);
 
-  const handleBellClick = () => setOpen(o => !o);
+  const badgeCount = summary?.total ?? 0;
+  const isCritical = badgeCount > 0;
+  // Match Tailwind md: — sidebar is hidden below 768 px
+  const isMobile   = window.innerWidth < 768;
 
   const handleSubscribeToggle = async () => {
     setSubLoading(true);
@@ -1205,150 +1249,318 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
         setSubscribed(false);
       } else {
         await OneSignal.Notifications.requestPermission();
-        const perm = OneSignal.Notifications?.permissionNative;
-        if (perm === 'granted') {
+        if (OneSignal.Notifications?.permissionNative === 'granted') {
           await OneSignal.User.PushSubscription.optIn();
           setSubscribed(true);
         }
       }
-    } catch { /* dismissed */ }
+    } catch { /* prompt dismissed */ }
     setSubLoading(false);
   };
 
   const goTo = (page) => { setOpen(false); onNavigate(page); };
 
-  // Refresh summary after user navigates away and comes back
-  const handleItemClick = (page) => {
-    goTo(page);
-    // Re-fetch after a short delay so badge updates when they return
-    setTimeout(() => {
-      if (userId) api.getNotificationsSummary(userId).then(setSummary).catch(() => {});
-    }, 3000);
-  };
+  // ── Item row ──────────────────────────────────────────────────────────────
+  const Item = ({ emoji, label, sublabel, accent, onClick }) => (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 active:bg-white/10 transition-colors text-left"
+      style={{ minHeight: 60 }}
+    >
+      <div className={`w-10 h-10 rounded-xl ${accent} flex items-center justify-center shrink-0 text-lg`}>
+        {emoji}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[13px] font-bold text-white leading-snug truncate">{label}</p>
+        {sublabel && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{sublabel}</p>}
+      </div>
+      <div className="flex items-center gap-1 shrink-0 px-2 py-1 rounded-lg bg-orange-500/15 border border-orange-500/25">
+        <span className="text-[11px] font-black text-orange-400">Pick</span>
+        <ChevronRight className="w-3 h-3 text-orange-400" />
+      </div>
+    </button>
+  );
+
+  // ── Panel body ────────────────────────────────────────────────────────────
+  const panelBody = (
+    <div ref={panelRef} className="flex flex-col bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/70 overflow-hidden" style={{ width: 320 }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-800 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <Bell className="w-4 h-4 text-slate-400" />
+          <span className="text-sm font-black text-white tracking-wide">Notifications</span>
+          {badgeCount > 0 && (
+            <span className="min-w-[20px] h-5 flex items-center justify-center px-1.5 rounded-full bg-red-500 text-white text-[10px] font-black">
+              {badgeCount > 9 ? '9+' : badgeCount}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => setOpen(false)}
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* List */}
+      <div className="overflow-y-auto overscroll-contain" style={{ maxHeight: 380 }}>
+        {!summary ? (
+          <div className="px-4 py-4 space-y-3">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="flex items-center gap-3 animate-pulse">
+                <div className="w-10 h-10 rounded-xl bg-slate-800 shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3 bg-slate-800 rounded-md w-3/4" />
+                  <div className="h-2 bg-slate-800/60 rounded-md w-1/2" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : badgeCount === 0 ? (
+          <div className="px-4 py-10 text-center">
+            <p className="text-4xl mb-3">🍀</p>
+            <p className="text-sm font-black text-white">All caught up!</p>
+            <p className="text-xs text-slate-500 mt-1.5">Nothing missing — good luck 🏀</p>
+          </div>
+        ) : (
+          <div className="py-1.5">
+            {(summary.missing_series?.length > 0) && (
+              <>
+                <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                  Bracket Picks
+                </p>
+                {summary.missing_series.map(s => (
+                  <Item key={s.id}
+                    emoji="🏀"
+                    label={s.label}
+                    sublabel={s.sublabel}
+                    accent="bg-orange-500/15 border border-orange-500/25"
+                    onClick={() => goTo('betting')}
+                  />
+                ))}
+              </>
+            )}
+            {(summary.missing_futures?.length > 0) && (
+              <>
+                <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                  Futures Picks
+                </p>
+                {summary.missing_futures.map(f => (
+                  <Item key={f.key}
+                    emoji={leadingEmoji(f.label, '🏆')}
+                    label={stripLeadingEmoji(f.label)}
+                    accent="bg-purple-500/15 border border-purple-500/25"
+                    onClick={() => goTo('betting')}
+                  />
+                ))}
+              </>
+            )}
+            {(summary.missing_leaders?.length > 0) && (
+              <>
+                <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                  Playoff Leaders
+                </p>
+                {summary.missing_leaders.map(l => (
+                  <Item key={l.key}
+                    emoji={leadingEmoji(l.label, '📊')}
+                    label={stripLeadingEmoji(l.label)}
+                    accent="bg-cyan-500/15 border border-cyan-500/25"
+                    onClick={() => goTo('betting')}
+                  />
+                ))}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Footer — Push toggle */}
+      <div className="px-4 py-3.5 border-t border-slate-800 flex items-center justify-between gap-4 shrink-0">
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-white">Push notifications</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            {subscribed ? 'Enabled — alerts are on' : 'Off — tap to enable alerts'}
+          </p>
+        </div>
+        <button
+          onClick={handleSubscribeToggle}
+          disabled={subLoading}
+          aria-pressed={subscribed}
+          title={subscribed ? 'Disable push notifications' : 'Enable push notifications'}
+          className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:opacity-50 ${
+            subscribed ? 'bg-orange-500 shadow-md shadow-orange-500/40' : 'bg-slate-700'
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${
+              subscribed ? 'translate-x-6' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </div>
+    </div>
+  );
 
   return (
-    <div ref={popoverRef} className={`relative ${className}`}>
-      {/* ── Bell trigger ── */}
-      <button
-        onClick={handleBellClick}
-        title={isCritical ? `${badgeCount} action${badgeCount > 1 ? 's' : ''} needed` : 'Notifications'}
-        className="relative p-2 rounded-xl hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors"
-        style={{ minWidth: 36, minHeight: 36 }}
-      >
-        <Bell className={`w-5 h-5 ${isCritical ? 'text-orange-400' : 'text-slate-400'} ${isCritical ? 'bell-shake' : ''}`} />
-        {badgeCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-white text-[10px] font-black leading-none ring-2 ring-slate-900 pointer-events-none">
-            {badgeCount > 9 ? '9+' : badgeCount}
-          </span>
-        )}
-      </button>
+    <>
+      {/* ── Bell trigger ─────────────────────────────────────────────────── */}
+      <div className={className}>
+        <button
+          ref={buttonRef}
+          onClick={() => setOpen(o => !o)}
+          title={isCritical ? `${badgeCount} action${badgeCount > 1 ? 's' : ''} needed` : 'Notifications'}
+          className="relative p-2 rounded-xl hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors"
+          style={{ minWidth: 36, minHeight: 36 }}
+        >
+          <Bell className={`w-5 h-5 ${isCritical ? 'text-orange-400' : 'text-slate-400'} ${isCritical ? 'bell-shake' : ''}`} />
+          {badgeCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-white text-[10px] font-black leading-none ring-2 ring-slate-900 pointer-events-none">
+              {badgeCount > 9 ? '9+' : badgeCount}
+            </span>
+          )}
+        </button>
+      </div>
 
-      {/* ── Popover ── */}
-      {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl shadow-black/60 z-[100] overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
-            <span className="text-sm font-black text-white">Notifications</span>
-            {badgeCount > 0 && (
-              <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 text-xs font-black">
-                {badgeCount} pending
-              </span>
-            )}
-          </div>
-
-          <div className="max-h-[60vh] overflow-y-auto">
-            {summary === null ? (
-              // Loading skeleton
-              <div className="px-4 py-6 flex justify-center">
-                <div className="w-5 h-5 rounded-full border-2 border-orange-500 border-t-transparent animate-spin" />
-              </div>
-            ) : badgeCount === 0 ? (
-              // All caught up
-              <div className="px-4 py-8 text-center">
-                <p className="text-2xl mb-2">🍀</p>
-                <p className="text-sm font-black text-white">All caught up!</p>
-                <p className="text-xs text-slate-500 mt-1">Good luck in the playoffs 🏀</p>
-              </div>
-            ) : (
-              <div className="py-2">
-                {/* Missing series */}
-                {summary.missing_series.length > 0 && (
-                  <div>
-                    <p className="px-4 pt-2 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Bracket Picks</p>
-                    {summary.missing_series.map(s => (
-                      <button key={s.id} onClick={() => handleItemClick('betting')}
-                        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors text-left">
-                        <span className="text-lg shrink-0">🏀</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-white truncate">{s.label}</p>
-                          <p className="text-[11px] text-slate-500">{s.sublabel}</p>
-                        </div>
-                        <span className="text-[10px] font-black text-orange-400 shrink-0">Pick →</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Missing futures */}
-                {summary.missing_futures.length > 0 && (
-                  <div>
-                    <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Futures Picks</p>
-                    {summary.missing_futures.map(f => (
-                      <button key={f.key} onClick={() => handleItemClick('betting')}
-                        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors text-left">
-                        <span className="text-lg shrink-0">{f.label.split(' ')[0]}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-white truncate">{f.label.slice(f.label.indexOf(' ') + 1)}</p>
-                        </div>
-                        <span className="text-[10px] font-black text-orange-400 shrink-0">Pick →</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Missing leaders */}
-                {summary.missing_leaders.length > 0 && (
-                  <div>
-                    <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Playoff Leaders</p>
-                    {summary.missing_leaders.map(l => (
-                      <button key={l.key} onClick={() => handleItemClick('betting')}
-                        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors text-left">
-                        <span className="text-lg shrink-0">{l.label.split(' ')[0]}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-white truncate">{l.label.slice(l.label.indexOf(' ') + 1)}</p>
-                        </div>
-                        <span className="text-[10px] font-black text-orange-400 shrink-0">Pick →</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Footer — OneSignal toggle */}
-          <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-bold text-slate-300">Push notifications</p>
-              <p className="text-[10px] text-slate-600">
-                {subscribed === null ? 'Checking…' : subscribed ? 'Enabled' : 'Tap to enable alerts'}
-              </p>
-            </div>
-            <button
-              onClick={handleSubscribeToggle}
-              disabled={subLoading || subscribed === null}
-              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${
-                subscribed ? 'bg-orange-500' : 'bg-slate-700'
-              }`}
+      {/* ── Panel — always via portal so z-index / overflow never clips ───── */}
+      {open && createPortal(
+        isMobile ? (
+          // ── Mobile: full bottom sheet ──────────────────────────────────
+          <>
+            <div className="fixed inset-0 bg-black/65 z-[998]" onClick={() => setOpen(false)} />
+            <div
+              className="fixed bottom-0 left-0 right-0 z-[999] flex flex-col bg-slate-900 border-t border-slate-700 rounded-t-2xl shadow-2xl pb-safe"
+              style={{ maxHeight: '84vh' }}
             >
-              <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                subscribed ? 'translate-x-[22px]' : 'translate-x-0.5'
-              }`} />
-            </button>
-          </div>
-        </div>
+              {/* drag handle */}
+              <div className="flex justify-center pt-3 pb-1.5 shrink-0">
+                <div className="w-10 h-1 rounded-full bg-slate-700" />
+              </div>
+              {/* reuse panel body content — strip outer card shell for sheet */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <Bell className="w-4 h-4 text-slate-400" />
+                  <span className="text-sm font-black text-white">Notifications</span>
+                  {badgeCount > 0 && (
+                    <span className="min-w-[20px] h-5 flex items-center justify-center px-1.5 rounded-full bg-red-500 text-white text-[10px] font-black">
+                      {badgeCount > 9 ? '9+' : badgeCount}
+                    </span>
+                  )}
+                </div>
+                <button onClick={() => setOpen(false)} className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div ref={panelRef} className="overflow-y-auto overscroll-contain flex-1">
+                {!summary ? (
+                  <div className="px-4 py-4 space-y-3">
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className="flex items-center gap-3 animate-pulse">
+                        <div className="w-10 h-10 rounded-xl bg-slate-800 shrink-0" />
+                        <div className="flex-1 space-y-2">
+                          <div className="h-3 bg-slate-800 rounded-md w-3/4" />
+                          <div className="h-2 bg-slate-800/60 rounded-md w-1/2" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : badgeCount === 0 ? (
+                  <div className="px-4 py-12 text-center">
+                    <p className="text-4xl mb-3">🍀</p>
+                    <p className="text-sm font-black text-white">All caught up!</p>
+                    <p className="text-xs text-slate-500 mt-1.5">Nothing missing — good luck 🏀</p>
+                  </div>
+                ) : (
+                  <div className="py-1.5">
+                    {(summary.missing_series?.length > 0) && (
+                      <>
+                        <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Bracket Picks</p>
+                        {summary.missing_series.map(s => (
+                          <Item key={s.id} emoji="🏀" label={s.label} sublabel={s.sublabel} accent="bg-orange-500/15 border border-orange-500/25" onClick={() => goTo('betting')} />
+                        ))}
+                      </>
+                    )}
+                    {(summary.missing_futures?.length > 0) && (
+                      <>
+                        <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Futures Picks</p>
+                        {summary.missing_futures.map(f => (
+                          <Item key={f.key} emoji={leadingEmoji(f.label, '🏆')} label={stripLeadingEmoji(f.label)} accent="bg-purple-500/15 border border-purple-500/25" onClick={() => goTo('betting')} />
+                        ))}
+                      </>
+                    )}
+                    {(summary.missing_leaders?.length > 0) && (
+                      <>
+                        <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Playoff Leaders</p>
+                        {summary.missing_leaders.map(l => (
+                          <Item key={l.key} emoji={leadingEmoji(l.label, '📊')} label={stripLeadingEmoji(l.label)} accent="bg-cyan-500/15 border border-cyan-500/25" onClick={() => goTo('betting')} />
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="px-4 py-3.5 border-t border-slate-800 flex items-center justify-between gap-4 shrink-0">
+                <div>
+                  <p className="text-xs font-bold text-white">Push notifications</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {subscribed ? 'Enabled — alerts are on' : 'Off — tap to enable alerts'}
+                  </p>
+                </div>
+                <button
+                  onClick={handleSubscribeToggle}
+                  disabled={subLoading}
+                  aria-pressed={subscribed}
+                  className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 disabled:opacity-50 ${subscribed ? 'bg-orange-500 shadow-md shadow-orange-500/40' : 'bg-slate-700'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${subscribed ? 'translate-x-6' : 'translate-x-0'}`} />
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          // ── Desktop: anchored fixed panel ──────────────────────────────
+          popPos && (
+            <>
+              <div className="fixed inset-0 z-[998]" onClick={() => setOpen(false)} />
+              <div
+                className="fixed z-[999]"
+                style={{ top: popPos.top, left: popPos.left, position: 'fixed' }}
+              >
+                {/* ── Arrow connector ── */}
+                {popPos.placement === 'right' && (
+                  // Left-pointing triangle: visually links panel to sidebar bell
+                  <div style={{
+                    position: 'absolute',
+                    left: -7,
+                    top: Math.max(12, popPos.arrowOffset - 7),
+                    width: 0, height: 0,
+                    borderTop:    '7px solid transparent',
+                    borderBottom: '7px solid transparent',
+                    borderRight:  '7px solid rgb(51 65 85 / 0.8)',  // slate-700 = panel border
+                    zIndex: 1,
+                  }} />
+                )}
+                {popPos.placement === 'below' && (
+                  // Up-pointing triangle: visually links panel to header bell
+                  <div style={{
+                    position: 'absolute',
+                    top: -7,
+                    left: Math.max(12, popPos.arrowOffset - 7),
+                    width: 0, height: 0,
+                    borderLeft:   '7px solid transparent',
+                    borderRight:  '7px solid transparent',
+                    borderBottom: '7px solid rgb(51 65 85 / 0.8)',  // slate-700
+                    zIndex: 1,
+                  }} />
+                )}
+                {panelBody}
+              </div>
+            </>
+          )
+        ),
+        document.body
       )}
-    </div>
+    </>
   );
 };
 
