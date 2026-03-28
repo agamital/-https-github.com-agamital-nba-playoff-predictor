@@ -704,11 +704,16 @@ def _fetch_standings_from_rapidapi() -> list:
            or any(kw in t["team_name"].lower() for kw in _ALLSTAR_KEYWORDS)]
     if bad:
         raise ValueError(f"Response contains bad data (All-Star?): '{bad[0]['team_name']}'")
-    if len(standings) < 28:
+    if len(standings) < 20:
+        # Hard failure — fewer than 20 teams is clearly corrupted data
         raise ValueError(
             f"Only {len(standings)} teams parsed (skipped: {skipped}). "
             f"Check logs for 'Row N — no parser matched' to diagnose field names."
         )
+    if len(standings) < 28:
+        # Soft warning — partial data is still usable; log and continue
+        print(f"[RapidAPI] ⚠ Only {len(standings)} teams parsed (expected 30) — "
+              f"skipped: {skipped}. Proceeding with partial data.")
 
     # Log #1 East and #1 West so we can visually confirm data is current
     e1 = next((t for t in standings if t["conference"] == "East" and t["conf_rank"] == 1), None)
@@ -1136,17 +1141,33 @@ def _standings_sync_job():
     standings_ok = False
 
     # ── 1. Standings ────────────────────────────────────────────────────
-    # Try RapidAPI first (reliable, not IP-blocked). Fall back to direct
-    # stats.nba.com request if RAPIDAPI_KEY is missing or call fails.
-    try:
-        if _RAPIDAPI_KEY:
+    # Try RapidAPI first; if it fails (any exception including ValueError from
+    # a bad/unexpected response shape) fall through to stats.nba.com.
+    fresh       = None
+    used_source = None
+
+    if _RAPIDAPI_KEY:
+        try:
             print(f"[Standings] Using RapidAPI (key configured)")
-            fresh = _fetch_standings_from_rapidapi()
+            fresh       = _fetch_standings_from_rapidapi()
             used_source = "rapidapi"
-        else:
-            print(f"[Standings] RAPIDAPI_KEY not set — falling back to stats.nba.com")
-            fresh = _fetch_standings_from_api()
+        except Exception as _rapid_err:
+            import traceback as _tb
+            print(f"[Standings] RapidAPI failed ({type(_rapid_err).__name__}: "
+                  f"{str(_rapid_err)[:200]}) — falling back to stats.nba.com")
+            print(f"[Standings] RapidAPI traceback:\n{_tb.format_exc()}")
+
+    if fresh is None:
+        try:
+            print(f"[Standings] Trying stats.nba.com direct request")
+            fresh       = _fetch_standings_from_api()
             used_source = "nba_api"
+        except Exception as _nba_err:
+            print(f"[Standings] stats.nba.com also failed: {type(_nba_err).__name__}: {_nba_err}")
+
+    try:
+        if fresh is None:
+            raise RuntimeError("All standings sources failed — no data to persist")
 
         result = _persist_standings_to_db(fresh)
         if result['synced_at']:
@@ -1797,21 +1818,75 @@ async def startup():
     global _scheduler
     _scheduler = BackgroundScheduler(timezone='UTC', daemon=True)
 
-    # 1) Data sync — every 4 hours
-    def _standings_sync_job_with_log():
-        print("[Cron] Automatic sync triggered for season 2025-26")
-        _standings_sync_job()
+    # ── 1) Full data sync chain ──────────────────────────────────────────
+    # Runs every 6 hours during Day Mode (06:00–19:59 UTC = 09:00–22:59 IST).
+    # Chain: standings → refresh_playin_matchups → playin results → playoff results
+    def _auto_sync_chain():
+        from game_processor import sync_playin_results_from_api, sync_playoff_results_from_api
+
+        utc_hour = datetime.utcnow().hour
+        # Day Mode: 06:00–19:59 UTC  (09:01–22:59 IST, UTC+3)
+        is_day = 6 <= utc_hour < 20
+        mode   = "Day" if is_day else "Night"
+
+        print(f"[Auto-Sync] ── Starting scheduled sync (Mode: {mode}, "
+              f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC) ──")
+
+        if not is_day:
+            print("[Auto-Sync] Night Mode — skipping full chain (outside 06:00–19:59 UTC)")
+            return
+
+        # Step 1 — Standings + player stats
+        print("[Auto-Sync] Step 1/4 — Standings sync")
+        try:
+            standings_ok = _standings_sync_job()
+            print(f"[Auto-Sync] Step 1/4 done — standings_ok={standings_ok}")
+        except Exception as e:
+            print(f"[Auto-Sync] Step 1/4 ERROR: {type(e).__name__}: {e}")
+            standings_ok = False
+
+        # Step 2 — Refresh play-in matchups from latest seeds
+        print("[Auto-Sync] Step 2/4 — refresh_playin_matchups")
+        try:
+            pim = refresh_playin_matchups('2026')
+            print(f"[Auto-Sync] Step 2/4 done — "
+                  f"updated={len(pim.get('updated',[]))} skipped={len(pim.get('skipped',[]))}")
+        except Exception as e:
+            print(f"[Auto-Sync] Step 2/4 ERROR: {type(e).__name__}: {e}")
+
+        # Step 3 — Sync finished Play-In games from RapidAPI scoreboard
+        print("[Auto-Sync] Step 3/4 — sync_playin_results_from_api")
+        try:
+            pi = sync_playin_results_from_api('2026')
+            print(f"[Auto-Sync] Step 3/4 done — "
+                  f"processed={pi.get('processed',0)} promoted={pi.get('promoted',0)} "
+                  f"errors={len(pi.get('errors',[]))}")
+        except Exception as e:
+            print(f"[Auto-Sync] Step 3/4 ERROR: {type(e).__name__}: {e}")
+
+        # Step 4 — Sync finished Playoff games from RapidAPI scoreboard
+        print("[Auto-Sync] Step 4/4 — sync_playoff_results_from_api")
+        try:
+            po = sync_playoff_results_from_api('2026')
+            print(f"[Auto-Sync] Step 4/4 done — "
+                  f"updated={po.get('updated',0)} completed={po.get('completed',0)} "
+                  f"errors={len(po.get('errors',[]))}")
+        except Exception as e:
+            print(f"[Auto-Sync] Step 4/4 ERROR: {type(e).__name__}: {e}")
+
+        print(f"[Auto-Sync] ── Chain complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
 
     _scheduler.add_job(
-        _standings_sync_job_with_log,
-        CronTrigger.from_crontab('0 */4 * * *'),
-        id='standings_sync',
+        _auto_sync_chain,
+        # Every 6 h — 06:00, 12:00, 18:00 UTC  (+ gate inside the job for night skip)
+        CronTrigger.from_crontab('0 */6 * * *'),
+        id='auto_sync_chain',
         replace_existing=True,
         misfire_grace_time=600,
         max_instances=1,
     )
 
-    # 2) Missing-picks morning alert — 06:00 UTC = 09:00 Jerusalem (IDT, UTC+3)
+    # ── 2) Missing-picks morning alert — 06:00 UTC = 09:00 Jerusalem (IDT) ──
     _scheduler.add_job(
         _send_missing_picks_alert,
         CronTrigger.from_crontab('0 6 * * *'),
@@ -1821,7 +1896,7 @@ async def startup():
         max_instances=1,
     )
 
-    # 3) Missing-picks evening alert — 18:00 UTC = 21:00 Jerusalem (IDT, UTC+3)
+    # ── 3) Missing-picks evening alert — 18:00 UTC = 21:00 Jerusalem (IDT) ──
     _scheduler.add_job(
         _send_missing_picks_alert,
         CronTrigger.from_crontab('0 18 * * *'),
@@ -1832,9 +1907,10 @@ async def startup():
     )
 
     _scheduler.start()
-    print("[Scheduler] APScheduler started — data sync: 0 */6 * * * UTC,"
-          " missing-picks: 0 6 * * * UTC (09:00 IL) + 0 18 * * * UTC (21:00 IL)"
-          f" (active until {_STANDINGS_SYNC_CUTOFF.date()})")
+    print("[Scheduler] APScheduler started"
+          " — auto_sync_chain: 0 */6 * * * UTC (Day Mode only: 06:00–19:59 UTC)"
+          " — missing-picks: 0 6 * * * UTC (09:00 IL) + 0 18 * * * UTC (21:00 IL)"
+          f" — active until {_STANDINGS_SYNC_CUTOFF.date()}")
 
     # Fire-and-forget initial sync so DB is populated shortly after boot
     threading.Thread(target=_initial_standings_sync, daemon=True).start()
