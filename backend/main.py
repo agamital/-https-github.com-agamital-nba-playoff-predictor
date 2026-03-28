@@ -3847,9 +3847,11 @@ async def get_games_with_performers(date: str | None = None, season: str = "2026
         if len(date) == 8 and '-' not in date:
             date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
 
-    # ── 1. Top-2 per team per game from DB ──────────────────────────────
+    # ── 1. Top performer per team + team totals from DB (one connection) ──
     conn = get_db_conn()
     c    = conn.cursor()
+
+    # Top-1 performer per team per game
     c.execute('''
         WITH ranked AS (
             SELECT espn_game_id, team_abbr, player_name, espn_player_id,
@@ -3870,6 +3872,18 @@ async def get_games_with_performers(date: str | None = None, season: str = "2026
     ''', (date, season))
     rows = c.fetchall()
     cols = [d[0] for d in c.description]
+
+    # Team totals (sum of all player points per team per game)
+    c.execute('''
+        SELECT espn_game_id, team_abbr, SUM(points) AS team_total
+        FROM player_game_stats
+        WHERE game_date = %s AND season = %s
+        GROUP BY espn_game_id, team_abbr
+    ''', (date, season))
+    totals_by_game: dict = defaultdict(dict)
+    for gid, abbr, total in c.fetchall():
+        totals_by_game[gid][abbr] = int(total or 0)
+
     conn.close()
 
     performers_by_game = defaultdict(list)
@@ -3937,14 +3951,32 @@ async def get_games_with_performers(date: str | None = None, season: str = "2026
     # ── 3. Merge by game_id ─────────────────────────────────────────────
     result = []
     for gid in sorted(performers_by_game.keys()):
-        info = api_games.get(gid) or {"id": gid, "completed": True,
-                                      "status": "Final", "clock": None,
-                                      "period": 0, "broadcast": ""}
-        # Derive home/away from performers when API data is absent
+        info = dict(api_games.get(gid) or {"id": gid, "completed": True,
+                                           "status": "Final", "clock": None,
+                                           "period": 0, "broadcast": ""})
+
+        # Derive home/away stubs from performers when API data is absent
         if not (info.get("home") or {}).get("abbr"):
             teams = list(dict.fromkeys(p['team_abbr'] for p in performers_by_game[gid]))
             info["away"] = {"abbr": teams[0] if teams else "", "score": None, "winner": False}
             info["home"] = {"abbr": teams[1] if len(teams) > 1 else "", "score": None, "winner": False}
+
+        # Overlay boxscore-derived team totals (authoritative for completed games)
+        totals = totals_by_game.get(gid, {})
+        if totals:
+            home_abbr = (info.get("home") or {}).get("abbr", "")
+            away_abbr = (info.get("away") or {}).get("abbr", "")
+            home_total = totals.get(home_abbr) or totals.get(home_abbr.upper())
+            away_total = totals.get(away_abbr) or totals.get(away_abbr.upper())
+            if home_total is not None:
+                info["home"] = {**info.get("home", {}),
+                                "score": home_total,
+                                "winner": bool(home_total > (away_total or 0))}
+            if away_total is not None:
+                info["away"] = {**info.get("away", {}),
+                                "score": away_total,
+                                "winner": bool(away_total > (home_total or 0))}
+
         result.append({**info, "performers": performers_by_game[gid]})
 
     return {"date": date, "games": result, "count": len(result)}

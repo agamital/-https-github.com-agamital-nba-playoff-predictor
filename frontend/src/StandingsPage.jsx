@@ -75,45 +75,38 @@ const GameWithPerformersCard = ({ game, onClick }) => {
     >
       {/* ── Score header ── */}
       <div className="px-4 pt-3 pb-2.5 border-b border-slate-800/80">
-        {/* Scoreline: IND 118 @ LAC 105 */}
-        {hasScore ? (
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <TeamLogo abbr={awayAbbr} size="md" />
-              <span className={`text-base font-black leading-none ${away?.winner ? 'text-white' : 'text-slate-400'}`}>
-                {awayAbbr}
-              </span>
-              <span className={`text-xl font-black tabular-nums leading-none ${away?.winner ? 'text-orange-400' : 'text-slate-500'}`}>
-                {away?.score}
-              </span>
-            </div>
 
-            <span className="text-slate-600 font-bold text-sm shrink-0">@</span>
-
-            <div className="flex items-center gap-2 min-w-0 justify-end">
-              <span className={`text-xl font-black tabular-nums leading-none ${home?.winner ? 'text-orange-400' : 'text-slate-500'}`}>
-                {home?.score}
-              </span>
-              <span className={`text-base font-black leading-none ${home?.winner ? 'text-white' : 'text-slate-400'}`}>
-                {homeAbbr}
-              </span>
-              <TeamLogo abbr={homeAbbr} size="md" />
-            </div>
+        {/* Prominent scoreline: [logo] IND  145 — 113  LAC [logo] */}
+        <div className="flex items-center justify-between gap-1 mb-1.5">
+          {/* Away */}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <TeamLogo abbr={awayAbbr} size="md" />
+            <span className={`text-sm font-black ${away?.winner ? 'text-white' : 'text-slate-400'}`}>{awayAbbr}</span>
           </div>
-        ) : (
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="flex items-center gap-2">
-              <TeamLogo abbr={awayAbbr} size="md" />
-              <span className="text-base font-black text-slate-300">{awayAbbr}</span>
-            </div>
-            <span className="text-slate-600 font-bold text-sm">@</span>
-            <div className="flex items-center gap-2">
-              <span className="text-base font-black text-slate-300">{homeAbbr}</span>
-              <TeamLogo abbr={homeAbbr} size="md" />
-            </div>
-          </div>
-        )}
 
+          {/* Scores */}
+          {hasScore ? (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className={`text-2xl font-black tabular-nums leading-none ${away?.winner ? 'text-white' : 'text-slate-500'}`}>
+                {away.score}
+              </span>
+              <span className="text-slate-600 font-bold text-base leading-none">—</span>
+              <span className={`text-2xl font-black tabular-nums leading-none ${home?.winner ? 'text-white' : 'text-slate-500'}`}>
+                {home.score}
+              </span>
+            </div>
+          ) : (
+            <span className="text-slate-600 font-bold text-sm">vs</span>
+          )}
+
+          {/* Home */}
+          <div className="flex items-center gap-1.5 min-w-0 justify-end">
+            <span className={`text-sm font-black ${home?.winner ? 'text-white' : 'text-slate-400'}`}>{homeAbbr}</span>
+            <TeamLogo abbr={homeAbbr} size="md" />
+          </div>
+        </div>
+
+        {/* Status + hint */}
         <div className="flex items-center justify-between">
           <GameStatusPill completed={completed} status={status} clock={clock} period={period} />
           <span className="text-[9px] text-slate-700 group-hover:text-orange-500/50 transition-colors font-medium">
