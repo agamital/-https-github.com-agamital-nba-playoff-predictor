@@ -603,12 +603,22 @@ def _fetch_standings_from_rapidapi() -> list:
         # Confirmed path: response is a dict containing 'standings'
         if isinstance(resp_val, dict):
             print(f"[RapidAPI] response sub-keys: {list(resp_val.keys())}")
-            for sub_key in ("standings", "data", "teams", "entries", "results"):
-                sub = resp_val.get(sub_key)
-                if isinstance(sub, list) and sub:
-                    rows = sub
-                    print(f"[RapidAPI] ✓ Found rows at response.{sub_key} — {len(rows)} items")
-                    break
+            standings_val = resp_val.get("standings", [])
+            print(f"[RapidAPI] standings type: {type(standings_val).__name__}  "
+                  f"len/keys: {len(standings_val) if isinstance(standings_val, (list,dict)) else '?'}")
+
+            if isinstance(standings_val, list):
+                rows = standings_val
+                print(f"[RapidAPI] ✓ response.standings is a list — {len(rows)} items")
+            elif isinstance(standings_val, dict):
+                print(f"[RapidAPI] response.standings is a dict — sub-keys: {list(standings_val.keys())}")
+                for k in ("entries", "teams", "rows", "data", "results", "response"):
+                    if isinstance(standings_val.get(k), list) and standings_val[k]:
+                        rows = standings_val[k]
+                        print(f"[RapidAPI] ✓ Found rows at response.standings.{k} — {len(rows)} items")
+                        break
+                if not rows:
+                    print(f"DEBUG STANDINGS CONTENT: {str(standings_val)[:500]}")
 
         # Fallback: response is already a list
         elif isinstance(resp_val, list) and resp_val:
@@ -625,6 +635,7 @@ def _fetch_standings_from_rapidapi() -> list:
                     break
 
     if not rows:
+        print(f"DEBUG STANDINGS CONTENT: {str(data.get('response', data))[:500]}")
         raise ValueError(
             f"Could not find standings list. "
             f"Top-level keys: {list(data.keys()) if isinstance(data, dict) else type(data).__name__}. "
