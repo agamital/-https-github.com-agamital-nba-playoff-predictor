@@ -1270,15 +1270,32 @@ const StandingsSyncCard = ({ addToast }) => {
             </div>
           </div>
 
-          {/* Last error */}
-          {(result?.last_error || (fails > 0 && standing?.last_sync_error)) && (
-            <div className="bg-red-950/40 border border-red-500/30 rounded-lg px-3 py-2">
-              <p className="text-red-400 text-[10px] font-black uppercase mb-1">Last Error</p>
-              <p className="text-red-300 text-xs font-mono break-all">
-                {result?.last_error || standing?.last_sync_error}
-              </p>
-            </div>
-          )}
+          {/* All-Star data warning — shown prominently when API returns wrong season type */}
+          {(() => {
+            const err = result?.last_error || standing?.last_sync_error || '';
+            if (!err.toLowerCase().includes('all-star')) return null;
+            return (
+              <div className="bg-orange-950/50 border border-orange-500/50 rounded-lg px-3 py-2.5 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-orange-400 text-xs font-black uppercase mb-0.5">Error: API returned All-Star data instead of Regular Season</p>
+                  <p className="text-orange-300/80 text-xs font-mono break-all">{err}</p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Last error (non All-Star) */}
+          {(result?.last_error || (fails > 0 && standing?.last_sync_error)) && (() => {
+            const err = result?.last_error || standing?.last_sync_error || '';
+            if (err.toLowerCase().includes('all-star')) return null;
+            return (
+              <div className="bg-red-950/40 border border-red-500/30 rounded-lg px-3 py-2">
+                <p className="text-red-400 text-[10px] font-black uppercase mb-1">Last Error</p>
+                <p className="text-red-300 text-xs font-mono break-all">{err}</p>
+              </div>
+            );
+          })()}
 
           {/* Sync result */}
           {result && (

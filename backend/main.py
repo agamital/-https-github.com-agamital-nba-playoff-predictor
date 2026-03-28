@@ -374,7 +374,8 @@ def _fetch_standings_from_api():
                   f"(season=2025-26, timeout={_NBA_TIMEOUT}s)…")
             standings_api = leaguestandingsv3.LeagueStandingsV3(
                 season='2025-26',
-                season_type_all_star='Regular Season',
+                season_type='Regular Season',          # primary filter — prevent All-Star data
+                season_type_all_star='Regular Season', # belt-and-suspenders for older API builds
                 headers=_NBA_HEADERS,
                 timeout=_NBA_TIMEOUT,
                 proxy=None,   # never route through a proxy — direct connection only
@@ -429,6 +430,30 @@ def _fetch_standings_from_api():
             'playoff_rank': 99,
             'games_back': games_back,
         })
+
+    # ── All-Star data guard ──────────────────────────────────────────────────
+    # The NBA API occasionally returns All-Star event data when season_type is
+    # not strictly enforced.  All-Star teams have non-standard conferences
+    # (e.g. '' or 'East All-Star') and names like "Team LeBron".
+    _ALLSTAR_KEYWORDS = ('all-star', 'all star', 'team lebron', 'team stephen',
+                         'team durant', 'team giannis', 'team curry')
+    bad_teams = [
+        t for t in standings
+        if t['conference'].lower().strip() not in ('east', 'west')
+        or any(kw in t['team_name'].lower() for kw in _ALLSTAR_KEYWORDS)
+    ]
+    if bad_teams:
+        sample = bad_teams[0]['team_name']
+        raise ValueError(
+            f"API returned All-Star data instead of Regular Season — "
+            f"first suspicious team: '{sample}'. "
+            f"Skipping save to prevent corrupting standings."
+        )
+    if len(standings) < 28:
+        raise ValueError(
+            f"API returned only {len(standings)} teams (expected 30) — "
+            f"data appears incomplete or non-regular-season."
+        )
 
     # Recompute ranks by win_pct, ties broken by wins
     for conf in ['East', 'West']:
@@ -651,6 +676,19 @@ def _persist_standings_to_db(standings: list) -> dict:
         # Snapshot existing statuses to detect significant rank changes after upsert
         c.execute("SELECT team_id, status, team_name FROM cached_standings WHERE season = '2026'")
         prev_status = {r[0]: {'status': r[1], 'name': r[2]} for r in c.fetchall()}
+
+        # Delete stale rows that are NOT in the fresh batch — removes any
+        # previously-saved All-Star or orphaned team rows from cached_standings.
+        fresh_team_ids = tuple(t['team_id'] for t in standings)
+        if fresh_team_ids:
+            placeholders = ','.join(['%s'] * len(fresh_team_ids))
+            c.execute(
+                f"DELETE FROM cached_standings WHERE season = '2026' AND team_id NOT IN ({placeholders})",
+                fresh_team_ids
+            )
+            deleted = c.rowcount
+            if deleted:
+                print(f"[Standings] Removed {deleted} stale row(s) from cached_standings (season=2026)")
 
         synced_at = datetime.utcnow()
         for t in standings:
