@@ -432,4 +432,21 @@ export const deleteAdminUser = async (adminUserId, userId) => {
   return response.data;
 };
 
+// Admin — Standings sync
+export const pushStandingsFromBrowser = async (resultSets) => {
+  const response = await api.post('/api/admin/standings/push', { resultSets });
+  return response.data;
+};
+
+export const testStandingsConnection = async () => {
+  const response = await api.get('/api/admin/standings/test');
+  return response.data;
+};
+
+// Admin — Play-In sync from API
+export const syncPlayinFromApi = async (season = '2026') => {
+  const response = await api.post('/api/admin/playin/sync-from-api', null, { params: { season } });
+  return response.data;
+};
+
 export default api;

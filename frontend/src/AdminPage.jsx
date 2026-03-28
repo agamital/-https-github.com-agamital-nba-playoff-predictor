@@ -1547,6 +1547,28 @@ const AdminPage = ({ currentUser }) => {
     }
   };
 
+  const [syncingFromApi, setSyncingFromApi] = useState(false);
+  const handleSyncPlayinFromApi = async () => {
+    setSyncingFromApi(true);
+    try {
+      const res = await api.syncPlayinFromApi();
+      const [updatedPlayin, updatedSeries] = await Promise.all([api.getAdminPlayin(), api.getAdminSeries()]);
+      setPlayin(updatedPlayin);
+      setSeries(updatedSeries);
+      const promoted = res.promoted ?? 0;
+      const processed = res.processed ?? 0;
+      const errs = res.errors?.length ?? 0;
+      addToast(
+        `API sync done — ${processed} finished, ${promoted} promoted${errs > 0 ? `, ${errs} error(s)` : ''}`,
+        promoted > 0 || errs === 0 ? 'success' : 'error'
+      );
+    } catch (e) {
+      addToast('API sync failed: ' + (e.response?.data?.detail || e.message), 'error');
+    } finally {
+      setSyncingFromApi(false);
+    }
+  };
+
   if (!currentUser || currentUser.role !== 'admin') {
     return (
       <div className="max-w-4xl mx-auto px-4 py-12 text-center">
@@ -1619,12 +1641,23 @@ const AdminPage = ({ currentUser }) => {
                   <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                     <Trophy className="w-6 h-6 text-purple-400" /> Play-In Games
                   </h2>
-                  <button onClick={handleSyncPlayin}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 font-bold text-sm transition-all"
-                    title="Re-run play-in progressions: create Game 3, advance R1 seeds, recalculate points">
-                    <Zap className="w-4 h-4" />
-                    Sync Play-In
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={handleSyncPlayinFromApi}
+                      disabled={syncingFromApi}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/20 border border-blue-500/40 text-blue-300 hover:bg-blue-500/30 font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Fetch finished Play-In results from RapidAPI and auto-promote winners in the bracket">
+                      {syncingFromApi
+                        ? <RefreshCw className="w-4 h-4 animate-spin" />
+                        : <Wifi className="w-4 h-4" />}
+                      {syncingFromApi ? 'Syncing…' : 'Sync from API'}
+                    </button>
+                    <button onClick={handleSyncPlayin}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 font-bold text-sm transition-all"
+                      title="Re-run play-in progressions: create Game 3, advance R1 seeds, recalculate points">
+                      <Zap className="w-4 h-4" />
+                      Sync Play-In
+                    </button>
+                  </div>
                 </div>
 
                 {Object.entries(byConf).map(([conf, confGames]) => {

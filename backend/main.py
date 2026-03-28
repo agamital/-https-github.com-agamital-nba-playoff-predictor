@@ -3164,6 +3164,20 @@ async def sync_playin(season: str = "2026"):
     conn.close()
     return {"message": f"Play-in sync complete — {len(completed)} completed games processed"}
 
+@app.post("/api/admin/playin/sync-from-api")
+async def admin_sync_playin_from_api(season: str = "2026"):
+    """
+    Fetch finished Play-In results from RapidAPI scoreboard and auto-promote
+    winners in the bracket.  Requires RAPIDAPI_KEY env var to be set.
+    """
+    import concurrent.futures
+    from game_processor import sync_playin_results_from_api
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        result = await loop.run_in_executor(pool, sync_playin_results_from_api, season)
+    return result
+
+
 def _get_futures_lock() -> bool:
     conn = get_db_conn()
     c = conn.cursor()
