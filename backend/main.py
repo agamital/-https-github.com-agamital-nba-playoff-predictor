@@ -524,19 +524,30 @@ def _parse_rapidapi_row(row: dict) -> dict | None:
         team_name = (team_obj.get("displayName") or team_obj.get("name") or
                      team_obj.get("fullName") or "")
 
-        # Build a name→value lookup from the stats list
+        # Build name→value lookup from stats list (keys lowercased for safe matching)
         stats_map = {}
         for s in (row.get("stats") or []):
-            key = s.get("name") or ""
-            stats_map[key.lower()] = s.get("value")
+            key = (s.get("name") or s.get("shortDisplayName") or "").lower()
+            if key:
+                stats_map[key] = s.get("value")
 
-        wins      = _safe_int(stats_map.get("wins"))
-        losses    = _safe_int(stats_map.get("losses"))
-        win_pct   = _safe_float(stats_map.get("winpercent") or stats_map.get("winpercentage")
-                                or stats_map.get("pct") or stats_map.get("winspercentage"))
-        gb        = _safe_float(stats_map.get("gamesbehind") or stats_map.get("gb"))
-        conf_rank = _safe_int(stats_map.get("playoffseed") or stats_map.get("conferencerank")
-                              or stats_map.get("rank") or row.get("seed"), 99)
+        wins    = _safe_int(stats_map.get("wins") or stats_map.get("w"))
+        losses  = _safe_int(stats_map.get("losses") or stats_map.get("l"))
+        win_pct = _safe_float(
+            stats_map.get("winpercent") or stats_map.get("winpercentage") or
+            stats_map.get("pct") or stats_map.get("winspercentage") or
+            stats_map.get("wpct") or stats_map.get("win%")
+        )
+        gb = _safe_float(
+            stats_map.get("gamesbehind") or stats_map.get("gb") or
+            stats_map.get("games behind") or stats_map.get("gamesback")
+        )
+        conf_rank = _safe_int(
+            stats_map.get("playoffseed") or stats_map.get("seed") or
+            stats_map.get("conferencerank") or stats_map.get("confrank") or
+            stats_map.get("rank") or row.get("seed"),
+            99
+        )
 
         # Compute win_pct from wins/losses if not in stats
         if win_pct == 0.0 and (wins + losses) > 0:
@@ -661,9 +672,13 @@ def _fetch_standings_from_rapidapi() -> list:
         team_obj = rows[0].get("team")
         if isinstance(team_obj, dict):
             print(f"[RapidAPI] First row team keys: {list(team_obj.keys())}")
+            print(f"[RapidAPI] First team displayName: {team_obj.get('displayName')}")
         stats_list = rows[0].get("stats")
         if isinstance(stats_list, list) and stats_list:
-            print(f"[RapidAPI] First row stats[0]: {stats_list[0]}  stats[1]: {stats_list[1] if len(stats_list)>1 else '—'}")
+            # Print ALL stat names so we can verify the exact keys
+            stat_names = [s.get("name") for s in stats_list]
+            print(f"[RapidAPI] All stat names in first row: {stat_names}")
+            print(f"[RapidAPI] stats sample: { {s['name']: s.get('value') for s in stats_list[:6]} }")
     print(f"[RapidAPI] First row sample: {str(rows[0])[:600]}")
 
     # ── Parse rows with multi-shape parser ──────────────────────────────
