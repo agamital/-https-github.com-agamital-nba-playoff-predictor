@@ -48,7 +48,14 @@ _RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Picks <noreply@nba-playoffs-2
 # APScheduler instance — created in startup(), referenced in shutdown()
 _scheduler = None
 
-# Direct URL — bypasses nba_api wrapper entirely, giving us full control over headers
+# ── RapidAPI (API-NBA) — primary data source ────────────────────────────────
+# Set RAPIDAPI_KEY in Railway environment variables.
+# Free plan: 100 requests/day — more than enough for 6-hour cron cycles.
+_RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
+_RAPIDAPI_URL  = "https://api-nba-v1.p.rapidapi.com/standings?league=standard&season=2025"
+_RAPIDAPI_HOST = "api-nba-v1.p.rapidapi.com"
+
+# ── Fallback: direct stats.nba.com request (used when RAPIDAPI_KEY not set) ──
 _NBA_STANDINGS_URL = (
     'https://stats.nba.com/stats/leaguestandingsv3'
     '?LeagueID=00&Season=2025-26&SeasonType=Regular%20Season'
@@ -372,6 +379,131 @@ def sync_teams():
 
 _ALLSTAR_KEYWORDS = ('all-star', 'all star', 'team lebron', 'team stephen',
                      'team durant', 'team giannis', 'team curry')
+
+# Map API-NBA team names → canonical NBA team IDs (from nba_api / our teams table).
+# API-NBA uses full city+name strings like "Golden State Warriors".
+_APINBA_NAME_TO_ID = {
+    "Atlanta Hawks":           1610612737,
+    "Boston Celtics":          1610612738,
+    "Brooklyn Nets":           1610612751,
+    "Charlotte Hornets":       1610612766,
+    "Chicago Bulls":           1610612741,
+    "Cleveland Cavaliers":     1610612739,
+    "Dallas Mavericks":        1610612742,
+    "Denver Nuggets":          1610612743,
+    "Detroit Pistons":         1610612765,
+    "Golden State Warriors":   1610612744,
+    "Houston Rockets":         1610612745,
+    "Indiana Pacers":          1610612754,
+    "LA Clippers":             1610612746,
+    "Los Angeles Lakers":      1610612747,
+    "Memphis Grizzlies":       1610612763,
+    "Miami Heat":              1610612748,
+    "Milwaukee Bucks":         1610612749,
+    "Minnesota Timberwolves":  1610612750,
+    "New Orleans Pelicans":    1610612740,
+    "New York Knicks":         1610612752,
+    "Oklahoma City Thunder":   1610612760,
+    "Orlando Magic":           1610612753,
+    "Philadelphia 76ers":      1610612755,
+    "Phoenix Suns":            1610612756,
+    "Portland Trail Blazers":  1610612757,
+    "Sacramento Kings":        1610612758,
+    "San Antonio Spurs":       1610612759,
+    "Toronto Raptors":         1610612761,
+    "Utah Jazz":               1610612762,
+    "Washington Wizards":      1610612764,
+}
+
+
+def _fetch_standings_from_rapidapi() -> list:
+    """
+    Fetch 2025-26 NBA standings from RapidAPI (api-nba-v1.p.rapidapi.com).
+    This endpoint is NOT blocked on Railway — it's a dedicated sports API
+    that doesn't apply the same IP restrictions as stats.nba.com.
+
+    Response shape:
+      { "response": [ { "team": {"name": ...}, "conference": {"name": ..., "rank": ...},
+                        "win": {"total": ...}, "loss": {"total": ...},
+                        "gamesBehind": "...", "win": {"percentage": "..."} } ] }
+    """
+    import requests as _http
+
+    if not _RAPIDAPI_KEY:
+        raise RuntimeError("RAPIDAPI_KEY environment variable not set")
+
+    headers = {
+        "x-rapidapi-key":  _RAPIDAPI_KEY,
+        "x-rapidapi-host": _RAPIDAPI_HOST,
+    }
+
+    print(f"[Standings] RapidAPI fetch (season=2025, timeout=10s)…")
+    resp = _http.get(_RAPIDAPI_URL, headers=headers, timeout=10)
+    print(f"[Standings] RapidAPI HTTP {resp.status_code}")
+    resp.raise_for_status()
+
+    data = resp.json()
+    rows = data.get("response", [])
+    if not rows:
+        raise ValueError(f"RapidAPI returned empty response array — raw: {str(data)[:300]}")
+
+    standings = []
+    skipped   = []
+    for row in rows:
+        try:
+            team_name = row["team"]["name"]
+            conf_raw  = row["conference"]["name"]          # "east" or "west"
+            conf      = conf_raw.capitalize()              # "East" / "West"
+            conf_rank = int(row["conference"]["rank"])
+            wins      = int(row["win"]["total"])
+            losses    = int(row["loss"]["total"])
+            win_pct   = float(row["win"].get("percentage") or 0)
+            try:
+                games_back = float(row.get("gamesBehind") or 0)
+            except (TypeError, ValueError):
+                games_back = 0.0
+
+            team_id = _APINBA_NAME_TO_ID.get(team_name)
+            if not team_id:
+                skipped.append(team_name)
+                print(f"[Standings] ⚠ Unknown team name from RapidAPI: '{team_name}' — skipping")
+                continue
+
+            standings.append({
+                "team_id":      team_id,
+                "team_name":    team_name,
+                "conference":   conf,
+                "wins":         wins,
+                "losses":       losses,
+                "win_pct":      win_pct,
+                "conf_rank":    conf_rank,
+                "playoff_rank": conf_rank,
+                "games_back":   games_back,
+            })
+        except (KeyError, TypeError, ValueError) as e:
+            print(f"[Standings] ⚠ Could not parse RapidAPI row: {e} — row: {str(row)[:200]}")
+
+    if skipped:
+        print(f"[Standings] ⚠ Skipped {len(skipped)} unknown teams: {skipped}")
+
+    # Validate
+    bad_teams = [
+        t for t in standings
+        if t["conference"].lower() not in ("east", "west")
+        or any(kw in t["team_name"].lower() for kw in _ALLSTAR_KEYWORDS)
+    ]
+    if bad_teams:
+        raise ValueError(
+            f"RapidAPI returned All-Star data — first bad team: '{bad_teams[0]['team_name']}'"
+        )
+    if len(standings) < 28:
+        raise ValueError(
+            f"RapidAPI returned only {len(standings)} mappable teams "
+            f"(skipped: {skipped}) — expected 30"
+        )
+
+    print(f"[Standings] ✓ RapidAPI — {len(standings)} teams parsed")
+    return standings
 
 
 def _parse_standings_result_sets(result_sets: list) -> list:
@@ -791,47 +923,54 @@ def _standings_sync_job():
     standings_ok = False
 
     # ── 1. Standings ────────────────────────────────────────────────────
+    # Try RapidAPI first (reliable, not IP-blocked). Fall back to direct
+    # stats.nba.com request if RAPIDAPI_KEY is missing or call fails.
     try:
-        fresh = _fetch_standings_from_api()
-
-        # Basic sanity-check: must have at least 28 teams (full NBA roster).
-        if len(fresh) < 28:
-            msg = f"Validation failed — only {len(fresh)} teams returned (expected 30)"
-            print(f"[Standings] ✗ {msg}")
-            _sync_status["last_error"] = msg
-            _sync_status["consecutive_failures"] += 1
+        if _RAPIDAPI_KEY:
+            print(f"[Standings] Using RapidAPI (key configured)")
+            fresh = _fetch_standings_from_rapidapi()
+            used_source = "rapidapi"
         else:
-            det = next((t for t in fresh if 'Detroit' in t.get('team_name', '')), None)
-            if det:
-                print(f"[Standings] Detroit Pistons check: {det['wins']}-{det['losses']} rank {det['conf_rank']}")
+            print(f"[Standings] RAPIDAPI_KEY not set — falling back to stats.nba.com")
+            fresh = _fetch_standings_from_api()
+            used_source = "nba_api"
 
-            result = _persist_standings_to_db(fresh)
-            if result['synced_at']:
-                _standings_cache["data"]       = fresh
-                _standings_cache["fetched_at"] = result['synced_at']
-                _standings_cache["expires"]    = result['synced_at'] + timedelta(hours=6)
-                next_at = (result['synced_at'] + timedelta(hours=6)).strftime('%H:%M UTC')
-                print(f"[Standings] ✓ {result['rows']} teams synced — next run ~{next_at}")
-                standings_ok = True
-                _sync_status["source"]               = "nba_api"
-                _sync_status["last_success_at"]      = result['synced_at']
-                _sync_status["last_error"]           = None
-                _sync_status["consecutive_failures"] = 0
-                # Push notification when teams cross playoff/play-in boundaries
-                changes = result.get('rank_changes', [])
-                if changes:
-                    parts = []
-                    for c in changes[:3]:
-                        emoji = '✅' if c['to'] == 'Playoff' else ('⚠️' if c['to'] == 'Play-In' else '❌')
-                        parts.append(f"{emoji} {c['team']}: {c['from']} → {c['to']}")
-                    body = '\n'.join(parts)
-                    if len(changes) > 3:
-                        body += f'\n+{len(changes) - 3} more'
-                    threading.Thread(
-                        target=_send_onesignal_notification,
-                        args=("🏀 NBA Standings Update", body),
-                        daemon=True,
-                    ).start()
+        result = _persist_standings_to_db(fresh)
+        if result['synced_at']:
+            _standings_cache["data"]       = fresh
+            _standings_cache["fetched_at"] = result['synced_at']
+            _standings_cache["expires"]    = result['synced_at'] + timedelta(hours=6)
+            next_at = (result['synced_at'] + timedelta(hours=6)).strftime('%H:%M UTC')
+            # Sanity log: show #1 East and #1 West
+            e1 = next((t for t in fresh if t['conference']=='East' and t['conf_rank']==1), None)
+            w1 = next((t for t in fresh if t['conference']=='West' and t['conf_rank']==1), None)
+            print(f"[Standings] ✓ {result['rows']} teams synced via {used_source} — "
+                  f"#1 East: {e1 and e1['team_name']}  #1 West: {w1 and w1['team_name']}  "
+                  f"next run ~{next_at}")
+            standings_ok = True
+            _sync_status["source"]               = used_source
+            _sync_status["last_success_at"]      = result['synced_at']
+            _sync_status["last_error"]           = None
+            _sync_status["consecutive_failures"] = 0
+            # Push notification when teams cross playoff/play-in boundaries
+            changes = result.get('rank_changes', [])
+            if changes:
+                parts = []
+                for c in changes[:3]:
+                    emoji = '✅' if c['to'] == 'Playoff' else ('⚠️' if c['to'] == 'Play-In' else '❌')
+                    parts.append(f"{emoji} {c['team']}: {c['from']} → {c['to']}")
+                body = '\n'.join(parts)
+                if len(changes) > 3:
+                    body += f'\n+{len(changes) - 3} more'
+                threading.Thread(
+                    target=_send_onesignal_notification,
+                    args=("🏀 NBA Standings Update", body),
+                    daemon=True,
+                ).start()
+        else:
+            msg = "DB persist returned no synced_at — check DB logs"
+            _sync_status["last_error"] = msg
+            _sync_status["consecutive_failures"] = _sync_status.get("consecutive_failures", 0) + 1
     except Exception as e:
         import traceback
         full_err = traceback.format_exc()
@@ -1493,38 +1632,66 @@ async def admin_push_standings(payload: dict):
 @app.get("/api/admin/standings/test")
 async def admin_test_standings():
     """
-    Quick connection test — tries to fetch standings via direct HTTP and returns
-    the #1 East seed name.  Use the 'Test Connection' button in the Admin Panel.
+    Quick connection test — tries RapidAPI first (if key set), then stats.nba.com.
+    Returns #1 East/West team so you can visually confirm correct data.
     """
-    import concurrent.futures, random, requests as _http
-    def _do_test():
+    import concurrent.futures
+
+    loop = asyncio.get_event_loop()
+
+    # ── Try RapidAPI ────────────────────────────────────────────────────
+    if _RAPIDAPI_KEY:
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                standings = await loop.run_in_executor(pool, _fetch_standings_from_rapidapi)
+            east = sorted([t for t in standings if t['conference'] == 'East'], key=lambda x: x['conf_rank'])
+            west = sorted([t for t in standings if t['conference'] == 'West'], key=lambda x: x['conf_rank'])
+            return {
+                "success":      True,
+                "source":       "rapidapi",
+                "east_no1":     east[0]['team_name'] if east else None,
+                "west_no1":     west[0]['team_name'] if west else None,
+                "east_top3":    [f"{t['team_name']} ({t['wins']}-{t['losses']})" for t in east[:3]],
+                "west_top3":    [f"{t['team_name']} ({t['wins']}-{t['losses']})" for t in west[:3]],
+                "total_teams":  len(standings),
+            }
+        except Exception as rapidapi_err:
+            rapidapi_error = f"{type(rapidapi_err).__name__}: {str(rapidapi_err)[:300]}"
+            print(f"[Test] RapidAPI failed: {rapidapi_error}")
+    else:
+        rapidapi_error = "RAPIDAPI_KEY not set in environment"
+
+    # ── Try stats.nba.com fallback ──────────────────────────────────────
+    import random, requests as _http
+    def _do_nba_test():
         ua = random.choice(_USER_AGENTS)
         headers = {**_NBA_HEADERS, 'User-Agent': ua}
         http_resp = _http.get(_NBA_STANDINGS_URL, headers=headers, timeout=15, allow_redirects=True)
         http_resp.raise_for_status()
         return http_resp.json()
 
-    loop = asyncio.get_event_loop()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            raw = await loop.run_in_executor(pool, _do_test)
+            raw = await loop.run_in_executor(pool, _do_nba_test)
         standings = _parse_standings_result_sets(raw['resultSets'])
         east = sorted([t for t in standings if t['conference'] == 'East'], key=lambda x: x['conf_rank'])
         west = sorted([t for t in standings if t['conference'] == 'West'], key=lambda x: x['conf_rank'])
         return {
-            "success":      True,
-            "east_no1":     east[0]['team_name'] if east else None,
-            "west_no1":     west[0]['team_name'] if west else None,
-            "east_top3":    [f"{t['team_name']} ({t['wins']}-{t['losses']})" for t in east[:3]],
-            "west_top3":    [f"{t['team_name']} ({t['wins']}-{t['losses']})" for t in west[:3]],
-            "total_teams":  len(standings),
+            "success":        True,
+            "source":         "stats.nba.com",
+            "rapidapi_error": rapidapi_error,
+            "east_no1":       east[0]['team_name'] if east else None,
+            "west_no1":       west[0]['team_name'] if west else None,
+            "east_top3":      [f"{t['team_name']} ({t['wins']}-{t['losses']})" for t in east[:3]],
+            "west_top3":      [f"{t['team_name']} ({t['wins']}-{t['losses']})" for t in west[:3]],
+            "total_teams":    len(standings),
         }
-    except Exception as e:
-        import traceback
+    except Exception as nba_err:
         return {
-            "success": False,
-            "error":   f"{type(e).__name__}: {str(e)[:400]}",
-            "hint":    "If this is a connection error, Railway IP may be blocked. Use 'Fetch via Browser' instead.",
+            "success":        False,
+            "rapidapi_error": rapidapi_error,
+            "error":          f"{type(nba_err).__name__}: {str(nba_err)[:400]}",
+            "hint":           "Set RAPIDAPI_KEY in Railway env vars to use RapidAPI (not IP-blocked). Or use 'Fetch via Browser'.",
         }
 
 

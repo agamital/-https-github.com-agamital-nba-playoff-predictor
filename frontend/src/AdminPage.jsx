@@ -1273,10 +1273,11 @@ const StandingsSyncCard = ({ addToast }) => {
   const SourceBadge = ({ source }) => {
     if (!source) return null;
     const cfg = {
-      nba_api:       { label: 'Live NBA API',        icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
-      browser_push:  { label: 'Browser Push',         icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
-      database:      { label: 'Database Cache',       icon: Database,      cls: 'bg-blue-500/20  text-blue-400  border-blue-500/30'  },
-      hardcoded:     { label: 'Hardcoded Fallback ⚠', icon: AlertTriangle, cls: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
+      rapidapi:      { label: 'RapidAPI ✓',           icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
+      nba_api:       { label: 'stats.nba.com',         icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
+      browser_push:  { label: 'Browser Push',          icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
+      database:      { label: 'Database Cache',        icon: Database,      cls: 'bg-blue-500/20  text-blue-400  border-blue-500/30'  },
+      hardcoded:     { label: 'Hardcoded Fallback ⚠',  icon: AlertTriangle, cls: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
     }[source] || { label: source, icon: Activity, cls: 'bg-slate-700 text-slate-400 border-slate-600' };
     const Icon = cfg.icon;
     return (
@@ -1367,7 +1368,7 @@ const StandingsSyncCard = ({ addToast }) => {
             }`}>
               {testResult.success ? (
                 <div>
-                  <p className="flex items-center gap-1.5"><CheckCircle className="w-4 h-4" /> Server can reach NBA API ✓</p>
+                  <p className="flex items-center gap-1.5"><CheckCircle className="w-4 h-4" /> Connected via {testResult.source === 'rapidapi' ? 'RapidAPI ✓' : testResult.source ?? 'NBA API'}</p>
                   <p className="text-xs mt-1 font-normal">
                     #1 East: <span className="font-black">{testResult.east_no1}</span> &nbsp;|&nbsp;
                     #1 West: <span className="font-black">{testResult.west_no1}</span>

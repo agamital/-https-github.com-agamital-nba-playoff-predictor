@@ -216,15 +216,19 @@ const StandingsPage = () => {
             {/* Data source badge */}
             {dataSource && (
               <span className={`flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full ${
+                dataSource === 'rapidapi'  ? 'bg-green-500/15 text-green-400' :
                 dataSource === 'nba_api'   ? 'bg-green-500/15 text-green-400' :
+                dataSource === 'browser_push' ? 'bg-green-500/15 text-green-400' :
                 dataSource === 'database'  ? 'bg-blue-500/15 text-blue-400' :
                                              'bg-amber-500/15 text-amber-400'
               }`}>
-                {dataSource === 'nba_api'  ? <Wifi className="w-3 h-3" />      :
+                {['rapidapi','nba_api','browser_push'].includes(dataSource) ? <Wifi className="w-3 h-3" /> :
                  dataSource === 'database' ? <Database className="w-3 h-3" /> :
                                              <AlertTriangle className="w-3 h-3" />}
-                {dataSource === 'nba_api'  ? 'Live NBA API' :
-                 dataSource === 'database' ? 'Database Cache' : 'Hardcoded Fallback'}
+                {dataSource === 'rapidapi'     ? 'RapidAPI' :
+                 dataSource === 'nba_api'      ? 'Live NBA API' :
+                 dataSource === 'browser_push' ? 'Browser Push' :
+                 dataSource === 'database'     ? 'Database Cache' : 'Hardcoded Fallback'}
               </span>
             )}
 
