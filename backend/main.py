@@ -531,29 +531,44 @@ def _fetch_standings_from_rapidapi() -> list:
 
     data = resp.json()
 
-    # ── Locate the rows array — try every common key ─────────────────────
-    # Known wrappers: { "standings": [...] }, { "data": [...] },
-    #                 { "response": [...] }, { "body": [...] },
-    #                 or a bare list []
+    # ── Locate the rows array ─────────────────────────────────────────────
+    # We now know the top-level shape is {"status": ..., "response": ...}.
+    # "response" may itself be a list (rows directly) or a dict with a nested list.
     rows = None
+
     if isinstance(data, list):
         rows = data
         print(f"[RapidAPI] Response is a bare list — {len(rows)} items")
-    else:
-        for key in ("standings", "data", "response", "body", "result", "results"):
-            if isinstance(data.get(key), list) and data[key]:
-                rows = data[key]
+    elif isinstance(data, dict):
+        print(f"[RapidAPI] Top-level keys: {list(data.keys())}")
+        # Step 1: look for a list directly at top level or one level deep
+        for key in ("response", "standings", "data", "body", "result", "results"):
+            val = data.get(key)
+            if isinstance(val, list) and val:
+                rows = val
                 print(f"[RapidAPI] Found rows under key '{key}' — {len(rows)} items")
                 break
+            # val is a dict — search one level deeper
+            if isinstance(val, dict):
+                print(f"[RapidAPI] '{key}' is a dict with sub-keys: {list(val.keys())}")
+                for sub_key in ("standings", "data", "teams", "results", "response"):
+                    sub = val.get(sub_key)
+                    if isinstance(sub, list) and sub:
+                        rows = sub
+                        print(f"[RapidAPI] Found rows under '{key}.{sub_key}' — {len(rows)} items")
+                        break
+                if rows:
+                    break
 
     if not rows:
         raise ValueError(
-            f"Could not find standings array in response. "
-            f"Top-level keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}. "
-            f"Full response logged above."
+            f"Could not find standings list in response. "
+            f"Top-level keys: {list(data.keys()) if isinstance(data, dict) else type(data).__name__}. "
+            f"Full response logged above — check Railway logs."
         )
 
-    # Log the first row so we can see the field names
+    # Log first row field names so we can verify the parser will match
+    print(f"[RapidAPI] First row keys: {list(rows[0].keys()) if isinstance(rows[0], dict) else type(rows[0]).__name__}")
     print(f"[RapidAPI] First row sample: {str(rows[0])[:500]}")
 
     # ── Parse rows with multi-shape parser ──────────────────────────────
@@ -585,7 +600,12 @@ def _fetch_standings_from_rapidapi() -> list:
             f"Check logs for 'Row N — no parser matched' to diagnose field names."
         )
 
+    # Log #1 East and #1 West so we can visually confirm data is current
+    e1 = next((t for t in standings if t["conference"] == "East" and t["conf_rank"] == 1), None)
+    w1 = next((t for t in standings if t["conference"] == "West" and t["conf_rank"] == 1), None)
     print(f"[RapidAPI] ✓ {len(standings)} teams parsed successfully")
+    print(f"[RapidAPI] #1 East: {e1['team_name']} ({e1['wins']}-{e1['losses']}) wins={e1['wins']}" if e1 else "[RapidAPI] #1 East: not found")
+    print(f"[RapidAPI] #1 West: {w1['team_name']} ({w1['wins']}-{w1['losses']}) wins={w1['wins']}" if w1 else "[RapidAPI] #1 West: not found")
     return standings
 
 
