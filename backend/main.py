@@ -52,7 +52,7 @@ _scheduler = None
 # Set RAPIDAPI_KEY in Railway environment variables.
 # Free plan: 100 requests/day — more than enough for 6-hour cron cycles.
 _RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
-_RAPIDAPI_URL  = "https://nba-api-free-data.p.rapidapi.com/nba-standing-all-conference"
+_RAPIDAPI_URL  = "https://nba-api-free-data.p.rapidapi.com/nba-league-standings?year=2024"
 _RAPIDAPI_HOST = "nba-api-free-data.p.rapidapi.com"
 
 # ── Fallback: direct stats.nba.com request (used when RAPIDAPI_KEY not set) ──
