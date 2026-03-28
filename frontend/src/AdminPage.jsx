@@ -1186,7 +1186,7 @@ const _NBA_BROWSER_HEADERS = {
   'x-nba-stats-token': 'true',
 };
 
-const StandingsSyncCard = ({ addToast }) => {
+const StandingsSyncCard = ({ addToast, onPlayinRefreshed }) => {
   const [expanded, setExpanded]     = useState(false);
   const [syncing, setSyncing]       = useState(false);
   const [browserFetching, setBrowserFetching] = useState(false);
@@ -1206,10 +1206,19 @@ const StandingsSyncCard = ({ addToast }) => {
     try {
       const res = await api.adminSyncStandings();
       setResult(res);
-      const fresh = await api.getStandings();
+      const [fresh, freshPlayin] = await Promise.all([
+        api.getStandings(),
+        api.getAdminPlayin(),
+      ]);
       setStanding(fresh);
-      if (res.success) addToast('Standings synced from NBA API ✓', 'success');
-      else addToast('Standings sync failed — see details below', 'error');
+      if (onPlayinRefreshed) onPlayinRefreshed(freshPlayin);
+      if (res.success) {
+        const updated = res.playin_refreshed?.updated ?? [];
+        const suffix  = updated.length ? ` · ${updated.length} play-in matchup(s) updated` : '';
+        addToast(`Standings synced ✓${suffix}`, 'success');
+      } else {
+        addToast('Standings sync failed — see details below', 'error');
+      }
     } catch (e) {
       const msg = e.response?.data?.detail || e.message;
       setResult({ success: false, last_error: msg });
@@ -1237,9 +1246,15 @@ const StandingsSyncCard = ({ addToast }) => {
       // Push raw resultSets to our backend
       const pushRes = await api.pushStandingsFromBrowser(data.resultSets);
       setResult({ success: true, ...pushRes, last_success_at: pushRes.synced_at });
-      const fresh = await api.getStandings();
+      const [fresh, freshPlayin] = await Promise.all([
+        api.getStandings(),
+        api.getAdminPlayin(),
+      ]);
       setStanding(fresh);
-      addToast(`✓ Browser fetch saved ${pushRes.rows_saved} teams — #1 East: ${pushRes.east_no1}`, 'success');
+      if (onPlayinRefreshed) onPlayinRefreshed(freshPlayin);
+      const updated = pushRes.playin_refreshed?.updated ?? [];
+      const suffix  = updated.length ? ` · ${updated.length} play-in matchup(s) updated` : '';
+      addToast(`✓ Browser fetch saved ${pushRes.rows_saved} teams — #1 East: ${pushRes.east_no1}${suffix}`, 'success');
     } catch (e) {
       const isCors = e.message?.toLowerCase().includes('failed to fetch') || e.message?.toLowerCase().includes('cors');
       const msg = isCors
@@ -1635,7 +1650,7 @@ const AdminPage = ({ currentUser }) => {
       </div>
 
       <UserManagementCard currentUser={currentUser} addToast={addToast} />
-      <StandingsSyncCard addToast={addToast} />
+      <StandingsSyncCard addToast={addToast} onPlayinRefreshed={setPlayin} />
       <FuturesLockCard />
       <TeamOddsCard addToast={addToast} />
       <OddsCard />

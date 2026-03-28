@@ -1165,6 +1165,11 @@ def _standings_sync_job():
             _sync_status["last_success_at"]      = result['synced_at']
             _sync_status["last_error"]           = None
             _sync_status["consecutive_failures"] = 0
+            # Keep play-in matchups in sync with the latest seeds 7-10
+            try:
+                refresh_playin_matchups('2026')
+            except Exception as _rpe:
+                print(f"[Standings] refresh_playin_matchups failed (non-fatal): {_rpe}")
             # Push notification when teams cross playoff/play-in boundaries
             changes = result.get('rank_changes', [])
             if changes:
@@ -1442,6 +1447,124 @@ def _initial_standings_sync():
     print(f"[Standings] Initial sync starts in {delay:.0f}s")
     time.sleep(delay)
     _standings_sync_job()
+
+def refresh_playin_matchups(season: str = '2026') -> dict:
+    """
+    Re-align the playin_games table with the current standings for a season.
+
+    For each conference:
+      - Reads conf_rank 7 & 8 → updates the '7v8' game (if still active / not started)
+      - Reads conf_rank 9 & 10 → updates the '9v10' game (if still active / not started)
+
+    A game is considered "not started" when:
+      status = 'active'  AND  winner_id IS NULL
+
+    Teams that have a result (winner_id set) are never touched, so completed
+    play-in games are always preserved.
+
+    Returns a summary dict for logging / API responses.
+    """
+    summary = {'updated': [], 'skipped': [], 'errors': []}
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+
+        for conf_short, conf_full in [('East', 'Eastern'), ('West', 'Western')]:
+            # Fetch seeds 7-10 for this conference from latest cached standings
+            c.execute(
+                """SELECT team_id, team_name, conf_rank
+                   FROM cached_standings
+                   WHERE season = %s AND conference = %s
+                     AND conf_rank BETWEEN 7 AND 10
+                   ORDER BY conf_rank""",
+                (season, conf_short)
+            )
+            rows = c.fetchall()
+            seed_map = {r[2]: {'team_id': r[0], 'team_name': r[1]} for r in rows}
+
+            if len(seed_map) < 4:
+                msg = f"{conf_full}: only {len(seed_map)} seeds 7-10 in DB — skipping"
+                print(f"[PlayinRefresh] {msg}")
+                summary['errors'].append(msg)
+                continue
+
+            for game_type, s1, s2 in [('7v8', 7, 8), ('9v10', 9, 10)]:
+                t1 = seed_map[s1]
+                t2 = seed_map[s2]
+
+                # Fetch the existing row for this conference + game_type
+                c.execute(
+                    """SELECT id, team1_id, team2_id, winner_id, status
+                       FROM playin_games
+                       WHERE season = %s AND conference = %s AND game_type = %s
+                       LIMIT 1""",
+                    (season, conf_full, game_type)
+                )
+                row = c.fetchone()
+
+                if row is None:
+                    # No row yet — insert it
+                    c.execute(
+                        """INSERT INTO playin_games
+                               (season, conference, game_type,
+                                team1_id, team1_seed, team2_id, team2_seed, status)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, 'active')""",
+                        (season, conf_full, game_type,
+                         t1['team_id'], s1, t2['team_id'], s2)
+                    )
+                    msg = f"{conf_full} {game_type}: inserted #{s1} {t1['team_name']} vs #{s2} {t2['team_name']}"
+                    print(f"[PlayinRefresh] {msg}")
+                    summary['updated'].append(msg)
+                    continue
+
+                row_id, db_t1, db_t2, winner_id, status = row
+
+                # Skip games that have already been played
+                if winner_id is not None or status != 'active':
+                    msg = f"{conf_full} {game_type}: already played/completed — skipping"
+                    print(f"[PlayinRefresh] {msg}")
+                    summary['skipped'].append(msg)
+                    continue
+
+                # Check if anything actually changed
+                new_t1, new_t2 = t1['team_id'], t2['team_id']
+                if db_t1 == new_t1 and db_t2 == new_t2:
+                    msg = f"{conf_full} {game_type}: unchanged ({t1['team_name']} vs {t2['team_name']})"
+                    print(f"[PlayinRefresh] {msg}")
+                    summary['skipped'].append(msg)
+                    continue
+
+                # Update teams
+                c.execute(
+                    """UPDATE playin_games
+                       SET team1_id = %s, team1_seed = %s,
+                           team2_id = %s, team2_seed = %s
+                       WHERE id = %s""",
+                    (new_t1, s1, new_t2, s2, row_id)
+                )
+                msg = (f"{conf_full} {game_type}: updated to "
+                       f"#{s1} {t1['team_name']} vs #{s2} {t2['team_name']}")
+                print(f"[PlayinRefresh] {msg}")
+                summary['updated'].append(msg)
+
+        conn.commit()
+    except Exception as e:
+        msg = f"refresh_playin_matchups error: {type(e).__name__}: {e}"
+        print(f"[PlayinRefresh] {msg}")
+        summary['errors'].append(msg)
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+    print(f"[PlayinRefresh] done — {len(summary['updated'])} updated, "
+          f"{len(summary['skipped'])} skipped, {len(summary['errors'])} errors")
+    return summary
+
 
 def generate_matchups(force_conference=None):
     standings = get_standings()
@@ -1792,6 +1915,11 @@ async def admin_standings_sync():
 
     last_success = _sync_status.get("last_success_at")
     last_attempt = _sync_status.get("last_attempt_at")
+
+    # Run play-in refresh independently of standings success so the admin
+    # always gets up-to-date matchup data after pressing the sync button.
+    playin_refresh = refresh_playin_matchups('2026') if success else None
+
     return {
         "success":              success,
         "data_source":          _sync_status.get("source", "unknown"),
@@ -1801,6 +1929,7 @@ async def admin_standings_sync():
         "last_attempt_at":      last_attempt.isoformat() if last_attempt else None,
         "nba_api_available":    NBA_API_AVAILABLE,
         "static_mode":          datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF,
+        "playin_refreshed":     playin_refresh,
     }
 
 @app.post("/api/admin/standings/push")
@@ -1838,11 +1967,15 @@ async def admin_push_standings(payload: dict):
          if t['conference'] == 'East'), None
     )
     print(f"[Standings] ✓ Browser-pushed {result['rows']} teams. #1 East: {east_no1 and east_no1['team_name']}")
+
+    playin_refresh = refresh_playin_matchups('2026')
+
     return {
-        "success":    True,
-        "rows_saved": result['rows'],
-        "east_no1":   east_no1['team_name'] if east_no1 else None,
-        "synced_at":  result['synced_at'].isoformat(),
+        "success":          True,
+        "rows_saved":       result['rows'],
+        "east_no1":         east_no1['team_name'] if east_no1 else None,
+        "synced_at":        result['synced_at'].isoformat(),
+        "playin_refreshed": playin_refresh,
     }
 
 
