@@ -1401,6 +1401,7 @@ def _apply_player_stats_migration():
             espn_player_id TEXT    NOT NULL,
             player_name    TEXT    NOT NULL,
             espn_team_id   TEXT    NOT NULL,
+            team_abbr      TEXT    DEFAULT '',
             season         TEXT    DEFAULT '2026',
             minutes        REAL    DEFAULT 0,
             points         INTEGER DEFAULT 0,
@@ -1421,6 +1422,15 @@ def _apply_player_stats_migration():
             plus_minus     INTEGER DEFAULT 0,
             UNIQUE(espn_game_id, espn_player_id)
         )''')
+
+        # Add team_abbr to player_game_stats if it doesn't exist yet
+        try:
+            c.execute(
+                "ALTER TABLE player_game_stats "
+                "ADD COLUMN IF NOT EXISTS team_abbr TEXT DEFAULT ''"
+            )
+        except Exception:
+            pass
 
         print("[Migration] player_stats + player_game_stats tables ensured")
         conn.close()
@@ -1672,7 +1682,9 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
 
         game_count = 0
         for team_entry in players_section:
-            espn_team_id = str((team_entry.get("team") or {}).get("id", ""))
+            team_obj     = team_entry.get("team") or {}
+            espn_team_id = str(team_obj.get("id", ""))
+            team_abbr_val = (team_obj.get("abbreviation") or team_obj.get("displayName") or "").upper()
             statistics   = team_entry.get("statistics") or []
             if not statistics:
                 continue
@@ -1724,12 +1736,13 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
                 c.execute('''
                     INSERT INTO player_game_stats
                         (espn_game_id, game_date, espn_player_id, player_name,
-                         espn_team_id, season, minutes, points, rebounds, assists,
-                         steals, blocks, turnovers, fgm, fga, fg3m, fg3a,
-                         ftm, fta, oreb, dreb, fouls, plus_minus)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                         espn_team_id, team_abbr, season, minutes, points,
+                         rebounds, assists, steals, blocks, turnovers,
+                         fgm, fga, fg3m, fg3a, ftm, fta, oreb, dreb, fouls, plus_minus)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                             %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (espn_game_id, espn_player_id) DO UPDATE SET
+                        team_abbr  = EXCLUDED.team_abbr,
                         points     = EXCLUDED.points,
                         rebounds   = EXCLUDED.rebounds,
                         assists    = EXCLUDED.assists,
@@ -1744,7 +1757,7 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
                         fouls=EXCLUDED.fouls,
                         plus_minus=EXCLUDED.plus_minus
                 ''', (event_id, date_iso, espn_pid, pname, espn_team_id,
-                      season, minutes, points, rebounds, assists,
+                      team_abbr_val, season, minutes, points, rebounds, assists,
                       steals, blocks, turnovers, fgm, fga, fg3m, fg3a,
                       ftm, fta, oreb, dreb, fouls, plus_minus))
                 game_count += 1
@@ -3763,16 +3776,15 @@ async def get_top_performers(date: str | None = None, limit: int = 5,
     conn = get_db_conn()
     c    = conn.cursor()
     c.execute('''
-        SELECT pgs.espn_player_id, pgs.player_name, pgs.espn_team_id,
+        SELECT pgs.espn_player_id, pgs.player_name,
+               COALESCE(NULLIF(pgs.team_abbr,''), pgs.espn_team_id) AS espn_team_id,
                pgs.points, pgs.rebounds, pgs.assists, pgs.steals, pgs.blocks,
                pgs.fgm, pgs.fga, pgs.fg3m, pgs.fg3a, pgs.ftm, pgs.fta,
                pgs.minutes, pgs.turnovers, pgs.plus_minus,
-               t.abbreviation  AS team_abbr,
-               t.id            AS nba_team_id
+               COALESCE(NULLIF(pgs.team_abbr,''), pgs.espn_team_id) AS team_abbr,
+               t.id AS nba_team_id
         FROM player_game_stats pgs
-        LEFT JOIN teams t
-               ON t.espn_team_id = pgs.espn_team_id
-               OR LOWER(t.abbreviation) = LOWER(pgs.espn_team_id)
+        LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(pgs.team_abbr)
         WHERE pgs.game_date = %s
           AND pgs.season    = %s
         ORDER BY pgs.points DESC, pgs.rebounds DESC
@@ -3780,25 +3792,6 @@ async def get_top_performers(date: str | None = None, limit: int = 5,
     ''', (date, season, limit))
     rows = c.fetchall()
     cols = [d[0] for d in c.description]
-
-    # Fallback: if the JOIN found nothing, try matching by ESPN numeric team ID
-    # stored on teams table (some tables store ESPN IDs as a string column)
-    if not rows:
-        c.execute('''
-            SELECT pgs.espn_player_id, pgs.player_name, pgs.espn_team_id,
-                   pgs.points, pgs.rebounds, pgs.assists, pgs.steals, pgs.blocks,
-                   pgs.fgm, pgs.fga, pgs.fg3m, pgs.fg3a, pgs.ftm, pgs.fta,
-                   pgs.minutes, pgs.turnovers, pgs.plus_minus,
-                   pgs.espn_team_id AS team_abbr,
-                   NULL             AS nba_team_id
-            FROM player_game_stats pgs
-            WHERE pgs.game_date = %s
-              AND pgs.season    = %s
-            ORDER BY pgs.points DESC, pgs.rebounds DESC
-            LIMIT %s
-        ''', (date, season, limit))
-        rows = c.fetchall()
-        cols = [d[0] for d in c.description]
 
     conn.close()
 
