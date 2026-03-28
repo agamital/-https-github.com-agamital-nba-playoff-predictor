@@ -432,6 +432,20 @@ export const deleteAdminUser = async (adminUserId, userId) => {
   return response.data;
 };
 
+// Futures page — combined static data (teams + odds + lock)
+export const getFuturesPageData = async (season = '2026') => {
+  const response = await api.get('/api/futures/page-data', { params: { season } });
+  return response.data;
+};
+
+// Player search — debounced, conference-filtered, sorted by PPG
+export const searchPlayers = async (q, conference = 'All', limit = 7, season = '2026') => {
+  const response = await api.get('/api/players/search', {
+    params: { q, conference, limit, season },
+  });
+  return response.data;
+};
+
 // Admin — Play-In sync from API
 export const syncPlayinFromApi = async (season = '2026') => {
   const response = await api.post('/api/admin/playin/sync-from-api', null, { params: { season } });

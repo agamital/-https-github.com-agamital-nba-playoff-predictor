@@ -1432,6 +1432,15 @@ def _apply_player_stats_migration():
         except Exception:
             pass
 
+        # Index for fast player name search (supports ILIKE prefix queries)
+        try:
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_player_stats_name "
+                "ON player_stats (player_name text_pattern_ops)"
+            )
+        except Exception:
+            pass
+
         print("[Migration] player_stats + player_game_stats tables ensured")
         conn.close()
     except Exception as e:
@@ -4465,6 +4474,122 @@ async def players_playoff_eligible(season: str = "2026"):
         if conn:
             try: conn.close()
             except Exception: pass
+
+
+@app.get("/api/futures/page-data")
+async def get_futures_page_data(season: str = "2026"):
+    """
+    Single combined endpoint for FuturesPage static data:
+    playoff-eligible teams (all / west / east), MVP odds multipliers, lock status.
+    Uses ONE DB connection, no get_standings() call — reads cached_standings directly.
+    """
+    conn = get_db_conn()
+    c    = conn.cursor()
+
+    # ── Teams: join cached_standings (top-10 per conf) with teams table ─────
+    c.execute('''
+        SELECT cs.team_id, cs.conference, cs.conf_rank,
+               t.name, t.abbreviation, t.logo_url,
+               COALESCE(t.odds_championship, 1.0) AS odds_championship,
+               COALESCE(t.odds_conference,   1.0) AS odds_conference
+        FROM cached_standings cs
+        JOIN teams t ON t.id = cs.team_id
+        WHERE cs.conf_rank <= 10
+        ORDER BY cs.conference, cs.conf_rank
+    ''')
+    rows = c.fetchall()
+    cols = [d[0] for d in c.description]
+    all_teams, west_teams, east_teams = [], [], []
+    for row in rows:
+        r = dict(zip(cols, row))
+        obj = {
+            'id':              r['team_id'],
+            'name':            r['name'],
+            'abbreviation':    r['abbreviation'],
+            'logo_url':        r['logo_url'],
+            'conference':      r['conference'],
+            'conf_rank':       r['conf_rank'],
+            'odds_championship': float(r['odds_championship']),
+            'odds_conference':   float(r['odds_conference']),
+        }
+        all_teams.append(obj)
+        if r['conference'] in ('West', 'Western'):
+            west_teams.append(obj)
+        elif r['conference'] in ('East', 'Eastern'):
+            east_teams.append(obj)
+
+    # ── MVP odds multipliers from site_settings ──────────────────────────────
+    c.execute(
+        "SELECT key, value FROM site_settings "
+        "WHERE key LIKE 'odds_%'"
+    )
+    odds = {row[0].replace('odds_', ''): float(row[1])
+            for row in c.fetchall() if row[1]}
+
+    # ── Lock status ───────────────────────────────────────────────────────────
+    c.execute("SELECT value FROM site_settings WHERE key = 'futures_locked'")
+    lock_row = c.fetchone()
+    locked   = bool(lock_row and lock_row[0] == '1')
+
+    conn.close()
+    return {
+        'teams':      all_teams,
+        'west_teams': west_teams,
+        'east_teams': east_teams,
+        'odds':       odds,
+        'locked':     locked,
+    }
+
+
+@app.get("/api/players/search")
+async def search_players(q: str = "", conference: str = "All",
+                         limit: int = 7, season: str = "2026"):
+    """
+    Debounced player search for MVP autocomplete.
+    Returns players sorted by PPG (star power), optionally filtered by conference.
+    Requires q >= 2 characters.
+    """
+    if len(q) < 2:
+        return {"players": [], "total": 0}
+
+    conn = get_db_conn()
+    c    = conn.cursor()
+
+    conf_filter = ""
+    params: list = [season, f"%{q}%"]
+    if conference and conference not in ("All", ""):
+        conf_filter = "AND t.conference = %s"
+        params.append(conference)
+
+    c.execute(f'''
+        SELECT ps.player_id, ps.player_name, ps.team_abbreviation,
+               COALESCE(ps.pts_per_game, 0) AS ppg,
+               t.logo_url, t.conference
+        FROM player_stats ps
+        LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
+        WHERE ps.season = %s
+          AND ps.player_name ILIKE %s
+          {conf_filter}
+        ORDER BY ps.pts_per_game DESC NULLS LAST
+        LIMIT %s
+    ''', params + [limit])
+    rows = c.fetchall()
+    conn.close()
+
+    return {
+        "players": [
+            {
+                "player_id":  r[0],
+                "name":       r[1],
+                "team":       r[2],
+                "ppg":        round(float(r[3]), 1),
+                "logo_url":   r[4],
+                "conference": r[5],
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
 
 
 @app.get("/api/players/{player_id}/stats")

@@ -1,10 +1,21 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Trophy, Lock, CheckCircle, Star, BarChart2, Info } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Trophy, Lock, CheckCircle, Star, BarChart2, Info, Search } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 import { FUTURES_BASE_POINTS, LEADERS_POINTS, LEADERS_TIERS } from './scoringConstants';
 import ScoringTooltip from './ScoringTooltip';
 
-// ── Numeric input for leader stat predictions ─────────────────────────────────
+// ── useDebounce ────────────────────────────────────────────────────────────
+function useDebounce(value, delay) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
+// ── Numeric input for leader stat predictions ──────────────────────────────
 const LeaderNumberInput = ({ value, onChange, locked, placeholder }) => {
   const handleChange = (e) => {
     const raw = e.target.value;
@@ -26,38 +37,120 @@ const LeaderNumberInput = ({ value, onChange, locked, placeholder }) => {
         className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
       />
       {value > 0 && (
-        <p className="mt-1.5 text-xs text-cyan-400 font-bold flex items-center gap-1">
-          ✓ Predicted: {value}
-        </p>
+        <p className="mt-1.5 text-xs text-cyan-400 font-bold flex items-center gap-1">✓ Predicted: {value}</p>
       )}
       <p className="mt-1 text-[10px] text-slate-600 font-bold">Closer = more points · Exact match earns full points</p>
     </div>
   );
 };
 
-// ── Player name input with datalist autocomplete ───────────────────────────────
-const MvpTextInput = ({ value, onChange, locked, placeholder, playerOptions = [], listId }) => (
-  <div>
-    <input
-      type="text"
-      value={value || ''}
-      onChange={e => onChange(e.target.value)}
-      disabled={locked}
-      placeholder={placeholder || 'Player name…'}
-      list={listId}
-      className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      autoCorrect="off"
-      spellCheck={false}
-    />
-    {listId && playerOptions.length > 0 && (
-      <datalist id={listId}>
-        {playerOptions.map(p => (
-          <option key={p.player_id} value={p.name} />
-        ))}
-      </datalist>
-    )}
-  </div>
-);
+// ── Smart MVP search input with conference-filtered dropdown ───────────────
+const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) => {
+  const [query, setQuery]   = useState(value || '');
+  const [open, setOpen]     = useState(false);
+  const containerRef        = useRef(null);
+  const debouncedQ          = useDebounce(query, 280);
+
+  // Keep local query in sync when external value changes (loading saved picks)
+  useEffect(() => {
+    if (value !== undefined && value !== query) setQuery(value || '');
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const { data: searchData, isFetching } = useQuery({
+    queryKey: ['playerSearch', debouncedQ, conference],
+    queryFn:  () => api.searchPlayers(debouncedQ, conference || 'All', 7),
+    enabled:  debouncedQ.length >= 2,
+    staleTime: 5 * 60 * 1000,
+    keepPreviousData: true,
+  });
+
+  const players = searchData?.players ?? [];
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleSelect = (playerName) => {
+    setQuery(playerName);
+    onChange(playerName);
+    setOpen(false);
+  };
+
+  const handleInput = (e) => {
+    const v = e.target.value;
+    setQuery(v);
+    onChange(v);
+    setOpen(true);
+  };
+
+  const showDropdown = open && debouncedQ.length >= 2 && (players.length > 0 || isFetching);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          onChange={handleInput}
+          onFocus={() => debouncedQ.length >= 2 && setOpen(true)}
+          disabled={locked}
+          placeholder={placeholder || 'Search player…'}
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          className="w-full pl-9 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        />
+        {isFetching && debouncedQ.length >= 2 && (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+        )}
+      </div>
+
+      {/* Dropdown */}
+      {showDropdown && (
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+          {isFetching && players.length === 0 ? (
+            <div className="px-4 py-3 text-slate-500 text-sm animate-pulse">Searching…</div>
+          ) : (
+            players.map((p) => (
+              <button
+                key={p.player_id}
+                onMouseDown={(e) => { e.preventDefault(); handleSelect(p.name); }}
+                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-700/70 transition-colors text-left"
+              >
+                {p.logo_url ? (
+                  <img src={p.logo_url} alt={p.team} className="w-5 h-5 shrink-0 object-contain" onError={e => e.target.style.display='none'} />
+                ) : (
+                  <span className="w-5 h-5 shrink-0 text-[9px] font-black text-slate-500 flex items-center justify-center">{p.team}</span>
+                )}
+                <span className="flex-1 text-sm font-semibold text-white truncate">{p.name}</span>
+                <span className="text-[10px] font-bold text-slate-400 shrink-0">{p.team}</span>
+                <span className="text-[10px] font-black text-orange-400 shrink-0 tabular-nums">{p.ppg} PPG</span>
+              </button>
+            ))
+          )}
+          {!isFetching && players.length === 0 && debouncedQ.length >= 2 && (
+            <div className="px-4 py-3 text-slate-500 text-sm">No players found for "{debouncedQ}"</div>
+          )}
+          {conference && conference !== 'All' && (
+            <div className="px-4 py-2 bg-slate-900/60 border-t border-slate-700/50">
+              <span className="text-[10px] text-slate-600 font-bold">{conference} Conference players only · sorted by PPG</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {value && !open && (
+        <p className="mt-1.5 text-xs text-orange-400 font-bold flex items-center gap-1">✓ {value}</p>
+      )}
+    </div>
+  );
+};
 
 const LEADER_CATEGORIES = [
   { key: 'top_scorer',   statKey: 'scorer',   short: 'Most Total Points',    question: 'What will be the highest total points scored?',    color: 'text-yellow-400', pts: LEADERS_POINTS.scorer,   icon: '🏀', example: 'e.g. 550', refKey: 'top_scorers',  statField: 'ppg', statLabel: 'PPG' },
@@ -68,8 +161,6 @@ const LEADER_CATEGORIES = [
   { key: 'top_blocks',   statKey: 'blocks',   short: 'Most Total Blocks',    question: 'What will be the highest total blocks?',           color: 'text-orange-400', pts: LEADERS_POINTS.blocks,   icon: '🛡️', example: 'e.g. 40',  refKey: 'top_blocks',   statField: 'bpg', statLabel: 'BPG' },
 ];
 
-
-// oddsField: 'odds_championship' | 'odds_conference' — which odds column to display on each tile
 const TeamGrid = ({ teams, selectedId, onSelect, locked, oddsField, cols = 5 }) => (
   <div className={`grid gap-3 ${cols === 5 ? 'grid-cols-4 sm:grid-cols-5' : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5'}`}>
     {teams.map(team => {
@@ -89,19 +180,12 @@ const TeamGrid = ({ teams, selectedId, onSelect, locked, oddsField, cols = 5 }) 
               : 'border-slate-800 bg-slate-900/60 hover:border-slate-600 hover:bg-slate-800/60'
           }`}
         >
-          <img
-            src={team.logo_url}
-            alt={team.abbreviation}
-            className="w-10 h-10"
-            onError={e => e.target.style.display = 'none'}
-          />
+          <img src={team.logo_url} alt={team.abbreviation} className="w-10 h-10" onError={e => e.target.style.display = 'none'} />
           <span className={`text-[11px] font-black leading-tight text-center ${isSelected ? 'text-orange-400' : 'text-slate-300'}`}>
             {team.abbreviation}
           </span>
           {odds !== null && (
-            <span className={`text-[9px] font-black ${showOdds ? 'text-amber-400' : 'text-slate-600'}`}>
-              ×{odds.toFixed(2)}
-            </span>
+            <span className={`text-[9px] font-black ${showOdds ? 'text-amber-400' : 'text-slate-600'}`}>×{odds.toFixed(2)}</span>
           )}
           {isSelected && <CheckCircle className="w-3 h-3 text-orange-400" />}
         </button>
@@ -115,11 +199,7 @@ const Section = ({ title, icon, color, children, pts, oddsMult }) => {
   const showMult = oddsMult && oddsMult !== 1 && pts;
   const isHighMult = oddsMult && oddsMult >= 1.5;
   return (
-    <div className={`border rounded-2xl p-5 transition-all ${
-      isHighMult
-        ? 'bg-orange-500/5 border-orange-500/30 shadow-sm shadow-orange-500/10'
-        : 'bg-slate-900/50 border-slate-800'
-    }`}>
+    <div className={`border rounded-2xl p-5 transition-all ${isHighMult ? 'bg-orange-500/5 border-orange-500/30 shadow-sm shadow-orange-500/10' : 'bg-slate-900/50 border-slate-800'}`}>
       <div className={`flex items-center gap-2 mb-1 ${color}`}>
         {icon}
         <h3 className="text-base font-black uppercase tracking-wider flex-1">{title}</h3>
@@ -129,112 +209,119 @@ const Section = ({ title, icon, color, children, pts, oddsMult }) => {
           </span>
         )}
       </div>
-      {isHighMult && (
-        <p className="text-[10px] text-amber-500/70 font-bold mb-3">Higher risk = more points</p>
-      )}
+      {isHighMult && <p className="text-[10px] text-amber-500/70 font-bold mb-3">Higher risk = more points</p>}
       {!isHighMult && <div className="mb-4" />}
       {children}
     </div>
   );
 };
 
+// ── Main FuturesPage ────────────────────────────────────────────────────────
 const FuturesPage = ({ currentUser, onNavigate }) => {
-  const [teams, setTeams] = useState([]);
-  const [westTeams, setWestTeams] = useState([]);
-  const [eastTeams, setEastTeams] = useState([]);
-  const [playoffPlayers, setPlayoffPlayers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [odds, setOdds] = useState({}); // MVP category odds only
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [existing, setExisting] = useState(null);
-  const [globalLocked, setGlobalLocked] = useState(false);
+  const qc = useQueryClient();
 
-  const [champion, setChampion] = useState(null);
-  const [westChamp, setWestChamp] = useState(null);
-  const [eastChamp, setEastChamp] = useState(null);
-  const [finalsMvp, setFinalsMvp] = useState('');
+  // ── Prediction form state ────────────────────────────────────────────────
+  const [champion,      setChampion]      = useState(null);
+  const [westChamp,     setWestChamp]     = useState(null);
+  const [eastChamp,     setEastChamp]     = useState(null);
+  const [finalsMvp,     setFinalsMvp]     = useState('');
   const [westFinalsMvp, setWestFinalsMvp] = useState('');
   const [eastFinalsMvp, setEastFinalsMvp] = useState('');
-
-  // Leaders state
   const [leaders, setLeaders] = useState({
     top_scorer: null, top_assists: null, top_rebounds: null,
     top_threes: null, top_steals: null, top_blocks: null,
   });
-  const [leadersSaving, setLeadersSaving] = useState(false);
-  const [leadersSaved, setLeadersSaved] = useState(false);
-  const [existingLeaders, setExistingLeaders] = useState(null);
-  const [saveError, setSaveError] = useState('');
-  const [playerLeaders, setPlayerLeaders] = useState(null);
 
-  const locked = globalLocked || (existing?.locked || false);
+  const [saving,         setSaving]         = useState(false);
+  const [saved,          setSaved]          = useState(false);
+  const [leadersSaving,  setLeadersSaving]  = useState(false);
+  const [leadersSaved,   setLeadersSaved]   = useState(false);
+  const [saveError,      setSaveError]      = useState('');
+
+  // ── React Query — static page data (teams/odds/lock) ────────────────────
+  const { data: pageData, isLoading: pageLoading } = useQuery({
+    queryKey: ['futuresPageData'],
+    queryFn:  () => api.getFuturesPageData(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // ── React Query — regular-season leaders reference ───────────────────────
+  const { data: playerLeaders } = useQuery({
+    queryKey: ['playerLeaders', '2026'],
+    queryFn:  () => api.getPlayerLeaders('2026', 5, true),
+    staleTime: 30 * 60 * 1000,
+  });
+
+  // ── React Query — user's existing futures prediction ────────────────────
+  const { data: futuresData } = useQuery({
+    queryKey: ['userFutures', currentUser?.user_id],
+    queryFn:  () => api.getFutures(currentUser.user_id),
+    enabled:  !!currentUser,
+    staleTime: 60 * 1000,
+  });
+
+  // ── React Query — user's existing leaders prediction ────────────────────
+  const { data: leadersData } = useQuery({
+    queryKey: ['userLeaders', currentUser?.user_id],
+    queryFn:  () => api.getLeadersPrediction(currentUser.user_id),
+    enabled:  !!currentUser,
+    staleTime: 60 * 1000,
+  });
+
+  // Populate form when existing predictions load
+  useEffect(() => {
+    if (futuresData?.has_prediction) {
+      setChampion(futuresData.champion_team_id ?? null);
+      setWestChamp(futuresData.west_champ_team_id ?? null);
+      setEastChamp(futuresData.east_champ_team_id ?? null);
+      // Guard against numeric IDs accidentally stored — only set if it looks like a name
+      const mvpVal = futuresData.finals_mvp;
+      setFinalsMvp(mvpVal && isNaN(Number(mvpVal)) ? mvpVal : '');
+      const wVal = futuresData.west_finals_mvp;
+      setWestFinalsMvp(wVal && isNaN(Number(wVal)) ? wVal : '');
+      const eVal = futuresData.east_finals_mvp;
+      setEastFinalsMvp(eVal && isNaN(Number(eVal)) ? eVal : '');
+    }
+  }, [futuresData]);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        api.getAdminOdds().then(setOdds).catch(() => {});
-        api.getPlayerLeaders('2026', 5, true).then(setPlayerLeaders).catch(() => {});
-        api.getPlayoffEligiblePlayers().then(setPlayoffPlayers).catch(() => {});
-        const [allTeams, west, east, lockStatus] = await Promise.all([
-          api.getTeams(null, true),
-          api.getTeams('Western', true),
-          api.getTeams('Eastern', true),
-          api.getFuturesLockStatus(),
-        ]);
-        setTeams(allTeams);
-        setWestTeams(west);
-        setEastTeams(east);
-        setGlobalLocked(lockStatus.locked);
-        if (currentUser) {
-          const [fut, leadPred] = await Promise.all([
-            api.getFutures(currentUser.user_id),
-            api.getLeadersPrediction(currentUser.user_id),
-          ]);
-          if (fut.has_prediction) {
-            setExisting(fut);
-            setChampion(fut.champion_team_id);
-            setWestChamp(fut.west_champ_team_id);
-            setEastChamp(fut.east_champ_team_id);
-            setFinalsMvp(fut.finals_mvp || '');
-            setWestFinalsMvp(fut.west_finals_mvp || '');
-            setEastFinalsMvp(fut.east_finals_mvp || '');
-          }
-          if (leadPred.has_prediction) {
-            setExistingLeaders(leadPred);
-            setLeaders({
-              top_scorer:   leadPred.top_scorer   || null,
-              top_assists:  leadPred.top_assists  || null,
-              top_rebounds: leadPred.top_rebounds || null,
-              top_threes:   leadPred.top_threes   || null,
-              top_steals:   leadPred.top_steals   || null,
-              top_blocks:   leadPred.top_blocks   || null,
-            });
-          }
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [currentUser]);
+    if (leadersData?.has_prediction) {
+      setLeaders({
+        top_scorer:   leadersData.top_scorer   ?? null,
+        top_assists:  leadersData.top_assists  ?? null,
+        top_rebounds: leadersData.top_rebounds ?? null,
+        top_threes:   leadersData.top_threes   ?? null,
+        top_steals:   leadersData.top_steals   ?? null,
+        top_blocks:   leadersData.top_blocks   ?? null,
+      });
+    }
+  }, [leadersData]);
 
+  // Derived
+  const teams      = pageData?.teams      ?? [];
+  const westTeams  = pageData?.west_teams ?? [];
+  const eastTeams  = pageData?.east_teams ?? [];
+  const odds       = pageData?.odds       ?? {};
+  const globalLocked = pageData?.locked   ?? false;
+  const locked       = globalLocked || (futuresData?.locked || false);
+  const loading      = pageLoading;
+
+  const champOdds = teams.find(t => t.id === champion)?.odds_championship ?? null;
+  const westOdds  = westTeams.find(t => t.id === westChamp)?.odds_conference ?? null;
+  const eastOdds  = eastTeams.find(t => t.id === eastChamp)?.odds_conference ?? null;
+  const hasAnyLeaderPick = Object.values(leaders).some(v => v);
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!currentUser || locked) return;
     setSaving(true);
     try {
       await api.saveFutures(currentUser.user_id, {
-        champion_team_id: champion,
-        west_champ_team_id: westChamp,
-        east_champ_team_id: eastChamp,
-        finals_mvp: finalsMvp,
-        west_finals_mvp: westFinalsMvp,
-        east_finals_mvp: eastFinalsMvp,
+        champion_team_id: champion, west_champ_team_id: westChamp,
+        east_champ_team_id: eastChamp, finals_mvp: finalsMvp,
+        west_finals_mvp: westFinalsMvp, east_finals_mvp: eastFinalsMvp,
       });
-      const fut = await api.getFutures(currentUser.user_id);
-      if (fut.has_prediction) setExisting(fut);
+      qc.invalidateQueries({ queryKey: ['userFutures', currentUser.user_id] });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
@@ -249,8 +336,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
     setLeadersSaving(true);
     try {
       await api.saveLeadersPrediction(currentUser.user_id, leaders);
-      const l = await api.getLeadersPrediction(currentUser.user_id);
-      if (l.has_prediction) setExistingLeaders(l);
+      qc.invalidateQueries({ queryKey: ['userLeaders', currentUser.user_id] });
       setLeadersSaved(true);
       setTimeout(() => setLeadersSaved(false), 2500);
     } catch (err) {
@@ -278,13 +364,6 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
     );
   }
 
-  const hasAnyLeaderPick = Object.values(leaders).some(v => v);
-
-  // Per-team odds: look up the selected team's odds field from the teams array
-  const champOdds  = teams.find(t => t.id === champion)?.odds_championship     ?? null;
-  const westOdds   = westTeams.find(t => t.id === westChamp)?.odds_conference  ?? null;
-  const eastOdds   = eastTeams.find(t => t.id === eastChamp)?.odds_conference  ?? null;
-
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
       {/* Header */}
@@ -299,7 +378,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
             <span className="text-red-400 text-sm font-bold">Picks Locked</span>
           </div>
         )}
-        {!locked && existing?.has_prediction && (
+        {!locked && futuresData?.has_prediction && (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-green-500/10 border border-green-500/30">
             <CheckCircle className="w-4 h-4 text-green-400" />
             <span className="text-green-400 text-sm font-bold">Picks Saved — Edit Anytime</span>
@@ -307,7 +386,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
         )}
       </div>
 
-      {/* Scoring info button */}
+      {/* Scoring info */}
       <div className="flex justify-start mb-5">
         <button
           onClick={() => onNavigate && onNavigate('scoring')}
@@ -318,12 +397,12 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
       </div>
 
       {/* Current picks summary */}
-      {existing?.has_prediction && (
+      {futuresData?.has_prediction && (
         <div className="grid grid-cols-3 gap-3 mb-8">
           {[
-            { label: 'Champion', team: existing.champion_team, correct: existing.is_correct_champion },
-            { label: 'West Champ', team: existing.west_champ_team, correct: existing.is_correct_west },
-            { label: 'East Champ', team: existing.east_champ_team, correct: existing.is_correct_east },
+            { label: 'Champion',   team: futuresData.champion_team,  correct: futuresData.is_correct_champion },
+            { label: 'West Champ', team: futuresData.west_champ_team, correct: futuresData.is_correct_west },
+            { label: 'East Champ', team: futuresData.east_champ_team, correct: futuresData.is_correct_east },
           ].map(({ label, team, correct }) => team && (
             <div key={label} className={`p-3 rounded-xl border text-center ${
               correct === 1 ? 'border-green-500/40 bg-green-500/10' :
@@ -341,19 +420,17 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
 
       <div className="space-y-6">
         {/* Champions divider */}
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2">
           <div className="h-px flex-1 bg-slate-800" />
           <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Champions</span>
           <div className="h-px flex-1 bg-slate-800" />
         </div>
 
-        {/* NBA Champion */}
         <Section title="NBA Champion" color="text-yellow-400" icon={<Trophy className="w-5 h-5" />} pts={FUTURES_BASE_POINTS.champion} oddsMult={champOdds}>
           <p className="text-[10px] text-slate-600 font-bold mb-2 uppercase tracking-wider">Top 10 per conference · {teams.length} playoff-eligible teams</p>
           <TeamGrid teams={teams} selectedId={champion} onSelect={setChampion} locked={locked} oddsField="odds_championship" cols={5} />
         </Section>
 
-        {/* Conference Champions */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Section title="West Champion" color="text-red-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_champ} oddsMult={westOdds}>
             <TeamGrid teams={westTeams} selectedId={westChamp} onSelect={setWestChamp} locked={locked} oddsField="odds_conference" cols={5} />
@@ -364,45 +441,42 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
         </div>
 
         {/* MVPs divider */}
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2">
           <div className="h-px flex-1 bg-slate-800" />
           <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">MVPs</span>
           <div className="h-px flex-1 bg-slate-800" />
         </div>
 
-        {/* Finals MVP */}
         <Section title="Finals MVP" color="text-orange-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.finals_mvp} oddsMult={odds.finals_mvp}>
-          <MvpTextInput value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Start typing a player name…" playerOptions={playoffPlayers} listId="finals-mvp-list" />
-          {playoffPlayers.length > 0 && <p className="text-[10px] text-slate-600 mt-1.5 font-bold">{playoffPlayers.length} playoff players available · start typing for suggestions</p>}
+          <MvpSearchInput value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Search any playoff player…" conference="All" />
         </Section>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Section title="West Finals MVP" color="text-red-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_finals_mvp} oddsMult={odds.west_finals_mvp}>
-            <MvpTextInput value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Start typing a player name…" playerOptions={playoffPlayers.filter(p => westTeams.some(t => t.abbreviation === p.team))} listId="west-mvp-list" />
+            <MvpSearchInput value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Search Western Conference players…" conference="West" />
           </Section>
           <Section title="East Finals MVP" color="text-blue-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_finals_mvp} oddsMult={odds.east_finals_mvp}>
-            <MvpTextInput value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Start typing a player name…" playerOptions={playoffPlayers.filter(p => eastTeams.some(t => t.abbreviation === p.team))} listId="east-mvp-list" />
+            <MvpSearchInput value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Search Eastern Conference players…" conference="East" />
           </Section>
         </div>
 
-        {/* Save Futures button */}
+        {/* Save Futures */}
         {!locked && (
           <button
             onClick={handleSave}
             disabled={saving || (!champion && !westChamp && !eastChamp && !finalsMvp)}
             className={`w-full py-4 rounded-2xl font-black text-lg tracking-wide transition-all ${
-              saved
-                ? 'bg-green-500 text-white shadow-lg shadow-green-500/25'
-                : saving || (!champion && !westChamp && !eastChamp && !finalsMvp)
-                ? 'bg-slate-800 text-slate-600 cursor-not-allowed'
-                : 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white shadow-xl shadow-orange-500/30'
+              saved ? 'bg-green-500 text-white shadow-lg shadow-green-500/25'
+              : saving || (!champion && !westChamp && !eastChamp && !finalsMvp)
+              ? 'bg-slate-800 text-slate-600 cursor-not-allowed'
+              : 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white shadow-xl shadow-orange-500/30'
             }`}
           >
-            {saved ? '✓ Futures Picks Saved!' : saving ? 'Saving...' : existing?.has_prediction ? 'Update Futures Picks' : 'Save Futures Picks'}
+            {saved ? '✓ Futures Picks Saved!' : saving ? 'Saving...' : futuresData?.has_prediction ? 'Update Futures Picks' : 'Save Futures Picks'}
           </button>
         )}
 
-        {/* ── Playoff Leaders Section ── */}
+        {/* ── Playoff Leaders ── */}
         <div className="mt-4">
           <div className="flex items-center gap-2 mb-2">
             <BarChart2 className="w-5 h-5 text-cyan-400" />
@@ -437,21 +511,15 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {LEADER_CATEGORIES.map(cat => {
-              const isCorrect  = existingLeaders?.[`is_correct_${cat.key.replace('top_', '')}`];
+              const isCorrect  = leadersData?.[`is_correct_${cat.key.replace('top_', '')}`];
               const isBullseye = isCorrect === 2;
               const isClose    = isCorrect === 1;
               const isMiss     = isCorrect === 0;
               const tiers      = LEADERS_TIERS[cat.statKey] || [];
               return (
-                <div key={cat.key}
-                  className={`bg-slate-900/50 border rounded-2xl p-4 ${
-                    isBullseye ? 'border-green-500/50' :
-                    isClose    ? 'border-yellow-500/40' :
-                    isMiss     ? 'border-red-500/30'   :
-                    'border-slate-800'
-                  }`}>
-
-                  {/* Header — stat name + base pts (top-right) + status icon */}
+                <div key={cat.key} className={`bg-slate-900/50 border rounded-2xl p-4 ${
+                  isBullseye ? 'border-green-500/50' : isClose ? 'border-yellow-500/40' : isMiss ? 'border-red-500/30' : 'border-slate-800'
+                }`}>
                   <div className="flex items-center justify-between mb-2.5">
                     <span className={`text-sm font-black ${cat.color}`}>{cat.short}</span>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -462,7 +530,6 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                     </div>
                   </div>
 
-                  {/* Input */}
                   <LeaderNumberInput
                     value={leaders[cat.key]}
                     onChange={v => setLeaders(prev => ({ ...prev, [cat.key]: v }))}
@@ -470,31 +537,20 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                     placeholder={cat.example}
                   />
 
-                  {/* Tier badges — horizontal row under input */}
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {tiers.map(([maxDelta, pts], i) => {
                       const prevDelta  = i === 0 ? -1 : tiers[i - 1][0];
                       const isExact    = maxDelta === 0;
-                      const rangeLabel = isExact
-                        ? '🎯 Exact'
-                        : (prevDelta === 0 ? `🤏 ±${maxDelta}` : `🤏 ±${prevDelta + 1}–${maxDelta}`);
+                      const rangeLabel = isExact ? '🎯 Exact' : (prevDelta === 0 ? `🤏 ±${maxDelta}` : `🤏 ±${prevDelta + 1}–${maxDelta}`);
                       return (
-                        <span key={maxDelta}
-                          className={`px-2 py-0.5 rounded border text-[10px] font-black tabular-nums ${
-                            isExact
-                              ? 'bg-green-500/10 border-green-500/25 text-green-400'
-                              : 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'
-                          }`}>
-                          {rangeLabel} = {pts}
-                        </span>
+                        <span key={maxDelta} className={`px-2 py-0.5 rounded border text-[10px] font-black tabular-nums ${
+                          isExact ? 'bg-green-500/10 border-green-500/25 text-green-400' : 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'
+                        }`}>{rangeLabel} = {pts}</span>
                       );
                     })}
-                    <span className="px-2 py-0.5 rounded border text-[10px] font-black bg-slate-800 border-slate-700 text-slate-600">
-                      ❌ = 0
-                    </span>
+                    <span className="px-2 py-0.5 rounded border text-[10px] font-black bg-slate-800 border-slate-700 text-slate-600">❌ = 0</span>
                   </div>
 
-                  {/* Reference leaders — compact */}
                   {playerLeaders && (playerLeaders[cat.refKey] || []).length > 0 && (
                     <div className="mt-3 pt-2.5 border-t border-slate-800/60">
                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-600 mb-1.5">Reg. Season Leaders</p>
@@ -520,26 +576,22 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
             })}
           </div>
 
-          {/* Save Leaders button */}
           {!locked && (
             <button
               onClick={handleSaveLeaders}
               disabled={leadersSaving || !hasAnyLeaderPick}
               className={`w-full mt-4 py-4 rounded-2xl font-black text-lg tracking-wide transition-all ${
-                leadersSaved
-                  ? 'bg-green-500 text-white shadow-lg shadow-green-500/25'
-                  : leadersSaving || !hasAnyLeaderPick
-                  ? 'bg-slate-800 text-slate-600 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white shadow-xl shadow-cyan-500/30'
+                leadersSaved ? 'bg-green-500 text-white shadow-lg shadow-green-500/25'
+                : leadersSaving || !hasAnyLeaderPick ? 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                : 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white shadow-xl shadow-cyan-500/30'
               }`}
             >
-              {leadersSaved ? '✓ Leaders Picks Saved!' : leadersSaving ? 'Saving...' : existingLeaders ? 'Update Leaders Picks' : 'Save Leaders Picks'}
+              {leadersSaved ? '✓ Leaders Picks Saved!' : leadersSaving ? 'Saving...' : leadersData?.has_prediction ? 'Update Leaders Picks' : 'Save Leaders Picks'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Save error banner (sticky at bottom on mobile) */}
       {saveError && (
         <div className="fixed bottom-20 md:bottom-6 left-3 right-3 md:left-auto md:right-6 md:max-w-sm z-50 flex items-center gap-3 px-4 py-3 rounded-2xl bg-red-950/95 border border-red-500/40 shadow-2xl backdrop-blur-sm">
           <span className="text-red-400 text-sm font-bold flex-1">⚠ {saveError}</span>
