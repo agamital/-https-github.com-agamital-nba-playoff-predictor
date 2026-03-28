@@ -52,7 +52,7 @@ _scheduler = None
 # Set RAPIDAPI_KEY in Railway environment variables.
 # Free plan: 100 requests/day — more than enough for 6-hour cron cycles.
 _RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
-_RAPIDAPI_URL  = "https://nba-api-free-data.p.rapidapi.com/nba-league-standings?year=2025"
+_RAPIDAPI_URL  = "https://nba-api-free-data.p.rapidapi.com/nba-league-standings?year=2026"
 _RAPIDAPI_HOST = "nba-api-free-data.p.rapidapi.com"
 
 # ── Fallback: direct stats.nba.com request (used when RAPIDAPI_KEY not set) ──
@@ -1674,10 +1674,14 @@ async def startup():
     global _scheduler
     _scheduler = BackgroundScheduler(timezone='UTC', daemon=True)
 
-    # 1) Data sync — every 6 hours
+    # 1) Data sync — every 4 hours
+    def _standings_sync_job_with_log():
+        print("[Cron] Automatic sync triggered for season 2025-26")
+        _standings_sync_job()
+
     _scheduler.add_job(
-        _standings_sync_job,
-        CronTrigger.from_crontab('0 */6 * * *'),
+        _standings_sync_job_with_log,
+        CronTrigger.from_crontab('0 */4 * * *'),
         id='standings_sync',
         replace_existing=True,
         misfire_grace_time=600,
