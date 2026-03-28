@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp, X, Users, Search, Pencil, Trash2, Save, RotateCcw } from 'lucide-react';
+import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp, X, Users, Search, Pencil, Trash2, Save, RotateCcw, Activity, AlertTriangle, Database, Wifi } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className }) => (
@@ -1175,6 +1175,146 @@ const UserManagementCard = ({ currentUser, addToast }) => {
   );
 };
 
+const StandingsSyncCard = ({ addToast }) => {
+  const [expanded, setExpanded]   = useState(false);
+  const [syncing, setSyncing]     = useState(false);
+  const [result, setResult]       = useState(null);   // last sync result object
+  const [standing, setStanding]   = useState(null);   // current standings meta
+
+  // Load current standings meta (source, failures) on expand
+  useEffect(() => {
+    if (!expanded) return;
+    api.getStandings().then(d => setStanding(d)).catch(() => {});
+  }, [expanded]);
+
+  const runSync = async () => {
+    setSyncing(true);
+    setResult(null);
+    try {
+      const res = await api.adminSyncStandings();
+      setResult(res);
+      // Refresh meta after sync
+      const fresh = await api.getStandings();
+      setStanding(fresh);
+      if (res.success) addToast('Standings synced from NBA API ✓', 'success');
+      else addToast('Standings sync failed — see details below', 'error');
+    } catch (e) {
+      const msg = e.response?.data?.detail || e.message;
+      setResult({ success: false, last_error: msg });
+      addToast('Sync error: ' + msg, 'error');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const src = result?.data_source ?? standing?.data_source ?? null;
+  const fails = result?.consecutive_failures ?? standing?.consecutive_failures ?? 0;
+
+  const SourceBadge = ({ source }) => {
+    if (!source) return null;
+    const cfg = {
+      nba_api:   { label: 'Live NBA API',        icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
+      database:  { label: 'Database Cache',       icon: Database,      cls: 'bg-blue-500/20  text-blue-400  border-blue-500/30'  },
+      hardcoded: { label: 'Hardcoded Fallback ⚠', icon: AlertTriangle, cls: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
+    }[source] || { label: source, icon: Activity, cls: 'bg-slate-700 text-slate-400 border-slate-600' };
+    const Icon = cfg.icon;
+    return (
+      <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-bold ${cfg.cls}`}>
+        <Icon className="w-3 h-3" /> {cfg.label}
+      </span>
+    );
+  };
+
+  const fmt = (iso) => {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+
+  return (
+    <Card className="p-5 mb-4">
+      <button onClick={() => setExpanded(e => !e)} className="w-full flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Activity className="w-5 h-5 text-blue-400" />
+          <h2 className="text-lg font-black text-white">Standings Sync</h2>
+          {fails > 0 && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-black">
+              <AlertTriangle className="w-3 h-3" /> {fails} failure{fails > 1 ? 's' : ''}
+            </span>
+          )}
+          {src && <SourceBadge source={src} />}
+        </div>
+        {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+      </button>
+
+      {expanded && (
+        <div className="mt-4 space-y-4">
+          {/* Current status */}
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="bg-slate-800/60 rounded-lg px-3 py-2">
+              <p className="text-slate-500 font-bold uppercase mb-1">Data Source</p>
+              <SourceBadge source={src} />
+            </div>
+            <div className="bg-slate-800/60 rounded-lg px-3 py-2">
+              <p className="text-slate-500 font-bold uppercase mb-1">Consecutive Failures</p>
+              <p className={`font-black text-lg ${fails > 0 ? 'text-amber-400' : 'text-green-400'}`}>{fails}</p>
+            </div>
+            <div className="bg-slate-800/60 rounded-lg px-3 py-2">
+              <p className="text-slate-500 font-bold uppercase mb-1">Last DB Sync</p>
+              <p className="text-white font-bold">{fmt(standing?.last_synced_at)}</p>
+            </div>
+            <div className="bg-slate-800/60 rounded-lg px-3 py-2">
+              <p className="text-slate-500 font-bold uppercase mb-1">NBA API Available</p>
+              <p className={`font-black ${result?.nba_api_available === false ? 'text-red-400' : result?.nba_api_available ? 'text-green-400' : 'text-slate-400'}`}>
+                {result?.nba_api_available === false ? 'No (import failed)' : result?.nba_api_available ? 'Yes' : '—'}
+              </p>
+            </div>
+          </div>
+
+          {/* Last error */}
+          {(result?.last_error || (fails > 0 && standing?.last_sync_error)) && (
+            <div className="bg-red-950/40 border border-red-500/30 rounded-lg px-3 py-2">
+              <p className="text-red-400 text-[10px] font-black uppercase mb-1">Last Error</p>
+              <p className="text-red-300 text-xs font-mono break-all">
+                {result?.last_error || standing?.last_sync_error}
+              </p>
+            </div>
+          )}
+
+          {/* Sync result */}
+          {result && (
+            <div className={`px-3 py-2 rounded-lg border text-sm font-bold flex items-center gap-2 ${
+              result.success
+                ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                : 'bg-red-500/10  border-red-500/30  text-red-400'
+            }`}>
+              {result.success ? <CheckCircle className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+              {result.success
+                ? `Sync succeeded — data now live from NBA API (${fmt(result.last_success_at)})`
+                : 'Sync failed — check the error above'}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button onClick={runSync} disabled={syncing}
+              className={`flex-1 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                syncing
+                  ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                  : 'bg-blue-500 hover:bg-blue-600 text-white'
+              }`}>
+              <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+              {syncing ? 'Syncing from NBA API…' : 'Force Sync from NBA API'}
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-600">
+            This runs synchronously — waits for NBA API response before returning. Use this to diagnose why automated syncs are failing.
+            Scheduled sync runs every 6 h (cron: 0 */6 * * * UTC) until April 20, 2026.
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+};
+
 const AdminPage = ({ currentUser }) => {
   const [series, setSeries] = useState([]);
   const [playin, setPlayin] = useState([]);
@@ -1321,6 +1461,7 @@ const AdminPage = ({ currentUser }) => {
       </div>
 
       <UserManagementCard currentUser={currentUser} addToast={addToast} />
+      <StandingsSyncCard addToast={addToast} />
       <FuturesLockCard />
       <TeamOddsCard addToast={addToast} />
       <OddsCard />

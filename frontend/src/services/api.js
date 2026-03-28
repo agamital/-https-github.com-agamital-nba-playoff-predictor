@@ -162,6 +162,11 @@ export const getStandings = async (forceRefresh = false) => {
   return response.data;
 };
 
+export const adminSyncStandings = async () => {
+  const response = await api.post('/api/admin/standings/sync');
+  return response.data;
+};
+
 // Play-In Games
 export const getPlayInGames = async (season = '2026', conference = null) => {
   const params = { season };

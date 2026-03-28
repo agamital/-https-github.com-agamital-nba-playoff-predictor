@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { RefreshCw, Trophy, WifiOff } from 'lucide-react';
+import { RefreshCw, Trophy, WifiOff, AlertTriangle, Database, Wifi } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 
@@ -36,11 +36,14 @@ const StandingsPage = () => {
     refetchInterval: 5 * 60 * 1000, // background refresh every 5 min
   });
 
-  const standings   = data || { eastern: [], western: [] };
-  const lastUpdated = data?.last_updated ?? null;
-  const lastSynced  = data?.last_synced_at ?? null;
-  const staticMode  = data?.static_mode ?? false;
-  const error       = queryError ? 'Could not reach server. Showing last known data.' : null;
+  const standings          = data || { eastern: [], western: [] };
+  const lastUpdated        = data?.last_updated ?? null;
+  const lastSynced         = data?.last_synced_at ?? null;
+  const staticMode         = data?.static_mode ?? false;
+  const dataSource         = data?.data_source ?? null;
+  const consecutiveFails   = data?.consecutive_failures ?? 0;
+  const lastSyncError      = data?.last_sync_error ?? null;
+  const error              = queryError ? 'Could not reach server. Showing last known data.' : null;
 
   const timeSince   = useTimeSince(lastUpdated);
   const syncedSince = useTimeSince(lastSynced);
@@ -173,6 +176,20 @@ const StandingsPage = () => {
         </div>
       )}
 
+      {/* Sync failure warning */}
+      {consecutiveFails > 0 && !staticMode && (
+        <div className="mb-4 px-4 py-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-400 font-bold flex items-start gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <div>
+            <span>NBA API sync failing ({consecutiveFails} consecutive failure{consecutiveFails > 1 ? 's' : ''}) — showing {dataSource === 'database' ? 'last cached DB data' : 'hardcoded fallback data'}.
+            </span>
+            {lastSyncError && (
+              <span className="block mt-1 font-normal text-amber-400/70 break-all">{lastSyncError}</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4 mb-8">
         <div>
@@ -195,6 +212,21 @@ const StandingsPage = () => {
                 </>
               )}
             </div>
+
+            {/* Data source badge */}
+            {dataSource && (
+              <span className={`flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full ${
+                dataSource === 'nba_api'   ? 'bg-green-500/15 text-green-400' :
+                dataSource === 'database'  ? 'bg-blue-500/15 text-blue-400' :
+                                             'bg-amber-500/15 text-amber-400'
+              }`}>
+                {dataSource === 'nba_api'  ? <Wifi className="w-3 h-3" />      :
+                 dataSource === 'database' ? <Database className="w-3 h-3" /> :
+                                             <AlertTriangle className="w-3 h-3" />}
+                {dataSource === 'nba_api'  ? 'Live NBA API' :
+                 dataSource === 'database' ? 'Database Cache' : 'Hardcoded Fallback'}
+              </span>
+            )}
 
             {lastSynced && (
               <span className="text-xs text-slate-400" title={lastSynced}>

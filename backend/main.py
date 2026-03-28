@@ -28,6 +28,15 @@ _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 # After this the app enters Static Mode: DB snapshot is served forever, no API calls.
 _STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 21, 0, 0, 0)   # exclusive — stops ON April 21
 
+# Tracks sync health across requests — readable by /api/standings and admin endpoints
+_sync_status = {
+    "source":               "hardcoded",   # "nba_api" | "database" | "hardcoded"
+    "last_attempt_at":      None,          # datetime (UTC)
+    "last_success_at":      None,          # datetime (UTC)
+    "last_error":           None,          # str | None
+    "consecutive_failures": 0,
+}
+
 # OneSignal push notification credentials
 _ONESIGNAL_APP_ID  = os.getenv("ONESIGNAL_APP_ID",  "c69b4c3e-79d1-48a4-8815-3ceabc1eae70")
 _ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY",  "")
@@ -702,11 +711,17 @@ def _standings_sync_job():
     Returns True if standings sync succeeded.
     """
     now = datetime.utcnow()
+    _sync_status["last_attempt_at"] = now
+
     if now >= _STANDINGS_SYNC_CUTOFF:
-        print(f"[Sync] Regular season ended on {_STANDINGS_SYNC_CUTOFF.date()} — all syncs disabled")
+        msg = f"Regular season ended on {_STANDINGS_SYNC_CUTOFF.date()} — all syncs disabled"
+        print(f"[Sync] {msg}")
+        _sync_status["last_error"] = msg
         return False
     if not NBA_API_AVAILABLE:
-        print("[Sync] NBA API module not available — skipping")
+        msg = "nba_api module not available on this server (import failed at startup)"
+        print(f"[Sync] {msg}")
+        _sync_status["last_error"] = msg
         return False
 
     print(f"[Sync] Starting full data sync at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC")
@@ -718,11 +733,14 @@ def _standings_sync_job():
 
         # Basic sanity-check: must have at least 28 teams (full NBA roster).
         if len(fresh) < 28:
-            print(f"[Standings] \u2717 Validation failed \u2014 only {len(fresh)} teams returned (expected 30). Aborting.")
+            msg = f"Validation failed — only {len(fresh)} teams returned (expected 30)"
+            print(f"[Standings] ✗ {msg}")
+            _sync_status["last_error"] = msg
+            _sync_status["consecutive_failures"] += 1
         else:
             det = next((t for t in fresh if 'Detroit' in t.get('team_name', '')), None)
             if det:
-                print(f"[Standings] Detroit Pistons: {det['wins']}-{det['losses']} (rank {det['conf_rank']})")
+                print(f"[Standings] Detroit Pistons check: {det['wins']}-{det['losses']} rank {det['conf_rank']}")
 
             result = _persist_standings_to_db(fresh)
             if result['synced_at']:
@@ -730,25 +748,38 @@ def _standings_sync_job():
                 _standings_cache["fetched_at"] = result['synced_at']
                 _standings_cache["expires"]    = result['synced_at'] + timedelta(hours=6)
                 next_at = (result['synced_at'] + timedelta(hours=6)).strftime('%H:%M UTC')
-                print(f"[Standings] \u2713 {result['rows']} teams synced \u2014 next run ~{next_at}")
+                print(f"[Standings] ✓ {result['rows']} teams synced — next run ~{next_at}")
                 standings_ok = True
+                _sync_status["source"]               = "nba_api"
+                _sync_status["last_success_at"]      = result['synced_at']
+                _sync_status["last_error"]           = None
+                _sync_status["consecutive_failures"] = 0
                 # Push notification when teams cross playoff/play-in boundaries
                 changes = result.get('rank_changes', [])
                 if changes:
                     parts = []
                     for c in changes[:3]:
-                        emoji = '\u2705' if c['to'] == 'Playoff' else ('\u26a0\ufe0f' if c['to'] == 'Play-In' else '\u274c')
-                        parts.append(f"{emoji} {c['team']}: {c['from']} \u2192 {c['to']}")
+                        emoji = '✅' if c['to'] == 'Playoff' else ('⚠️' if c['to'] == 'Play-In' else '❌')
+                        parts.append(f"{emoji} {c['team']}: {c['from']} → {c['to']}")
                     body = '\n'.join(parts)
                     if len(changes) > 3:
                         body += f'\n+{len(changes) - 3} more'
                     threading.Thread(
                         target=_send_onesignal_notification,
-                        args=("\U0001f3c0 NBA Standings Update", body),
+                        args=("🏀 NBA Standings Update", body),
                         daemon=True,
                     ).start()
     except Exception as e:
-        print(f"[Standings] Sync error: {e}")
+        import traceback
+        full_err = traceback.format_exc()
+        short_err = f"{type(e).__name__}: {str(e)[:300]}"
+        print(f"[Standings] ✗ Sync error: {short_err}")
+        print(f"[Standings] Full traceback:\n{full_err}")
+        _sync_status["last_error"]           = short_err
+        _sync_status["consecutive_failures"] = _sync_status.get("consecutive_failures", 0) + 1
+
+    if not standings_ok:
+        print(f"[Standings] ✗ Sync failed (consecutive failures: {_sync_status['consecutive_failures']})")
 
     # ── 2. Player stats (independent — standings failure doesn't block this) ──
     _sync_player_stats_job()
@@ -845,9 +876,13 @@ def get_standings():
         _standings_cache["data"]       = db_data
         _standings_cache["fetched_at"] = now
         _standings_cache["expires"]    = now + timedelta(hours=1)
+        if _sync_status["source"] not in ("nba_api",):
+            _sync_status["source"] = "database"
         return db_data
 
     print("Using hardcoded standings fallback")
+    if _sync_status["source"] not in ("nba_api", "database"):
+        _sync_status["source"] = "hardcoded"
     return _HARDCODED_STANDINGS
 
 
@@ -1126,6 +1161,8 @@ async def startup():
     _standings_cache["expires"]    = now + timedelta(hours=1)
     print(f"Loaded {len(_HARDCODED_STANDINGS)} hardcoded standings into cache")
 
+    _sync_status["source"] = "hardcoded"   # will be upgraded once DB/API data loads
+
     try:
         init_db()
         print("DB initialised")
@@ -1149,6 +1186,7 @@ async def startup():
             _standings_cache["data"]       = db_standings
             _standings_cache["fetched_at"] = now
             _standings_cache["expires"]    = now + timedelta(hours=1)
+            _sync_status["source"]         = "database"
             print(f"Upgraded to {len(db_standings)} DB standings")
     except Exception as e:
         print(f"ERROR loading DB standings: {e}")
@@ -1236,7 +1274,7 @@ async def root():
 async def api_standings(force_refresh: bool = False):
     sync_triggered = False
     if force_refresh:
-        # Run in a daemon thread — returns immediately, UI refreshes on next load
+        # Non-blocking background refresh (user-facing) — returns immediately
         threading.Thread(target=_standings_sync_job, daemon=True).start()
         sync_triggered = True
 
@@ -1273,7 +1311,36 @@ async def api_standings(force_refresh: bool = False):
         "cache_expires":     _standings_cache["expires"].isoformat() if _standings_cache.get("expires") else None,
         "sync_triggered":    sync_triggered,
         "sync_cutoff":       _STANDINGS_SYNC_CUTOFF.strftime('%Y-%m-%d'),
-        "static_mode":       is_static_mode,   # True after Apr 20 — serving final DB snapshot
+        "static_mode":       is_static_mode,
+        "data_source":       _sync_status.get("source", "unknown"),
+        "consecutive_failures": _sync_status.get("consecutive_failures", 0),
+        "last_sync_error":   _sync_status.get("last_error"),
+    }
+
+
+@app.post("/api/admin/standings/sync")
+async def admin_standings_sync():
+    """
+    Synchronous standings sync for the Admin Panel.
+    Blocks until the NBA API fetch + DB write completes (or all retries fail).
+    Returns detailed success/failure info so admins can diagnose issues.
+    """
+    import concurrent.futures
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        success = await loop.run_in_executor(pool, _standings_sync_job)
+
+    last_success = _sync_status.get("last_success_at")
+    last_attempt = _sync_status.get("last_attempt_at")
+    return {
+        "success":              success,
+        "data_source":          _sync_status.get("source", "unknown"),
+        "last_error":           _sync_status.get("last_error"),
+        "consecutive_failures": _sync_status.get("consecutive_failures", 0),
+        "last_success_at":      last_success.isoformat() if last_success else None,
+        "last_attempt_at":      last_attempt.isoformat() if last_attempt else None,
+        "nba_api_available":    NBA_API_AVAILABLE,
+        "static_mode":          datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF,
     }
 
 @app.get("/api/health")
