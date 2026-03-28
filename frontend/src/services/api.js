@@ -207,10 +207,20 @@ export const getAdminSeries = async (season = '2026') => {
   return response.data;
 };
 
-export const setSeriesResult = async (seriesId, winnerTeamId, actualGames) => {
+export const setSeriesResult = async (seriesId, winnerTeamId, actualGames, manualOverride = false) => {
   const response = await api.post(`/api/admin/series/${seriesId}/result`, null, {
-    params: { winner_team_id: winnerTeamId, actual_games: actualGames }
+    params: { winner_team_id: winnerTeamId, actual_games: actualGames, manual_override: manualOverride }
   });
+  return response.data;
+};
+
+export const resetSeriesResult = async (seriesId) => {
+  const response = await api.delete(`/api/admin/series/${seriesId}/result`);
+  return response.data;
+};
+
+export const syncAndAdvance = async (season = '2026') => {
+  const response = await api.post(`/api/admin/sync-and-advance?season=${season}`);
   return response.data;
 };
 
@@ -223,6 +233,16 @@ export const setPlayinResult = async (gameId, winnerId) => {
   const response = await api.post(`/api/admin/playin/${gameId}/result`, null, {
     params: { winner_id: winnerId }
   });
+  return response.data;
+};
+
+export const resetPlayinResult = async (gameId) => {
+  const response = await api.delete(`/api/admin/playin/${gameId}/result`);
+  return response.data;
+};
+
+export const syncPlayin = async (season = '2026') => {
+  const response = await api.post(`/api/admin/playin/sync?season=${season}`);
   return response.data;
 };
 

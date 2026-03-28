@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, Lock } from 'lucide-react';
+import { Trophy, Lock, CheckCircle, Clock } from 'lucide-react';
 import * as api from './services/api';
 import CommunityInsights from './components/CommunityInsights';
 
@@ -9,26 +9,22 @@ const Card = ({ children, className }) => (
   </div>
 );
 
-const Button = ({ children, onClick, className, variant = 'default', ...props }) => {
-  const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-all';
-  const variants = {
-    default: 'bg-orange-500 hover:bg-orange-600 text-white',
-    outline: 'border-2 border-slate-700 bg-slate-800/50 text-white hover:bg-slate-700',
-  };
-  return (
-    <button onClick={onClick} className={`${baseClass} ${variants[variant]} ${className}`} {...props}>
-      {children}
-    </button>
-  );
+// Labels + colours per game type
+const GAME_META = {
+  '7v8':         { label: 'Game 1 — 7 vs 8',       accent: 'purple', next: 'Winner → #7 Seed · Loser → Game 3' },
+  '9v10':        { label: 'Game 2 — 9 vs 10',      accent: 'purple', next: 'Winner → Game 3 · Loser eliminated' },
+  'elimination': { label: 'Game 3 — Elimination',   accent: 'rose',   next: 'Winner → #8 Seed · Loser eliminated' },
+};
+const ACCENT_CLASSES = {
+  purple: { badge: 'bg-purple-500/20 text-purple-400 border-purple-500/30', pick: 'bg-purple-500 hover:bg-purple-600' },
+  rose:   { badge: 'bg-rose-500/20  text-rose-400  border-rose-500/30',   pick: 'bg-rose-500   hover:bg-rose-600'   },
 };
 
 const PlayInPage = ({ currentUser }) => {
-  const [games, setGames] = useState([]);
+  const [games, setGames]     = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadGames();
-  }, []);
+  useEffect(() => { loadGames(); }, []);
 
   const loadGames = async () => {
     setLoading(true);
@@ -43,119 +39,185 @@ const PlayInPage = ({ currentUser }) => {
   };
 
   const handlePrediction = async (gameId, teamId) => {
-    if (!currentUser) {
-      alert('Please login to make predictions');
-      return;
-    }
-
+    if (!currentUser) { alert('Please login to make predictions'); return; }
     try {
       await api.makePlayInPrediction(currentUser.user_id, gameId, teamId);
-      alert('Prediction saved!');
-      loadGames();
+      await loadGames();
     } catch (err) {
       alert('Error: ' + (err.response?.data?.detail || 'Unknown error'));
     }
   };
 
-  const GameCard = ({ game }) => (
-    <Card className="p-6">
-      <div className="flex justify-between items-center mb-4">
-        <span className="text-xs font-bold text-orange-400 uppercase">{game.conference} Conference</span>
-        <span className="text-xs font-semibold px-3 py-1 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30">
-          {game.game_type === '7v8' ? '7 vs 8 Game' : '9 vs 10 Game'}
-        </span>
-      </div>
+  const GameCard = ({ game }) => {
+    const meta   = GAME_META[game.game_type] || { label: game.game_type, accent: 'purple', next: '' };
+    const accent = ACCENT_CLASSES[meta.accent] || ACCENT_CLASSES.purple;
+    const isCompleted = game.status === 'completed';
 
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3 flex-1">
-            <img
-              src={game.team1.logo_url}
-              alt={game.team1.name}
-              className="w-12 h-12"
-              onError={(e) => e.target.src = `https://via.placeholder.com/48?text=${game.team1.abbreviation}`}
-            />
+    return (
+      <Card className="p-6">
+        {/* Header */}
+        <div className="flex justify-between items-center mb-1">
+          <span className="text-xs font-bold text-slate-400 uppercase">{game.conference}</span>
+          <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${accent.badge}`}>
+            {meta.label}
+          </span>
+        </div>
+
+        {/* Next-step hint */}
+        <p className="text-[10px] text-slate-600 mb-4">{meta.next}</p>
+
+        {/* Teams */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3 flex-1">
+            <img src={game.team1.logo_url} alt={game.team1.name} className="w-12 h-12"
+              onError={e => e.target.style.display='none'} />
             <div>
               <p className="font-bold text-white">{game.team1.name}</p>
               <p className="text-xs text-slate-400">Seed #{game.team1.seed}</p>
             </div>
           </div>
-
           <div className="text-slate-600 font-black text-2xl px-4">VS</div>
-
-          <div className="flex items-center space-x-3 flex-1 justify-end">
+          <div className="flex items-center gap-3 flex-1 justify-end">
             <div className="text-right">
               <p className="font-bold text-white">{game.team2.name}</p>
               <p className="text-xs text-slate-400">Seed #{game.team2.seed}</p>
             </div>
-            <img
-              src={game.team2.logo_url}
-              alt={game.team2.name}
-              className="w-12 h-12"
-              onError={(e) => e.target.src = `https://via.placeholder.com/48?text=${game.team2.abbreviation}`}
-            />
+            <img src={game.team2.logo_url} alt={game.team2.name} className="w-12 h-12"
+              onError={e => e.target.style.display='none'} />
           </div>
         </div>
 
-        {currentUser ? (
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <Button onClick={() => handlePrediction(game.id, game.team1.id)}>
-              Pick {game.team1.abbreviation}
-            </Button>
-            <Button onClick={() => handlePrediction(game.id, game.team2.id)}>
-              Pick {game.team2.abbreviation}
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-center justify-center py-3 bg-slate-800/50 rounded-lg text-slate-400 text-sm">
-            <Lock className="w-4 h-4 mr-2" />
-            Login to make predictions
-          </div>
+        {/* Result banner */}
+        {isCompleted && game.winner_id && (() => {
+          const winner = game.winner_id === game.team1.id ? game.team1 : game.team2;
+          return (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 text-sm font-bold mb-4">
+              <CheckCircle className="w-4 h-4 shrink-0" />
+              {winner.name} advanced
+            </div>
+          );
+        })()}
+
+        {/* Prediction buttons */}
+        {!isCompleted && (
+          currentUser ? (
+            <div className="grid grid-cols-2 gap-3">
+              {[game.team1, game.team2].map(team => (
+                <button key={team.id}
+                  onClick={() => handlePrediction(game.id, team.id)}
+                  className={`py-2.5 rounded-lg font-bold text-sm text-white transition-all ${accent.pick}`}>
+                  Pick {team.abbreviation}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-3 bg-slate-800/50 rounded-lg text-slate-400 text-sm gap-2">
+              <Lock className="w-4 h-4" /> Login to predict
+            </div>
+          )
         )}
+
         <CommunityInsights
           gameId={game.id}
           homeTeam={game.team1}
           awayTeam={game.team2}
           initialStats={null}
         />
+      </Card>
+    );
+  };
+
+  // Per-conference status banner
+  const ConferenceBanner = ({ confGames }) => {
+    const g7    = confGames.find(g => g.game_type === '7v8');
+    const g9    = confGames.find(g => g.game_type === '9v10');
+    const gelim = confGames.find(g => g.game_type === 'elimination');
+
+    let text, cls;
+    if (gelim?.status === 'completed') {
+      text = 'All games complete'; cls = 'bg-green-500/10 border-green-500/30 text-green-400';
+    } else if (gelim) {
+      text = 'Game 3 is live — make your pick!'; cls = 'bg-rose-500/10 border-rose-500/30 text-rose-400';
+    } else if (g7?.status === 'completed' && g9?.status === 'completed') {
+      text = 'Both games finished — Game 3 matchup coming soon'; cls = 'bg-amber-500/10 border-amber-500/30 text-amber-400';
+    } else if (g7?.status === 'completed') {
+      text = 'Waiting for Game 2 (9v10) to finish'; cls = 'bg-slate-800 border-slate-700 text-slate-400';
+    } else if (g9?.status === 'completed') {
+      text = 'Waiting for Game 1 (7v8) to finish'; cls = 'bg-slate-800 border-slate-700 text-slate-400';
+    } else {
+      return null; // Phase 1 in progress — no banner needed
+    }
+
+    return (
+      <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-bold mb-4 ${cls}`}>
+        <Clock className="w-3.5 h-3.5 shrink-0" />
+        {text}
+      </div>
+    );
+  };
+
+  // Game 3 pending placeholder card
+  const Game3PendingCard = () => (
+    <Card className="p-6 border-dashed border-slate-700 opacity-60">
+      <div className="flex justify-between items-center mb-1">
+        <span className="text-xs font-bold text-slate-500 uppercase">Coming Soon</span>
+        <span className="text-xs font-bold px-2.5 py-1 rounded-full border bg-rose-500/10 text-rose-500/60 border-rose-500/20">
+          Game 3 — Elimination
+        </span>
+      </div>
+      <p className="text-[10px] text-slate-600 mb-4">Winner → #8 Seed · Loser eliminated</p>
+      <div className="flex items-center justify-center py-8 text-slate-600 text-sm gap-2">
+        <Clock className="w-4 h-4" />
+        Matchup determined after Games 1 & 2
       </div>
     </Card>
   );
 
   const groupedGames = games.reduce((acc, game) => {
-    if (!acc[game.conference]) acc[game.conference] = [];
+    acc[game.conference] = acc[game.conference] || [];
     acc[game.conference].push(game);
     return acc;
   }, {});
+
+  const gameOrder = { '7v8': 0, '9v10': 1, 'elimination': 2 };
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="mb-8">
         <h1 className="text-4xl font-black text-white mb-2">Play-In Tournament</h1>
-        <p className="text-slate-400 text-lg">Seeds 7-10 compete for playoff spots</p>
+        <p className="text-slate-400">Seeds 7–10 compete for the final two playoff spots</p>
       </div>
 
       {loading ? (
         <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent"></div>
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent" />
         </div>
       ) : games.length > 0 ? (
-        <div className="space-y-8">
-          {Object.entries(groupedGames).map(([conference, confGames]) => (
-            <div key={conference}>
-              <h2 className="text-2xl font-bold text-white mb-4 flex items-center">
-                <Trophy className="w-6 h-6 mr-2 text-orange-400" />
-                {conference} Conference
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {confGames.map(game => <GameCard key={game.id} game={game} />)}
+        <div className="space-y-10">
+          {Object.entries(groupedGames).map(([conference, confGames]) => {
+            const ordered = [...confGames].sort((a, b) => (gameOrder[a.game_type] ?? 9) - (gameOrder[b.game_type] ?? 9));
+            const hasElim = confGames.some(g => g.game_type === 'elimination');
+            const bothPhase1Done = confGames.find(g => g.game_type === '7v8')?.status === 'completed'
+                                && confGames.find(g => g.game_type === '9v10')?.status === 'completed';
+            return (
+              <div key={conference}>
+                <h2 className="text-2xl font-bold text-white mb-3 flex items-center gap-2">
+                  <Trophy className="w-6 h-6 text-orange-400" />
+                  {conference} Conference
+                </h2>
+                <ConferenceBanner confGames={confGames} />
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {ordered.map(game => <GameCard key={game.id} game={game} />)}
+                  {/* Placeholder when both phase 1 games done but Game 3 not yet created */}
+                  {bothPhase1Done && !hasElim && <Game3PendingCard key="pending" />}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <Card className="p-8 text-center">
-          <p className="text-slate-400">No play-in games available yet. Admin needs to generate them from standings page.</p>
+          <p className="text-slate-400">No play-in games available yet.</p>
         </Card>
       )}
     </div>

@@ -1099,6 +1099,23 @@ def _apply_odds_migration():
         print(f"Odds migration connection error (non-fatal): {e}")
 
 
+def _apply_series_migration():
+    """Ensure manual_override column exists on the series table (idempotent)."""
+    try:
+        conn = get_db_conn()
+        conn.autocommit = True
+        c = conn.cursor()
+        c.execute("SET search_path TO public")
+        try:
+            c.execute("ALTER TABLE series ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE")
+            print("Migration: ensured series.manual_override exists")
+        except Exception as col_err:
+            print(f"Migration: could not add series.manual_override: {col_err}")
+        conn.close()
+    except Exception as e:
+        print(f"Series migration connection error (non-fatal): {e}")
+
+
 @app.on_event("startup")
 async def startup():
     # Load hardcoded standings instantly — app responds to users immediately,
@@ -1141,6 +1158,9 @@ async def startup():
 
     # Apply player stats schema migration (create player_stats table)
     _apply_player_stats_migration()
+
+    # Apply series schema migration (manual_override column)
+    _apply_series_migration()
 
     # Run heavyweight / network-dependent tasks in background threads so they
     # never block the server from binding to its port.
@@ -2066,7 +2086,22 @@ async def admin_get_series(season: str = "2026"):
                  ht.id, ht.name, ht.abbreviation, ht.logo_url,
                  at.id, at.name, at.abbreviation, at.logo_url,
                  wt.name, wt.abbreviation,
-                 COUNT(p.id)
+                 COUNT(p.id),
+                 COALESCE(s.manual_override, FALSE),
+                 CASE
+                   WHEN s.round = 'First Round' THEN
+                     EXISTS(SELECT 1 FROM series ns WHERE ns.season = s.season
+                            AND ns.round = 'Conference Semifinals'
+                            AND ns.conference = s.conference AND ns.bracket_group = s.bracket_group)
+                   WHEN s.round = 'Conference Semifinals' THEN
+                     EXISTS(SELECT 1 FROM series ns WHERE ns.season = s.season
+                            AND ns.round = 'Conference Finals'
+                            AND ns.conference = s.conference AND ns.bracket_group = s.bracket_group)
+                   WHEN s.round = 'Conference Finals' THEN
+                     EXISTS(SELECT 1 FROM series ns WHERE ns.season = s.season
+                            AND ns.round = 'NBA Finals')
+                   ELSE FALSE
+                 END
                  FROM series s
                  JOIN teams ht ON s.home_team_id = ht.id
                  JOIN teams at ON s.away_team_id = at.id
@@ -2082,7 +2117,9 @@ async def admin_get_series(season: str = "2026"):
             'home_team': {'id': row[6], 'name': row[7], 'abbreviation': row[8], 'logo_url': row[9]},
             'away_team': {'id': row[10], 'name': row[11], 'abbreviation': row[12], 'logo_url': row[13]},
             'winner_name': row[14], 'winner_abbreviation': row[15],
-            'prediction_count': row[16]
+            'prediction_count': row[16],
+            'manual_override': row[17],
+            'is_advanced': row[18],
         })
     conn.close()
     return result
@@ -2146,12 +2183,12 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
 
 
 @app.post("/api/admin/series/{series_id}/result")
-async def set_series_result(series_id: int, winner_team_id: int, actual_games: int):
+async def set_series_result(series_id: int, winner_team_id: int, actual_games: int, manual_override: bool = False):
     conn = get_db_conn()
     c = conn.cursor()
 
     c.execute('''SELECT round, conference, season, bracket_group,
-                 home_team_id, away_team_id, home_seed, away_seed
+                 home_team_id, away_team_id, home_seed, away_seed, status
                  FROM series WHERE id = %s''', (series_id,))
     series_row = c.fetchone()
     if not series_row:
@@ -2160,10 +2197,16 @@ async def set_series_result(series_id: int, winner_team_id: int, actual_games: i
     round_name, conf, season, bracket_group = series_row[:4]
     home_team_id, away_team_id = series_row[4], series_row[5]
     home_seed, away_seed = series_row[6], series_row[7]
+    current_status = series_row[8]
 
-    # Mark series completed
-    c.execute('UPDATE series SET winner_team_id = %s, actual_games = %s, status = %s WHERE id = %s',
-              (winner_team_id, actual_games, 'completed', series_id))
+    # If already completed, zero out old prediction scores before re-scoring
+    if current_status == 'completed':
+        c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (series_id,))
+
+    # Mark series completed with manual_override flag
+    c.execute('''UPDATE series SET winner_team_id = %s, actual_games = %s, status = %s,
+                 manual_override = %s WHERE id = %s''',
+              (winner_team_id, actual_games, 'completed', manual_override, series_id))
 
     # Score each prediction individually so underdog multipliers apply per pick
     c.execute('SELECT id, predicted_winner_id, predicted_games FROM predictions WHERE series_id = %s',
@@ -2195,7 +2238,54 @@ async def set_series_result(series_id: int, winner_team_id: int, actual_games: i
 
     conn.commit()
     conn.close()
-    return {"message": "Result set and scores updated"}
+    return {"message": "Result set and scores updated", "manual_override": manual_override}
+
+
+@app.delete("/api/admin/series/{series_id}/result")
+async def reset_series_result(series_id: int):
+    """Reset a completed series back to active — zeros out prediction scores and recalculates all points."""
+    conn = get_db_conn()
+    c = conn.cursor()
+
+    c.execute("SELECT status FROM series WHERE id = %s", (series_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Series not found")
+
+    # Zero out prediction scores for this series
+    c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (series_id,))
+
+    # Reset series to active
+    c.execute('''UPDATE series SET winner_team_id = NULL, actual_games = NULL,
+                 status = 'active', manual_override = FALSE WHERE id = %s''', (series_id,))
+
+    _recalculate_all_points(c)
+    conn.commit()
+    conn.close()
+    return {"message": "Series result reset — scores recalculated"}
+
+
+@app.post("/api/admin/sync-and-advance")
+async def sync_and_advance(season: str = "2026"):
+    """Re-run bracket advancement for all completed series and recalculate all points."""
+    conn = get_db_conn()
+    c = conn.cursor()
+
+    c.execute('''SELECT id, round, conference, bracket_group, winner_team_id
+                 FROM series WHERE season = %s AND status = 'completed' ''', (season,))
+    completed = c.fetchall()
+
+    for series_id, round_name, conf, bracket_group, winner_team_id in completed:
+        try:
+            _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id)
+        except Exception as e:
+            print(f"sync_and_advance: failed to advance series {series_id}: {e}")
+
+    _recalculate_all_points(c)
+    conn.commit()
+    conn.close()
+    return {"message": f"Synced {len(completed)} completed series — points recalculated", "completed_count": len(completed)}
 
 @app.get("/api/admin/playin")
 async def admin_get_playin(season: str = "2026"):
@@ -2213,18 +2303,101 @@ async def admin_get_playin(season: str = "2026"):
                  LEFT JOIN playin_predictions pp ON p.id = pp.game_id
                  WHERE p.season = %s GROUP BY p.id, t1.id, t1.name, t1.abbreviation, t1.logo_url,
                  t2.id, t2.name, t2.abbreviation, t2.logo_url, wt.name, wt.abbreviation''', (season,))
+    rows = c.fetchall()
+
+    # Compute is_advanced per game type / conference
+    c.execute('''SELECT conference, bracket_group FROM series WHERE season=%s AND round='First Round' ''', (season,))
+    r1_keys = {(r[0], r[1]) for r in c.fetchall()}   # (conf, bracket_group)
+
+    c.execute('''SELECT conference FROM playin_games WHERE season=%s AND game_type='elimination' ''', (season,))
+    elim_confs = {r[0] for r in c.fetchall()}
+
+    type_labels = {
+        '7v8':         'Game 1 — 7 vs 8',
+        '9v10':        'Game 2 — 9 vs 10',
+        'elimination': 'Game 3 — Elimination',
+    }
+    # What happens next for each game type (shown in admin)
+    next_steps = {
+        '7v8':         'Winner → #7 Seed (R1 vs #2)  ·  Loser → Game 3',
+        '9v10':        'Winner → Game 3  ·  Loser eliminated',
+        'elimination': 'Winner → #8 Seed (R1 vs #1)  ·  Loser eliminated',
+    }
+
     result = []
-    for row in c.fetchall():
+    for row in rows:
+        conf, game_type = row[1], row[2]
+        if game_type == '7v8':
+            is_advanced = (conf, 'B') in r1_keys
+        elif game_type == '9v10':
+            is_advanced = conf in elim_confs
+        elif game_type == 'elimination':
+            is_advanced = (conf, 'A') in r1_keys
+        else:
+            is_advanced = False
+
         result.append({
-            'id': row[0], 'conference': row[1], 'game_type': row[2],
+            'id': row[0], 'conference': conf, 'game_type': game_type,
             'winner_id': row[3], 'status': row[4],
             'team1': {'id': row[5], 'name': row[6], 'abbreviation': row[7], 'logo_url': row[8]},
             'team2': {'id': row[9], 'name': row[10], 'abbreviation': row[11], 'logo_url': row[12]},
             'winner_name': row[13], 'winner_abbreviation': row[14],
-            'prediction_count': row[15]
+            'prediction_count': row[15],
+            'is_advanced': is_advanced,
+            'type_label': type_labels.get(game_type, game_type),
+            'next_step': next_steps.get(game_type, ''),
         })
     conn.close()
     return result
+
+def _try_create_playin_game3(c, season):
+    """After BOTH 7v8 AND 9v10 complete, auto-create the elimination game per conference.
+    Game 3 = loser of 7v8 vs winner of 9v10.  Idempotent — skips if already exists."""
+    c.execute('SELECT DISTINCT conference FROM playin_games WHERE season = %s', (season,))
+    for (conf,) in c.fetchall():
+        # Need 7v8 completed
+        c.execute('''SELECT winner_id, team1_id, team2_id, team1_seed, team2_seed
+                     FROM playin_games
+                     WHERE season=%s AND conference=%s AND game_type='7v8' AND status='completed' ''',
+                  (season, conf))
+        g7 = c.fetchone()
+        if not g7:
+            continue
+
+        # Need 9v10 completed
+        c.execute('''SELECT winner_id, team1_id, team2_id, team1_seed, team2_seed
+                     FROM playin_games
+                     WHERE season=%s AND conference=%s AND game_type='9v10' AND status='completed' ''',
+                  (season, conf))
+        g9 = c.fetchone()
+        if not g9:
+            continue
+
+        # Skip if elimination game already exists
+        c.execute('''SELECT id FROM playin_games
+                     WHERE season=%s AND conference=%s AND game_type='elimination' ''',
+                  (season, conf))
+        if c.fetchone():
+            continue
+
+        # Loser of 7v8
+        g7_winner, g7_t1, g7_t2, g7_t1_seed, g7_t2_seed = g7
+        if g7_winner == g7_t1:
+            loser_id, loser_seed = g7_t2, g7_t2_seed
+        else:
+            loser_id, loser_seed = g7_t1, g7_t1_seed
+
+        # Winner of 9v10
+        g9_winner, _, _, g9_t1_seed, g9_t2_seed = g9
+        g9_t1 = g9[1]
+        winner_9_seed = g9_t1_seed if g9_winner == g9_t1 else g9_t2_seed
+
+        c.execute('''INSERT INTO playin_games
+                     (season, conference, game_type, team1_id, team1_seed, team2_id, team2_seed, status)
+                     VALUES (%s, %s, 'elimination', %s, %s, %s, %s, 'active')''',
+                  (season, conf, loser_id, loser_seed, g9_winner, winner_9_seed))
+        print(f'  -> Created {conf} Play-In Game 3: loser of 7v8 vs winner of 9v10')
+
 
 def _try_create_r1_from_playin(c, game_id, winner_id, season):
     """After a play-in game, try to auto-create the R1 series vs the 1 or 2 seed."""
@@ -2278,16 +2451,21 @@ async def set_playin_result(game_id: int, winner_id: int):
     conn = get_db_conn()
     c = conn.cursor()
 
-    # Fetch seeds to detect an underdog win (higher-seeded team wins)
-    c.execute('SELECT team1_id, team1_seed, team2_id, team2_seed FROM playin_games WHERE id = %s', (game_id,))
+    c.execute('SELECT team1_id, team1_seed, team2_id, team2_seed, season, status FROM playin_games WHERE id = %s', (game_id,))
     game_row = c.fetchone()
-    is_underdog = False
-    if game_row:
-        t1_id, t1_seed, t2_id, t2_seed = game_row
-        winner_seed = t1_seed if winner_id == t1_id else (t2_seed if winner_id == t2_id else None)
-        other_seed  = t2_seed if winner_id == t1_id else (t1_seed if winner_id == t2_id else None)
-        if winner_seed and other_seed:
-            is_underdog = winner_seed > other_seed   # higher seed number = underdog
+    if not game_row:
+        conn.close()
+        raise HTTPException(404, "Play-in game not found")
+
+    t1_id, t1_seed, t2_id, t2_seed, season, current_status = game_row
+
+    # If already completed, zero out old scores before re-scoring
+    if current_status == 'completed':
+        c.execute('UPDATE playin_predictions SET is_correct = 0, points_earned = 0 WHERE game_id = %s', (game_id,))
+
+    winner_seed = t1_seed if winner_id == t1_id else (t2_seed if winner_id == t2_id else None)
+    other_seed  = t2_seed if winner_id == t1_id else (t1_seed if winner_id == t2_id else None)
+    is_underdog = bool(winner_seed and other_seed and winner_seed > other_seed)
 
     correct_pts = calculate_play_in_points(True, is_underdog=is_underdog)
 
@@ -2298,11 +2476,57 @@ async def set_playin_result(game_id: int, winner_id: int):
                  points_earned = CASE WHEN predicted_winner_id = %s THEN %s ELSE 0 END
                  WHERE game_id = %s''',
               (winner_id, winner_id, correct_pts, game_id))
+
     _recalculate_all_points(c)
-    _try_create_r1_from_playin(c, game_id, winner_id, '2026')
+    # Advance bracket: 7v8 winner → R1 Group B; elimination winner → R1 Group A
+    _try_create_r1_from_playin(c, game_id, winner_id, season)
+    # Auto-create Game 3 once both 7v8 and 9v10 are done
+    _try_create_playin_game3(c, season)
+
     conn.commit()
     conn.close()
     return {"message": "Play-in result set", "underdog_win": is_underdog, "points_awarded": correct_pts}
+
+
+@app.delete("/api/admin/playin/{game_id}/result")
+async def reset_playin_result(game_id: int):
+    """Reset a completed play-in game — zeros prediction scores and recalculates all points."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT status FROM playin_games WHERE id = %s", (game_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Play-in game not found")
+
+    c.execute('UPDATE playin_predictions SET is_correct = 0, points_earned = 0 WHERE game_id = %s', (game_id,))
+    c.execute("UPDATE playin_games SET winner_id = NULL, status = 'active' WHERE id = %s", (game_id,))
+    _recalculate_all_points(c)
+    conn.commit()
+    conn.close()
+    return {"message": "Play-in result reset — scores recalculated"}
+
+
+@app.post("/api/admin/playin/sync")
+async def sync_playin(season: str = "2026"):
+    """Manually trigger all play-in bracket progressions for the season (idempotent)."""
+    conn = get_db_conn()
+    c = conn.cursor()
+
+    c.execute('''SELECT id, winner_id FROM playin_games
+                 WHERE season = %s AND status = 'completed' ''', (season,))
+    completed = c.fetchall()
+    for gid, wid in completed:
+        try:
+            _try_create_r1_from_playin(c, gid, wid, season)
+        except Exception as e:
+            print(f"sync_playin: failed R1 creation for game {gid}: {e}")
+
+    _try_create_playin_game3(c, season)
+    _recalculate_all_points(c)
+    conn.commit()
+    conn.close()
+    return {"message": f"Play-in sync complete — {len(completed)} completed games processed"}
 
 def _get_futures_lock() -> bool:
     conn = get_db_conn()

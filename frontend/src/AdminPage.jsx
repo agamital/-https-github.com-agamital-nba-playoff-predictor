@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp, X, Users, Search, Pencil, Trash2, Save } from 'lucide-react';
+import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp, X, Users, Search, Pencil, Trash2, Save, RotateCcw } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className }) => (
@@ -60,13 +60,25 @@ const TeamButton = ({ team, selected, onClick }) => (
   </button>
 );
 
-const SeriesCard = ({ series, onSave, onToggleLock }) => {
+const SeriesStatusBadge = ({ series }) => {
+  if (series.status !== 'completed') {
+    if (series.status === 'locked') return <span className="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-xs font-bold">Locked</span>;
+    return <span className="px-2 py-0.5 rounded bg-slate-700 text-slate-400 text-xs font-bold">Active</span>;
+  }
+  if (series.manual_override) return <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 text-xs font-bold">Manual Override</span>;
+  if (series.is_advanced) return <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs font-bold">Finished · Advanced</span>;
+  return <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-xs font-bold">Finished</span>;
+};
+
+const SeriesCard = ({ series, onSave, onToggleLock, onReset }) => {
   const [winnerId, setWinnerId] = useState(series.winner_team_id || null);
   const [games, setGames] = useState(series.actual_games || null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [locking, setLocking] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const isCompleted = series.status === 'completed';
   const isLocked = series.status === 'locked';
@@ -80,11 +92,23 @@ const SeriesCard = ({ series, onSave, onToggleLock }) => {
     setConfirmOpen(false);
     setSaving(true);
     try {
-      await onSave(series.id, winnerId, games);
+      await onSave(series.id, winnerId, games, isCompleted /* manual_override if re-saving */);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const doReset = async () => {
+    setConfirmReset(false);
+    setResetting(true);
+    try {
+      await onReset(series.id);
+      setWinnerId(null);
+      setGames(null);
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -106,12 +130,11 @@ const SeriesCard = ({ series, onSave, onToggleLock }) => {
         <div>
           <span className="text-xs font-bold text-orange-400 uppercase">{series.conference}</span>
           <span className="text-xs text-slate-500 ml-2">{series.round}</span>
-          <span className="text-xs text-slate-600 ml-2">×{mult} multiplier</span>
+          <span className="text-xs text-slate-600 ml-2">×{mult}</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-500">{series.prediction_count} picks</span>
-          {isCompleted && <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs font-bold">Done</span>}
-          {isLocked && !isCompleted && <span className="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-xs font-bold">Locked</span>}
+          <SeriesStatusBadge series={series} />
         </div>
       </div>
 
@@ -127,11 +150,12 @@ const SeriesCard = ({ series, onSave, onToggleLock }) => {
         <div className="mb-3 px-3 py-2 rounded bg-green-500/10 border border-green-500/30 text-green-400 text-sm font-bold flex items-center gap-2">
           <CheckCircle className="w-4 h-4" />
           Result: {series.winner_abbreviation} won in {series.actual_games} games
+          {series.manual_override && <span className="ml-auto text-[10px] text-amber-400 font-black bg-amber-500/15 px-1.5 py-0.5 rounded">OVERRIDE</span>}
         </div>
       )}
 
       <div className="mb-3">
-        <p className="text-xs text-slate-400 mb-2 uppercase font-bold">Set Winner</p>
+        <p className="text-xs text-slate-400 mb-2 uppercase font-bold">{isCompleted ? 'Override Winner' : 'Set Winner'}</p>
         <div className="flex gap-2">
           <TeamButton team={series.home_team} selected={winnerId === series.home_team.id} onClick={() => setWinnerId(series.home_team.id)} />
           <TeamButton team={series.away_team} selected={winnerId === series.away_team.id} onClick={() => setWinnerId(series.away_team.id)} />
@@ -155,11 +179,18 @@ const SeriesCard = ({ series, onSave, onToggleLock }) => {
           className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${
             saved ? 'bg-green-500 text-white' :
             !winnerId || !games ? 'bg-slate-700 text-slate-500 cursor-not-allowed' :
+            isCompleted ? 'bg-amber-500 hover:bg-amber-600 text-white' :
             'bg-orange-500 hover:bg-orange-600 text-white'
           }`}>
-          {saved ? 'Saved!' : saving ? 'Saving...' : 'Set Result'}
+          {saved ? 'Saved!' : saving ? 'Saving...' : isCompleted ? 'Force Update' : 'Set Result'}
         </button>
-        {!isCompleted && (
+        {isCompleted ? (
+          <button onClick={() => setConfirmReset(true)} disabled={resetting}
+            className="px-3 py-2 rounded-lg font-bold text-sm transition-all disabled:opacity-50 bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30"
+            title="Reset result — reverts user scores">
+            {resetting ? '…' : <RotateCcw className="w-4 h-4" />}
+          </button>
+        ) : (
           <button onClick={handleToggleLock} disabled={locking}
             className={`px-3 py-2 rounded-lg font-bold text-sm transition-all disabled:opacity-50 ${
               isLocked
@@ -172,19 +203,45 @@ const SeriesCard = ({ series, onSave, onToggleLock }) => {
       </div>
       {confirmOpen && (
         <ConfirmModal
-          message={`Set result: ${winnerId === series.home_team.id ? series.home_team.name : series.away_team.name} wins in ${games} games. This will update all user scores.`}
+          message={isCompleted
+            ? `Override result: ${winnerId === series.home_team.id ? series.home_team.name : series.away_team.name} wins in ${games} games. All user scores will be recalculated.`
+            : `Set result: ${winnerId === series.home_team.id ? series.home_team.name : series.away_team.name} wins in ${games} games. This will update all user scores.`}
           onConfirm={doSave}
           onCancel={() => setConfirmOpen(false)}
+        />
+      )}
+      {confirmReset && (
+        <ConfirmModal
+          message={`Reset this series result? All user scores for this series will be zeroed out and totals recalculated. The bracket advancement will NOT be reversed.`}
+          onConfirm={doReset}
+          onCancel={() => setConfirmReset(false)}
         />
       )}
     </Card>
   );
 };
 
-const PlayinCard = ({ game, onSave }) => {
+const PlayinStatusBadge = ({ game }) => {
+  if (game.status !== 'completed') {
+    return <span className="px-2 py-0.5 rounded bg-slate-700 text-slate-400 text-xs font-bold">Active</span>;
+  }
+  if (game.is_advanced) {
+    return <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs font-bold">Finished · Advanced</span>;
+  }
+  if (game.game_type === '7v8') {
+    return <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 text-xs font-bold">Finished · Waiting for 9v10</span>;
+  }
+  return <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-xs font-bold">Finished</span>;
+};
+
+const PlayinCard = ({ game, onSave, onReset }) => {
   const [winnerId, setWinnerId] = useState(game.winner_id || null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  const isCompleted = game.status === 'completed';
 
   const handleSave = async () => {
     if (!winnerId) return;
@@ -198,18 +255,35 @@ const PlayinCard = ({ game, onSave }) => {
     }
   };
 
+  const doReset = async () => {
+    setConfirmReset(false);
+    setResetting(true);
+    try {
+      await onReset(game.id);
+      setWinnerId(null);
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <Card className="p-5">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <div>
-          <span className="text-xs font-bold text-purple-400 uppercase">{game.conference}</span>
-          <span className="text-xs text-slate-500 ml-2">Play-In {game.game_type}</span>
+          <span className={`text-xs font-black uppercase ${game.game_type === 'elimination' ? 'text-rose-400' : 'text-purple-400'}`}>
+            {game.type_label || game.game_type}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-500">{game.prediction_count} picks</span>
-          {game.status === 'completed' && <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs font-bold">Done</span>}
+          <PlayinStatusBadge game={game} />
         </div>
       </div>
+
+      {/* Next-step hint */}
+      {game.next_step && (
+        <p className="text-[10px] text-slate-600 mb-3 leading-relaxed">{game.next_step}</p>
+      )}
 
       <div className="flex items-center gap-3 mb-4">
         <img src={game.team1.logo_url} alt={game.team1.name} className="w-10 h-10" onError={(e) => e.target.style.display = 'none'} />
@@ -221,27 +295,84 @@ const PlayinCard = ({ game, onSave }) => {
 
       {game.winner_abbreviation && (
         <div className="mb-3 px-3 py-2 rounded bg-green-500/10 border border-green-500/30 text-green-400 text-sm font-bold flex items-center gap-2">
-          <CheckCircle className="w-4 h-4" /> Result: {game.winner_abbreviation} won
+          <CheckCircle className="w-4 h-4" />
+          {game.winner_abbreviation} won
+          {game.is_advanced && <span className="ml-auto text-[10px] text-green-300/60">→ R1 created</span>}
         </div>
       )}
 
       <div className="mb-4">
-        <p className="text-xs text-slate-400 mb-2 uppercase font-bold">Set Winner</p>
+        <p className="text-xs text-slate-400 mb-2 uppercase font-bold">{isCompleted ? 'Override Winner' : 'Set Winner'}</p>
         <div className="flex gap-2">
           <TeamButton team={game.team1} selected={winnerId === game.team1.id} onClick={() => setWinnerId(game.team1.id)} />
           <TeamButton team={game.team2} selected={winnerId === game.team2.id} onClick={() => setWinnerId(game.team2.id)} />
         </div>
       </div>
 
-      <button onClick={handleSave} disabled={!winnerId || saving}
-        className={`w-full py-2 rounded-lg font-bold text-sm transition-all ${
-          saved ? 'bg-green-500 text-white' :
-          !winnerId ? 'bg-slate-700 text-slate-500 cursor-not-allowed' :
-          'bg-purple-500 hover:bg-purple-600 text-white'
-        }`}>
-        {saved ? 'Saved!' : saving ? 'Saving...' : 'Set Result'}
-      </button>
+      <div className="flex gap-2">
+        <button onClick={handleSave} disabled={!winnerId || saving}
+          className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${
+            saved ? 'bg-green-500 text-white' :
+            !winnerId ? 'bg-slate-700 text-slate-500 cursor-not-allowed' :
+            isCompleted ? 'bg-amber-500 hover:bg-amber-600 text-white' :
+            'bg-purple-500 hover:bg-purple-600 text-white'
+          }`}>
+          {saved ? 'Saved!' : saving ? 'Saving...' : isCompleted ? 'Force Update' : 'Set Result'}
+        </button>
+        {isCompleted && (
+          <button onClick={() => setConfirmReset(true)} disabled={resetting}
+            className="px-3 py-2 rounded-lg font-bold text-sm transition-all disabled:opacity-50 bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30"
+            title="Reset result — reverts user scores">
+            {resetting ? '…' : <RotateCcw className="w-4 h-4" />}
+          </button>
+        )}
+      </div>
+
+      {confirmReset && (
+        <ConfirmModal
+          message={`Reset this play-in result? All user scores for this game will be zeroed and recalculated. Downstream bracket changes (R1 series, Game 3) will NOT be reversed.`}
+          onConfirm={doReset}
+          onCancel={() => setConfirmReset(false)}
+        />
+      )}
     </Card>
+  );
+};
+
+// Per-conference status banner for the play-in section
+const PlayinConferenceBanner = ({ confGames }) => {
+  const g7   = confGames.find(g => g.game_type === '7v8');
+  const g9   = confGames.find(g => g.game_type === '9v10');
+  const gelim = confGames.find(g => g.game_type === 'elimination');
+
+  let text, color;
+  if (gelim?.is_advanced) {
+    text = 'All games complete — both R1 seeds set'; color = 'green';
+  } else if (gelim?.status === 'completed') {
+    text = 'Game 3 complete — run Sync Play-In to advance #8 seed'; color = 'amber';
+  } else if (gelim) {
+    text = 'Game 3 open for predictions'; color = 'rose';
+  } else if (g7?.status === 'completed' && g9?.status === 'completed') {
+    text = 'Both games done — run Sync Play-In to create Game 3'; color = 'amber';
+  } else if (g7?.status === 'completed') {
+    text = 'Waiting for Game 2 (9v10) to finish'; color = 'slate';
+  } else if (g9?.status === 'completed') {
+    text = 'Waiting for Game 1 (7v8) to finish'; color = 'slate';
+  } else {
+    text = 'Phase 1: Games 1 & 2 in progress'; color = 'slate';
+  }
+
+  const colorMap = {
+    green: 'bg-green-500/10 border-green-500/30 text-green-400',
+    amber: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
+    rose:  'bg-rose-500/10  border-rose-500/30  text-rose-400',
+    slate: 'bg-slate-800/60 border-slate-700    text-slate-400',
+  };
+
+  return (
+    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-bold mb-3 ${colorMap[color]}`}>
+      <span>{text}</span>
+    </div>
   );
 };
 
@@ -1079,10 +1210,33 @@ const AdminPage = ({ currentUser }) => {
     }
   };
 
-  const handleSeriesResult = async (seriesId, winnerTeamId, actualGames) => {
-    await api.setSeriesResult(seriesId, winnerTeamId, actualGames);
+  const handleSeriesResult = async (seriesId, winnerTeamId, actualGames, manualOverride = false) => {
+    await api.setSeriesResult(seriesId, winnerTeamId, actualGames, manualOverride);
     const updated = await api.getAdminSeries();
     setSeries(updated);
+    addToast(manualOverride ? 'Result overridden — scores recalculated' : 'Result set — scores updated', 'success');
+  };
+
+  const handleResetSeriesResult = async (seriesId) => {
+    try {
+      await api.resetSeriesResult(seriesId);
+      const updated = await api.getAdminSeries();
+      setSeries(updated);
+      addToast('Series reset — scores reverted', 'success');
+    } catch (e) {
+      addToast('Reset failed: ' + (e.response?.data?.detail || e.message), 'error');
+    }
+  };
+
+  const handleSyncAndAdvance = async () => {
+    try {
+      const res = await api.syncAndAdvance();
+      const updated = await api.getAdminSeries();
+      setSeries(updated);
+      addToast(res.message || 'Sync complete', 'success');
+    } catch (e) {
+      addToast('Sync failed: ' + (e.response?.data?.detail || e.message), 'error');
+    }
   };
 
   const handleToggleLock = async (seriesId, locked) => {
@@ -1096,6 +1250,30 @@ const AdminPage = ({ currentUser }) => {
     const [updatedPlayin, updatedSeries] = await Promise.all([api.getAdminPlayin(), api.getAdminSeries()]);
     setPlayin(updatedPlayin);
     setSeries(updatedSeries);
+    addToast('Play-in result set — bracket updated', 'success');
+  };
+
+  const handleResetPlayinResult = async (gameId) => {
+    try {
+      await api.resetPlayinResult(gameId);
+      const updated = await api.getAdminPlayin();
+      setPlayin(updated);
+      addToast('Play-in result reset — scores reverted', 'success');
+    } catch (e) {
+      addToast('Reset failed: ' + (e.response?.data?.detail || e.message), 'error');
+    }
+  };
+
+  const handleSyncPlayin = async () => {
+    try {
+      const res = await api.syncPlayin();
+      const [updatedPlayin, updatedSeries] = await Promise.all([api.getAdminPlayin(), api.getAdminSeries()]);
+      setPlayin(updatedPlayin);
+      setSeries(updatedSeries);
+      addToast(res.message || 'Play-in sync complete', 'success');
+    } catch (e) {
+      addToast('Sync failed: ' + (e.response?.data?.detail || e.message), 'error');
+    }
   };
 
   if (!currentUser || currentUser.role !== 'admin') {
@@ -1128,10 +1306,18 @@ const AdminPage = ({ currentUser }) => {
           </div>
           <p className="text-slate-400">Set results — scores update automatically</p>
         </div>
-        <button onClick={load} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800/50 transition-all">
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleSyncAndAdvance}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30 font-bold text-sm transition-all"
+            title="Re-run bracket advancement for all completed series and recalculate all points">
+            <Zap className="w-4 h-4" />
+            Sync &amp; Advance
+          </button>
+          <button onClick={load} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800/50 transition-all">
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <UserManagementCard currentUser={currentUser} addToast={addToast} />
@@ -1148,18 +1334,47 @@ const AdminPage = ({ currentUser }) => {
         </div>
       ) : (
         <>
-          {playin.length > 0 && (
-            <div className="mb-10">
-              <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
-                <Trophy className="w-6 h-6 text-purple-400" /> Play-In Games
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {playin.map(game => (
-                  <PlayinCard key={game.id} game={game} onSave={handlePlayinResult} />
-                ))}
+          {playin.length > 0 && (() => {
+            const byConf = playin.reduce((acc, g) => {
+              acc[g.conference] = acc[g.conference] || [];
+              acc[g.conference].push(g);
+              return acc;
+            }, {});
+            const gameOrder = { '7v8': 0, '9v10': 1, 'elimination': 2 };
+            return (
+              <div className="mb-10">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                    <Trophy className="w-6 h-6 text-purple-400" /> Play-In Games
+                  </h2>
+                  <button onClick={handleSyncPlayin}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 font-bold text-sm transition-all"
+                    title="Re-run play-in progressions: create Game 3, advance R1 seeds, recalculate points">
+                    <Zap className="w-4 h-4" />
+                    Sync Play-In
+                  </button>
+                </div>
+
+                {Object.entries(byConf).map(([conf, confGames]) => {
+                  const ordered = [...confGames].sort((a, b) => (gameOrder[a.game_type] ?? 9) - (gameOrder[b.game_type] ?? 9));
+                  return (
+                    <div key={conf} className="mb-8">
+                      <div className="flex items-center gap-2 mb-3">
+                        <h3 className="text-lg font-black text-white">{conf} Conference</h3>
+                        <span className="text-xs text-slate-500">Play-In</span>
+                      </div>
+                      <PlayinConferenceBanner confGames={confGames} />
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {ordered.map(game => (
+                          <PlayinCard key={game.id} game={game} onSave={handlePlayinResult} onReset={handleResetPlayinResult} />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {roundOrder.map(round => {
             const roundSeries = seriesByRound[round];
@@ -1175,7 +1390,7 @@ const AdminPage = ({ currentUser }) => {
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {roundSeries.map(s => (
-                    <SeriesCard key={s.id} series={s} onSave={handleSeriesResult} onToggleLock={handleToggleLock} />
+                    <SeriesCard key={s.id} series={s} onSave={handleSeriesResult} onToggleLock={handleToggleLock} onReset={handleResetSeriesResult} />
                   ))}
                 </div>
               </div>
