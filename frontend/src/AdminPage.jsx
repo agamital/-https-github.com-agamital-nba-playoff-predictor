@@ -1175,13 +1175,26 @@ const UserManagementCard = ({ currentUser, addToast }) => {
   );
 };
 
-const StandingsSyncCard = ({ addToast }) => {
-  const [expanded, setExpanded]   = useState(false);
-  const [syncing, setSyncing]     = useState(false);
-  const [result, setResult]       = useState(null);   // last sync result object
-  const [standing, setStanding]   = useState(null);   // current standings meta
+// NBA API URL + headers for browser-side fetch (bypasses Railway IP block)
+const _NBA_BROWSER_URL = 'https://stats.nba.com/stats/leaguestandingsv3?LeagueID=00&Season=2025-26&SeasonType=Regular%20Season';
+const _NBA_BROWSER_HEADERS = {
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Origin': 'https://www.nba.com',
+  'Referer': 'https://www.nba.com/',
+  'x-nba-stats-origin': 'stats',
+  'x-nba-stats-token': 'true',
+};
 
-  // Load current standings meta (source, failures) on expand
+const StandingsSyncCard = ({ addToast }) => {
+  const [expanded, setExpanded]     = useState(false);
+  const [syncing, setSyncing]       = useState(false);
+  const [browserFetching, setBrowserFetching] = useState(false);
+  const [testing, setTesting]       = useState(false);
+  const [result, setResult]         = useState(null);
+  const [testResult, setTestResult] = useState(null);
+  const [standing, setStanding]     = useState(null);
+
   useEffect(() => {
     if (!expanded) return;
     api.getStandings().then(d => setStanding(d)).catch(() => {});
@@ -1193,7 +1206,6 @@ const StandingsSyncCard = ({ addToast }) => {
     try {
       const res = await api.adminSyncStandings();
       setResult(res);
-      // Refresh meta after sync
       const fresh = await api.getStandings();
       setStanding(fresh);
       if (res.success) addToast('Standings synced from NBA API ✓', 'success');
@@ -1207,15 +1219,64 @@ const StandingsSyncCard = ({ addToast }) => {
     }
   };
 
+  const runBrowserFetch = async () => {
+    setBrowserFetching(true);
+    setResult(null);
+    try {
+      // Browser makes the request — bypasses Railway IP block
+      const resp = await fetch(_NBA_BROWSER_URL, {
+        method: 'GET',
+        headers: _NBA_BROWSER_HEADERS,
+        mode: 'cors',
+        credentials: 'omit',
+      });
+      if (!resp.ok) throw new Error(`NBA API returned HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (!data?.resultSets) throw new Error('Unexpected response shape — missing resultSets');
+
+      // Push raw resultSets to our backend
+      const pushRes = await api.pushStandingsFromBrowser(data.resultSets);
+      setResult({ success: true, ...pushRes, last_success_at: pushRes.synced_at });
+      const fresh = await api.getStandings();
+      setStanding(fresh);
+      addToast(`✓ Browser fetch saved ${pushRes.rows_saved} teams — #1 East: ${pushRes.east_no1}`, 'success');
+    } catch (e) {
+      const isCors = e.message?.toLowerCase().includes('failed to fetch') || e.message?.toLowerCase().includes('cors');
+      const msg = isCors
+        ? 'CORS blocked — browser cannot fetch stats.nba.com directly. Use "Force Sync" (server) instead.'
+        : (e.response?.data?.detail || e.message);
+      setResult({ success: false, last_error: msg });
+      addToast('Browser fetch failed: ' + msg, 'error');
+    } finally {
+      setBrowserFetching(false);
+    }
+  };
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await api.testStandingsConnection();
+      setTestResult(res);
+      if (res.success) addToast(`Connection OK — #1 East: ${res.east_no1}`, 'success');
+      else addToast('Connection test failed — see details', 'error');
+    } catch (e) {
+      setTestResult({ success: false, error: e.response?.data?.detail || e.message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const src = result?.data_source ?? standing?.data_source ?? null;
   const fails = result?.consecutive_failures ?? standing?.consecutive_failures ?? 0;
 
   const SourceBadge = ({ source }) => {
     if (!source) return null;
     const cfg = {
-      nba_api:   { label: 'Live NBA API',        icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
-      database:  { label: 'Database Cache',       icon: Database,      cls: 'bg-blue-500/20  text-blue-400  border-blue-500/30'  },
-      hardcoded: { label: 'Hardcoded Fallback ⚠', icon: AlertTriangle, cls: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
+      nba_api:       { label: 'Live NBA API',        icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
+      browser_push:  { label: 'Browser Push',         icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
+      database:      { label: 'Database Cache',       icon: Database,      cls: 'bg-blue-500/20  text-blue-400  border-blue-500/30'  },
+      hardcoded:     { label: 'Hardcoded Fallback ⚠', icon: AlertTriangle, cls: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
     }[source] || { label: source, icon: Activity, cls: 'bg-slate-700 text-slate-400 border-slate-600' };
     const Icon = cfg.icon;
     return (
@@ -1229,6 +1290,8 @@ const StandingsSyncCard = ({ addToast }) => {
     if (!iso) return '—';
     return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
+
+  const anyBusy = syncing || browserFetching || testing;
 
   return (
     <Card className="p-5 mb-4">
@@ -1248,7 +1311,7 @@ const StandingsSyncCard = ({ addToast }) => {
 
       {expanded && (
         <div className="mt-4 space-y-4">
-          {/* Current status */}
+          {/* Status grid */}
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="bg-slate-800/60 rounded-lg px-3 py-2">
               <p className="text-slate-500 font-bold uppercase mb-1">Data Source</p>
@@ -1263,14 +1326,12 @@ const StandingsSyncCard = ({ addToast }) => {
               <p className="text-white font-bold">{fmt(standing?.last_synced_at)}</p>
             </div>
             <div className="bg-slate-800/60 rounded-lg px-3 py-2">
-              <p className="text-slate-500 font-bold uppercase mb-1">NBA API Available</p>
-              <p className={`font-black ${result?.nba_api_available === false ? 'text-red-400' : result?.nba_api_available ? 'text-green-400' : 'text-slate-400'}`}>
-                {result?.nba_api_available === false ? 'No (import failed)' : result?.nba_api_available ? 'Yes' : '—'}
-              </p>
+              <p className="text-slate-500 font-bold uppercase mb-1">Season</p>
+              <p className="text-white font-bold">2025-26 Regular Season</p>
             </div>
           </div>
 
-          {/* All-Star data warning — shown prominently when API returns wrong season type */}
+          {/* All-Star data warning */}
           {(() => {
             const err = result?.last_error || standing?.last_sync_error || '';
             if (!err.toLowerCase().includes('all-star')) return null;
@@ -1285,7 +1346,7 @@ const StandingsSyncCard = ({ addToast }) => {
             );
           })()}
 
-          {/* Last error (non All-Star) */}
+          {/* General error */}
           {(result?.last_error || (fails > 0 && standing?.last_sync_error)) && (() => {
             const err = result?.last_error || standing?.last_sync_error || '';
             if (err.toLowerCase().includes('all-star')) return null;
@@ -1297,8 +1358,36 @@ const StandingsSyncCard = ({ addToast }) => {
             );
           })()}
 
+          {/* Test connection result */}
+          {testResult && (
+            <div className={`px-3 py-2.5 rounded-lg border text-sm font-bold ${
+              testResult.success
+                ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                : 'bg-red-500/10  border-red-500/30  text-red-400'
+            }`}>
+              {testResult.success ? (
+                <div>
+                  <p className="flex items-center gap-1.5"><CheckCircle className="w-4 h-4" /> Server can reach NBA API ✓</p>
+                  <p className="text-xs mt-1 font-normal">
+                    #1 East: <span className="font-black">{testResult.east_no1}</span> &nbsp;|&nbsp;
+                    #1 West: <span className="font-black">{testResult.west_no1}</span>
+                  </p>
+                  <p className="text-xs mt-0.5 font-normal text-green-300/70">
+                    East: {testResult.east_top3?.join(' · ')}
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <p className="flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> Server cannot reach NBA API</p>
+                  <p className="text-xs mt-1 font-mono font-normal break-all">{testResult.error}</p>
+                  {testResult.hint && <p className="text-xs mt-1 text-amber-400 font-normal">{testResult.hint}</p>}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Sync result */}
-          {result && (
+          {result && !testResult && (
             <div className={`px-3 py-2 rounded-lg border text-sm font-bold flex items-center gap-2 ${
               result.success
                 ? 'bg-green-500/10 border-green-500/30 text-green-400'
@@ -1306,25 +1395,49 @@ const StandingsSyncCard = ({ addToast }) => {
             }`}>
               {result.success ? <CheckCircle className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
               {result.success
-                ? `Sync succeeded — data now live from NBA API (${fmt(result.last_success_at)})`
+                ? `Sync succeeded — ${result.rows_saved ?? result.rows ?? ''} teams saved. #1 East: ${result.east_no1 ?? '—'} (${fmt(result.last_success_at)})`
                 : 'Sync failed — check the error above'}
             </div>
           )}
 
-          <div className="flex gap-2">
-            <button onClick={runSync} disabled={syncing}
-              className={`flex-1 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
-                syncing
-                  ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-                  : 'bg-blue-500 hover:bg-blue-600 text-white'
+          {/* Buttons */}
+          <div className="grid grid-cols-1 gap-2">
+            {/* Row 1: Test + Server sync */}
+            <div className="flex gap-2">
+              <button onClick={runTest} disabled={anyBusy}
+                className={`flex-1 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                  anyBusy ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                          : 'bg-slate-700 hover:bg-slate-600 text-white border border-slate-600'
+                }`}>
+                {testing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
+                {testing ? 'Testing…' : 'Test Connection'}
+              </button>
+              <button onClick={runSync} disabled={anyBusy}
+                className={`flex-1 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                  anyBusy ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                          : 'bg-blue-500 hover:bg-blue-600 text-white'
+                }`}>
+                <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+                {syncing ? 'Syncing…' : 'Server Sync'}
+              </button>
+            </div>
+
+            {/* Row 2: Browser fetch (bypass) */}
+            <button onClick={runBrowserFetch} disabled={anyBusy}
+              className={`w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                anyBusy ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
               }`}>
-              <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? 'Syncing from NBA API…' : 'Force Sync from NBA API'}
+              {browserFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
+              {browserFetching ? 'Browser fetching NBA data…' : 'Fetch via Browser (bypasses IP block)'}
             </button>
           </div>
-          <p className="text-[10px] text-slate-600">
-            This runs synchronously — waits for NBA API response before returning. Use this to diagnose why automated syncs are failing.
-            Scheduled sync runs every 6 h (cron: 0 */6 * * * UTC) until April 20, 2026.
+
+          <p className="text-[10px] text-slate-600 leading-relaxed">
+            <strong className="text-slate-500">Test Connection</strong> — checks if the server can reach NBA API directly.<br />
+            <strong className="text-slate-500">Server Sync</strong> — server fetches + saves (fails if Railway IP is blocked).<br />
+            <strong className="text-slate-500">Fetch via Browser</strong> — YOUR browser fetches the data, then sends it to the server.
+            Use this if the server is IP-blocked. Requires browser CORS access to stats.nba.com.
           </p>
         </div>
       )}

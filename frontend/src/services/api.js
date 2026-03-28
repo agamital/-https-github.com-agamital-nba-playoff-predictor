@@ -167,6 +167,18 @@ export const adminSyncStandings = async () => {
   return response.data;
 };
 
+// Push browser-fetched NBA API data to the backend (bypasses server IP block)
+export const pushStandingsFromBrowser = async (resultSets) => {
+  const response = await api.post('/api/admin/standings/push', { resultSets });
+  return response.data;
+};
+
+// Quick server-side connection test — returns #1 East team name
+export const testStandingsConnection = async () => {
+  const response = await api.get('/api/admin/standings/test');
+  return response.data;
+};
+
 // Play-In Games
 export const getPlayInGames = async (season = '2026', conference = null) => {
   const params = { season };

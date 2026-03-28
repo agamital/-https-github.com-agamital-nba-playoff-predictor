@@ -48,14 +48,28 @@ _RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Picks <noreply@nba-playoffs-2
 # APScheduler instance — created in startup(), referenced in shutdown()
 _scheduler = None
 
-# Headers that stats.nba.com requires to not block requests.
-# NOTE: Accept-Encoding is intentionally omitted — passing it on cloud servers
-# (Railway/Heroku) causes the library to receive compressed bytes it cannot decode,
-# resulting in silent JSON parse failures. Let requests handle encoding negotiation.
+# Direct URL — bypasses nba_api wrapper entirely, giving us full control over headers
+_NBA_STANDINGS_URL = (
+    'https://stats.nba.com/stats/leaguestandingsv3'
+    '?LeagueID=00&Season=2025-26&SeasonType=Regular%20Season'
+)
+
+# Rotate User-Agents so repeated Railway requests look less like a bot
+_USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1',
+]
+
+# Base headers — User-Agent is overridden per-request with a random UA above.
+# Accept-Encoding: identity → tells server "no compression" so we always get
+# plain JSON (compressed responses cause JSONDecodeError on Railway).
 _NBA_HEADERS = {
     'Host': 'stats.nba.com',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
+    'Accept-Encoding': 'identity',
     'Accept-Language': 'en-US,en;q=0.9',
     'Origin': 'https://www.nba.com',
     'Referer': 'https://www.nba.com/',
@@ -356,57 +370,17 @@ def sync_teams():
     conn.close()
     print(f"Synced {len(teams)} teams")
 
-def _fetch_standings_from_api():
-    """
-    Fetch standings from stats.nba.com with up to 3 attempts and exponential
-    backoff (2 s, 4 s).  Raises the last exception if all attempts fail.
+_ALLSTAR_KEYWORDS = ('all-star', 'all star', 'team lebron', 'team stephen',
+                     'team durant', 'team giannis', 'team curry')
 
-    Headers notes:
-    - Accept-Encoding is omitted on purpose: cloud IPs (Railway) receive
-      compressed responses that nba_api cannot always decode, causing silent
-      JSON failures.  Omitting it forces plain text responses.
-    - timeout=30 covers Railway's higher outbound latency.
-    """
-    last_err = None
-    for attempt in range(1, 4):
-        try:
-            print(f"[Standings] NBA API fetch attempt {attempt}/3 "
-                  f"(season=2025-26, timeout={_NBA_TIMEOUT}s)…")
-            standings_api = leaguestandingsv3.LeagueStandingsV3(
-                season='2025-26',
-                season_type='Regular Season',          # primary filter — prevent All-Star data
-                season_type_all_star='Regular Season', # belt-and-suspenders for older API builds
-                headers=_NBA_HEADERS,
-                timeout=_NBA_TIMEOUT,
-                proxy=None,   # never route through a proxy — direct connection only
-            )
-            raw = standings_api.get_dict()
-            print(f"[Standings] ✓ NBA API responded on attempt {attempt}")
-            break  # success
-        except Exception as e:
-            last_err = e
-            # Surface HTTP status + body for every failure so admin panel can show it
-            status_code = None
-            resp_text   = None
-            try:
-                resp = getattr(e, 'response', None)
-                if resp is not None:
-                    status_code = resp.status_code
-                    resp_text   = resp.text[:600]
-            except Exception:
-                pass
-            if status_code:
-                print(f"[Standings] ✗ Attempt {attempt} — HTTP {status_code}: {resp_text}")
-            else:
-                print(f"[Standings] ✗ Attempt {attempt} — {type(e).__name__}: {e}")
-            if attempt < 3:
-                backoff = 2 ** attempt  # 2 s, 4 s
-                print(f"[Standings] Retrying in {backoff}s…")
-                time.sleep(backoff)
-    else:
-        raise last_err  # all 3 attempts failed
 
-    result_set = raw['resultSets'][0]
+def _parse_standings_result_sets(result_sets: list) -> list:
+    """
+    Parse raw NBA API resultSets into our internal standings list.
+    Validates for All-Star contamination and minimum team count.
+    Raises ValueError on bad data.  Shared by server fetch and browser-push.
+    """
+    result_set  = result_sets[0]
     col_headers = result_set['headers']
     rows        = result_set['rowSet']
 
@@ -420,23 +394,18 @@ def _fetch_standings_from_api():
         except (ValueError, KeyError, IndexError):
             games_back = 0.0
         standings.append({
-            'team_id':    col(row, 'TeamID'),
-            'team_name':  f"{col(row, 'TeamCity')} {col(row, 'TeamName')}",
-            'conference': col(row, 'Conference'),   # 'East' or 'West'
-            'wins':       int(col(row, 'WINS')),
-            'losses':     int(col(row, 'LOSSES')),
-            'win_pct':    float(col(row, 'WinPCT')),
-            'conf_rank':  99,
+            'team_id':      col(row, 'TeamID'),
+            'team_name':    f"{col(row, 'TeamCity')} {col(row, 'TeamName')}",
+            'conference':   col(row, 'Conference'),   # 'East' or 'West'
+            'wins':         int(col(row, 'WINS')),
+            'losses':       int(col(row, 'LOSSES')),
+            'win_pct':      float(col(row, 'WinPCT')),
+            'conf_rank':    99,
             'playoff_rank': 99,
-            'games_back': games_back,
+            'games_back':   games_back,
         })
 
-    # ── All-Star data guard ──────────────────────────────────────────────────
-    # The NBA API occasionally returns All-Star event data when season_type is
-    # not strictly enforced.  All-Star teams have non-standard conferences
-    # (e.g. '' or 'East All-Star') and names like "Team LeBron".
-    _ALLSTAR_KEYWORDS = ('all-star', 'all star', 'team lebron', 'team stephen',
-                         'team durant', 'team giannis', 'team curry')
+    # ── All-Star / bad-data guard ────────────────────────────────────────────
     bad_teams = [
         t for t in standings
         if t['conference'].lower().strip() not in ('east', 'west')
@@ -455,17 +424,71 @@ def _fetch_standings_from_api():
             f"data appears incomplete or non-regular-season."
         )
 
-    # Recompute ranks by win_pct, ties broken by wins
+    # Recompute conf_rank by win_pct, ties broken by wins
     for conf in ['East', 'West']:
         conf_teams = sorted(
             [t for t in standings if t['conference'] == conf],
             key=lambda x: (-x['win_pct'], -x['wins'])
         )
         for idx, team in enumerate(conf_teams, 1):
-            team['conf_rank'] = idx
+            team['conf_rank']    = idx
             team['playoff_rank'] = idx
 
     return standings
+
+
+def _fetch_standings_from_api():
+    """
+    Fetch standings from stats.nba.com using requests directly (not nba_api
+    wrapper).  3 attempts with exponential backoff (2 s, 4 s).  Raises last
+    exception if all attempts fail.
+
+    Key changes vs old nba_api approach:
+    - Uses requests.get() — full control over headers, no hidden Accept-Encoding
+    - Accept-Encoding: identity forces plain-text JSON (no gzip decode issues)
+    - Rotates User-Agent each attempt to reduce IP-based rate-limiting
+    """
+    import random
+    import requests as _http
+
+    last_err = None
+    for attempt in range(1, 4):
+        ua = random.choice(_USER_AGENTS)
+        headers = {**_NBA_HEADERS, 'User-Agent': ua}
+        try:
+            print(f"[Standings] Direct HTTP fetch attempt {attempt}/3 "
+                  f"(UA: {ua[8:50]}…, timeout={_NBA_TIMEOUT}s)")
+            http_resp = _http.get(
+                _NBA_STANDINGS_URL,
+                headers=headers,
+                timeout=_NBA_TIMEOUT,
+                allow_redirects=True,
+            )
+            print(f"[Standings] HTTP status: {http_resp.status_code} "
+                  f"encoding: {http_resp.encoding} "
+                  f"content-type: {http_resp.headers.get('content-type','?')}")
+            http_resp.raise_for_status()
+            raw = http_resp.json()
+            print(f"[Standings] ✓ NBA API responded on attempt {attempt}")
+            break
+        except Exception as e:
+            last_err = e
+            status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status_code:
+                body = ''
+                try: body = e.response.text[:600]
+                except Exception: pass
+                print(f"[Standings] ✗ Attempt {attempt} — HTTP {status_code}: {body}")
+            else:
+                print(f"[Standings] ✗ Attempt {attempt} — {type(e).__name__}: {e}")
+            if attempt < 3:
+                backoff = 2 ** attempt
+                print(f"[Standings] Retrying in {backoff}s…")
+                time.sleep(backoff)
+    else:
+        raise last_err  # all 3 attempts failed
+
+    return _parse_standings_result_sets(raw['resultSets'])
 
 
 def _compute_team_status(conf_rank: int) -> str:
@@ -761,12 +784,9 @@ def _standings_sync_job():
         print(f"[Sync] {msg}")
         _sync_status["last_error"] = msg
         return False
-    if not NBA_API_AVAILABLE:
-        msg = "nba_api module not available on this server (import failed at startup)"
-        print(f"[Sync] {msg}")
-        _sync_status["last_error"] = msg
-        return False
 
+    # Standings now use requests directly — no nba_api needed.
+    # Player stats still needs nba_api; that check is inside _sync_player_stats_job.
     print(f"[Sync] Starting full data sync at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC")
     standings_ok = False
 
@@ -1188,6 +1208,33 @@ def _apply_odds_migration():
         print(f"Odds migration connection error (non-fatal): {e}")
 
 
+def _clean_allstar_data_from_db():
+    """
+    Remove any All-Star or suspicious rows from cached_standings.
+    Runs once at startup to fix previously-corrupted data.
+    """
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        like_clauses = " OR ".join(
+            [f"LOWER(team_name) LIKE '%{kw}%'" for kw in _ALLSTAR_KEYWORDS]
+        )
+        c.execute(f"""
+            DELETE FROM cached_standings
+            WHERE {like_clauses}
+               OR conference NOT IN ('East', 'West')
+               OR team_name IS NULL
+               OR team_name = ''
+        """)
+        deleted = c.rowcount
+        conn.commit()
+        conn.close()
+        if deleted:
+            print(f"[Startup] Removed {deleted} All-Star/null rows from cached_standings")
+    except Exception as e:
+        print(f"[Startup] cleanup cached_standings (non-fatal): {e}")
+
+
 def _apply_series_migration():
     """Ensure manual_override column exists on the series table (idempotent)."""
     try:
@@ -1247,6 +1294,9 @@ async def startup():
 
     # Apply standings schema migration (games_back, status, unique constraint)
     _apply_standings_migration()
+
+    # Remove any All-Star or null rows that may have been saved previously
+    _clean_allstar_data_from_db()
 
     # Apply player stats schema migration (create player_stats table)
     _apply_player_stats_migration()
@@ -1396,6 +1446,87 @@ async def admin_standings_sync():
         "nba_api_available":    NBA_API_AVAILABLE,
         "static_mode":          datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF,
     }
+
+@app.post("/api/admin/standings/push")
+async def admin_push_standings(payload: dict):
+    """
+    Accept raw NBA API resultSets fetched by the admin's browser and save to DB.
+    Bypasses the server-side IP block entirely — the browser makes the request,
+    then POSTs the result here.
+
+    Expected body: { "resultSets": [...] }  (exact NBA API shape)
+    """
+    result_sets = payload.get("resultSets")
+    if not result_sets:
+        raise HTTPException(status_code=400, detail="Missing 'resultSets' in payload")
+    try:
+        standings = _parse_standings_result_sets(result_sets)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    result = _persist_standings_to_db(standings)
+    if not result['synced_at']:
+        raise HTTPException(status_code=500, detail="DB persist failed — check server logs")
+
+    # Update in-memory cache
+    _standings_cache["data"]       = standings
+    _standings_cache["fetched_at"] = result['synced_at']
+    _standings_cache["expires"]    = result['synced_at'] + timedelta(hours=6)
+    _sync_status["source"]               = "browser_push"
+    _sync_status["last_success_at"]      = result['synced_at']
+    _sync_status["last_error"]           = None
+    _sync_status["consecutive_failures"] = 0
+
+    east_no1 = next(
+        (t for t in sorted(standings, key=lambda x: x['conf_rank'])
+         if t['conference'] == 'East'), None
+    )
+    print(f"[Standings] ✓ Browser-pushed {result['rows']} teams. #1 East: {east_no1 and east_no1['team_name']}")
+    return {
+        "success":    True,
+        "rows_saved": result['rows'],
+        "east_no1":   east_no1['team_name'] if east_no1 else None,
+        "synced_at":  result['synced_at'].isoformat(),
+    }
+
+
+@app.get("/api/admin/standings/test")
+async def admin_test_standings():
+    """
+    Quick connection test — tries to fetch standings via direct HTTP and returns
+    the #1 East seed name.  Use the 'Test Connection' button in the Admin Panel.
+    """
+    import concurrent.futures, random, requests as _http
+    def _do_test():
+        ua = random.choice(_USER_AGENTS)
+        headers = {**_NBA_HEADERS, 'User-Agent': ua}
+        http_resp = _http.get(_NBA_STANDINGS_URL, headers=headers, timeout=15, allow_redirects=True)
+        http_resp.raise_for_status()
+        return http_resp.json()
+
+    loop = asyncio.get_event_loop()
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            raw = await loop.run_in_executor(pool, _do_test)
+        standings = _parse_standings_result_sets(raw['resultSets'])
+        east = sorted([t for t in standings if t['conference'] == 'East'], key=lambda x: x['conf_rank'])
+        west = sorted([t for t in standings if t['conference'] == 'West'], key=lambda x: x['conf_rank'])
+        return {
+            "success":      True,
+            "east_no1":     east[0]['team_name'] if east else None,
+            "west_no1":     west[0]['team_name'] if west else None,
+            "east_top3":    [f"{t['team_name']} ({t['wins']}-{t['losses']})" for t in east[:3]],
+            "west_top3":    [f"{t['team_name']} ({t['wins']}-{t['losses']})" for t in west[:3]],
+            "total_teams":  len(standings),
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error":   f"{type(e).__name__}: {str(e)[:400]}",
+            "hint":    "If this is a connection error, Railway IP may be blocked. Use 'Fetch via Browser' instead.",
+        }
+
 
 @app.get("/api/health")
 async def health_check():
@@ -3116,31 +3247,31 @@ async def get_player_stats(player_id: int):
 
 @app.get("/api/debug/standings-raw")
 async def debug_standings_raw():
-    """Returns the raw column headers + top 6 rows from the NBA API.
-    Use this to verify the API is returning current data and column names are correct."""
-    if not NBA_API_AVAILABLE:
-        return {"error": "nba_api not installed"}
+    """Returns raw column headers + top 6 rows directly from the NBA API via requests."""
+    import random, requests as _http
     try:
-        standings_api = leaguestandingsv3.LeagueStandingsV3(season='2025-26')
-        raw = standings_api.get_dict()
+        ua = random.choice(_USER_AGENTS)
+        headers = {**_NBA_HEADERS, 'User-Agent': ua}
+        http_resp = _http.get(_NBA_STANDINGS_URL, headers=headers, timeout=20, allow_redirects=True)
+        http_resp.raise_for_status()
+        raw = http_resp.json()
         result_set = raw['resultSets'][0]
-        headers = result_set['headers']
+        col_headers = result_set['headers']
         rows = result_set['rowSet']
-
-        # Return headers + a sample of rows as dicts for easy inspection
-        sample = [dict(zip(headers, row)) for row in rows[:6]]
+        sample = [dict(zip(col_headers, row)) for row in rows[:6]]
         return {
-            "fetched_at": datetime.now().isoformat(),
-            "total_rows": len(rows),
-            "headers": headers,
-            "sample_rows": sample,
+            "fetched_at":   datetime.now().isoformat(),
+            "total_rows":   len(rows),
+            "headers":      col_headers,
+            "sample_rows":  sample,
+            "http_status":  http_resp.status_code,
             "cache_info": {
-                "fetched_at": _standings_cache.get("fetched_at", None) and _standings_cache["fetched_at"].isoformat(),
-                "expires": _standings_cache.get("expires", None) and _standings_cache["expires"].isoformat(),
+                "fetched_at": _standings_cache.get("fetched_at") and _standings_cache["fetched_at"].isoformat(),
+                "expires":    _standings_cache.get("expires")    and _standings_cache["expires"].isoformat(),
             }
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"{type(e).__name__}: {str(e)}"}
 
 
 @app.get("/api/users/{username}")
