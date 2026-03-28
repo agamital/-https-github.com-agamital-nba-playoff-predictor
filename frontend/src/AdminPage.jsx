@@ -1187,13 +1187,15 @@ const _NBA_BROWSER_HEADERS = {
 };
 
 const StandingsSyncCard = ({ addToast, onPlayinRefreshed }) => {
-  const [expanded, setExpanded]     = useState(false);
-  const [syncing, setSyncing]       = useState(false);
+  const [expanded, setExpanded]         = useState(false);
+  const [syncing, setSyncing]           = useState(false);
   const [browserFetching, setBrowserFetching] = useState(false);
-  const [testing, setTesting]       = useState(false);
-  const [result, setResult]         = useState(null);
-  const [testResult, setTestResult] = useState(null);
-  const [standing, setStanding]     = useState(null);
+  const [testing, setTesting]           = useState(false);
+  const [syncingPlayers, setSyncingPlayers] = useState(false);
+  const [playerSyncResult, setPlayerSyncResult] = useState(null);
+  const [result, setResult]             = useState(null);
+  const [testResult, setTestResult]     = useState(null);
+  const [standing, setStanding]         = useState(null);
 
   useEffect(() => {
     if (!expanded) return;
@@ -1307,7 +1309,27 @@ const StandingsSyncCard = ({ addToast, onPlayinRefreshed }) => {
     return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
-  const anyBusy = syncing || browserFetching || testing;
+  const runPlayerSync = async () => {
+    setSyncingPlayers(true);
+    setPlayerSyncResult(null);
+    try {
+      const res = await api.syncPlayerStats();
+      setPlayerSyncResult(res);
+      if (res.success) {
+        addToast(`Player stats synced ✓ — ${res.rows_synced} players updated`, 'success');
+      } else {
+        addToast('Player stats sync failed: ' + (res.error || 'Unknown error'), 'error');
+      }
+    } catch (e) {
+      const msg = e.response?.data?.detail || e.message;
+      setPlayerSyncResult({ success: false, error: msg });
+      addToast('Player sync error: ' + msg, 'error');
+    } finally {
+      setSyncingPlayers(false);
+    }
+  };
+
+  const anyBusy = syncing || browserFetching || testing || syncingPlayers;
 
   return (
     <Card className="p-5 mb-4">
@@ -1447,13 +1469,37 @@ const StandingsSyncCard = ({ addToast, onPlayinRefreshed }) => {
               {browserFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
               {browserFetching ? 'Browser fetching NBA data…' : 'Fetch via Browser (bypasses IP block)'}
             </button>
+
+            {/* Row 3: Player stats sync */}
+            <div className="border-t border-slate-700/60 pt-2 mt-1">
+              <button onClick={runPlayerSync} disabled={anyBusy}
+                className={`w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                  anyBusy ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                          : 'bg-purple-600 hover:bg-purple-500 text-white'
+                }`}>
+                <BarChart2 className={`w-4 h-4 ${syncingPlayers ? 'animate-pulse' : ''}`} />
+                {syncingPlayers ? 'Syncing Player Stats…' : 'Sync Player Stats (MVP Search)'}
+              </button>
+              {playerSyncResult && (
+                <div className={`mt-2 px-3 py-2 rounded-lg border text-xs font-bold flex items-center gap-2 ${
+                  playerSyncResult.success
+                    ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                    : 'bg-red-500/10  border-red-500/30  text-red-400'
+                }`}>
+                  {playerSyncResult.success
+                    ? <><CheckCircle className="w-3.5 h-3.5 shrink-0" /> {playerSyncResult.rows_synced} players synced — MVP search is now ready</>
+                    : <><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {playerSyncResult.error}</>}
+                </div>
+              )}
+            </div>
           </div>
 
           <p className="text-[10px] text-slate-600 leading-relaxed">
             <strong className="text-slate-500">Test Connection</strong> — checks if the server can reach NBA API directly.<br />
             <strong className="text-slate-500">Sync via RapidAPI</strong> — server calls RapidAPI (not IP-blocked), saves to DB.<br />
             <strong className="text-slate-500">Fetch via Browser</strong> — YOUR browser fetches the data, then sends it to the server.
-            Use this if the server is IP-blocked. Requires browser CORS access to stats.nba.com.
+            Use this if the server is IP-blocked. Requires browser CORS access to stats.nba.com.<br />
+            <strong className="text-slate-500">Sync Player Stats</strong> — populates the player_stats table used by MVP autocomplete search.
           </p>
         </div>
       )}

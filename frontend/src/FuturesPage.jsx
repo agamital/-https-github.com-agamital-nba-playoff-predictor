@@ -88,7 +88,7 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) =>
     setOpen(true);
   };
 
-  const showDropdown = open && debouncedQ.length >= 2 && (players.length > 0 || isFetching);
+  const showDropdown = open && debouncedQ.length >= 2;
 
   return (
     <div ref={containerRef} className="relative">
