@@ -415,6 +415,23 @@ _APINBA_NAME_TO_ID = {
     "Washington Wizards":      1610612764,
 }
 
+# Conference lookup — used when the API returns a flat list with no conference field
+_NBA_TEAM_CONFERENCE = {
+    # Eastern Conference
+    "Atlanta Hawks": "East", "Boston Celtics": "East", "Brooklyn Nets": "East",
+    "Charlotte Hornets": "East", "Chicago Bulls": "East", "Cleveland Cavaliers": "East",
+    "Detroit Pistons": "East", "Indiana Pacers": "East", "Miami Heat": "East",
+    "Milwaukee Bucks": "East", "New York Knicks": "East", "Orlando Magic": "East",
+    "Philadelphia 76ers": "East", "Toronto Raptors": "East", "Washington Wizards": "East",
+    # Western Conference
+    "Dallas Mavericks": "West", "Denver Nuggets": "West", "Golden State Warriors": "West",
+    "Houston Rockets": "West", "LA Clippers": "West", "Los Angeles Lakers": "West",
+    "Memphis Grizzlies": "West", "Minnesota Timberwolves": "West",
+    "New Orleans Pelicans": "West", "Oklahoma City Thunder": "West",
+    "Phoenix Suns": "West", "Portland Trail Blazers": "West",
+    "Sacramento Kings": "West", "San Antonio Spurs": "West", "Utah Jazz": "West",
+}
+
 
 def _parse_rapidapi_row(row: dict) -> dict | None:
     """
@@ -496,58 +513,52 @@ def _parse_rapidapi_row(row: dict) -> dict | None:
                     wins=wins, losses=losses, win_pct=win_pct,
                     conf_rank=conf_rank, playoff_rank=conf_rank, games_back=gb)
 
-    # ── Shape D: team.displayName + stats[] list (nba-api-free-data confirmed) ──
-    # row = { "team": {"displayName": "Boston Celtics", "id": "..."}, "conference": "...",
-    #         "stats": [{"name": "wins", "value": 45}, {"name": "losses", "value": 20}, ...] }
+    # ── Shape D: ESPN-style entries (nba-api-free-data CONFIRMED structure) ──
+    # Exact path: data['response']['standings']['entries'][i]
+    # Each entry: { "team": {"displayName": "Boston Celtics", "id": "2"},
+    #               "stats": [{"name": "wins", "value": 48},
+    #                          {"name": "losses", "value": 20},
+    #                          {"name": "playoffSeed", "value": 1}, ...] }
     if "team" in row and isinstance(row["team"], dict) and "stats" in row:
         team_obj  = row["team"]
         team_name = (team_obj.get("displayName") or team_obj.get("name") or
                      team_obj.get("fullName") or "")
 
-        # Conference: may be on the row directly or inside a conference/group object
-        conf_raw = (row.get("conference") or row.get("group") or
-                    (row.get("conferenceInfo") or {}).get("name") or "")
+        # Build a name→value lookup from the stats list
+        stats_map = {}
+        for s in (row.get("stats") or []):
+            key = s.get("name") or ""
+            stats_map[key.lower()] = s.get("value")
+
+        wins      = _safe_int(stats_map.get("wins"))
+        losses    = _safe_int(stats_map.get("losses"))
+        win_pct   = _safe_float(stats_map.get("winpercent") or stats_map.get("winpercentage")
+                                or stats_map.get("pct") or stats_map.get("winspercentage"))
+        gb        = _safe_float(stats_map.get("gamesbehind") or stats_map.get("gb"))
+        conf_rank = _safe_int(stats_map.get("playoffseed") or stats_map.get("conferencerank")
+                              or stats_map.get("rank") or row.get("seed"), 99)
+
+        # Compute win_pct from wins/losses if not in stats
+        if win_pct == 0.0 and (wins + losses) > 0:
+            win_pct = round(wins / (wins + losses), 3)
+
+        # Conference: flat list → look up by team name
+        conf_raw = (row.get("conference") or row.get("group") or "")
         if isinstance(conf_raw, dict):
             conf_raw = conf_raw.get("name") or conf_raw.get("abbreviation") or ""
-        # Normalise "eastern"/"western"/"East"/"West"/"E"/"W" → "East" / "West"
         conf_lower = str(conf_raw).lower().strip()
         if "east" in conf_lower or conf_lower == "e":
             conf = "East"
         elif "west" in conf_lower or conf_lower == "w":
             conf = "West"
         else:
-            conf = conf_raw.capitalize()
+            # No conference in row — use hardcoded lookup
+            conf = _NBA_TEAM_CONFERENCE.get(team_name, "")
 
-        # Parse stats list — each item: {"name": "wins", "value": 45, ...}
-        # Also handles shortDisplayName like "W"/"L", or displayName "Wins"
-        stats_list = row.get("stats") or []
-        def _stat(keys):
-            """Find value from stats list by any matching name key."""
-            for s in stats_list:
-                sname = str(s.get("name") or s.get("shortDisplayName") or
-                            s.get("abbreviation") or "").lower()
-                if any(k in sname for k in keys):
-                    return s.get("value") or s.get("displayValue")
-            return None
-
-        wins      = _safe_int(_stat(["wins", "win", "^w$"]))
-        losses    = _safe_int(_stat(["losses", "loss", "^l$"]))
-        win_pct   = _safe_float(_stat(["pct", "percent", "winp", "wp"]))
-        gb        = _safe_float(_stat(["behind", "gb"]))
-        conf_rank = _safe_int(_stat(["seed", "rank", "conferencerank", "confrank"]), 99)
-
-        # Fallback rank from top-level row fields
-        if conf_rank == 99:
-            conf_rank = _safe_int(
-                row.get("seed") or row.get("rank") or row.get("conferenceRank"), 99
-            )
-
-        team_id = (_safe_int(team_obj.get("id")) if str(team_obj.get("id", "")).isdigit()
-                   and len(str(team_obj.get("id", ""))) > 7 else None)
-        if not team_id:
-            team_id = _APINBA_NAME_TO_ID.get(team_name)
+        team_id = _APINBA_NAME_TO_ID.get(team_name)
 
         if not conf or conf.lower() not in ("east", "west"):
+            print(f"[RapidAPI] ⚠ Shape D: unknown conference for '{team_name}' — skipping")
             return None
         return dict(team_id=team_id, team_name=team_name, conference=conf,
                     wins=wins, losses=losses, win_pct=win_pct,
@@ -612,13 +623,14 @@ def _fetch_standings_from_rapidapi() -> list:
                 print(f"[RapidAPI] ✓ response.standings is a list — {len(rows)} items")
             elif isinstance(standings_val, dict):
                 print(f"[RapidAPI] response.standings is a dict — sub-keys: {list(standings_val.keys())}")
+                # Confirmed path: response.standings.entries
                 for k in ("entries", "teams", "rows", "data", "results", "response"):
                     if isinstance(standings_val.get(k), list) and standings_val[k]:
                         rows = standings_val[k]
                         print(f"[RapidAPI] ✓ Found rows at response.standings.{k} — {len(rows)} items")
                         break
                 if not rows:
-                    print(f"DEBUG STANDINGS CONTENT: {str(standings_val)[:500]}")
+                    print(f"DEBUG STANDINGS CONTENT: {str(standings_val)[:1000]}")
 
         # Fallback: response is already a list
         elif isinstance(resp_val, list) and resp_val:
