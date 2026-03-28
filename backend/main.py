@@ -478,7 +478,7 @@ def _parse_rapidapi_row(row: dict) -> dict | None:
                     conf_rank=conf_rank, playoff_rank=conf_rank, games_back=gb)
 
     # ── Shape C: nested objects (old api-nba-v1) ──
-    if "team" in row and isinstance(row["team"], dict):
+    if "team" in row and isinstance(row["team"], dict) and "stats" not in row:
         team_name = row["team"].get("name", "")
         conf_obj  = row.get("conference", {}) or {}
         conf      = (conf_obj.get("name") or "").capitalize()
@@ -490,6 +490,63 @@ def _parse_rapidapi_row(row: dict) -> dict | None:
         win_pct   = _safe_float(win_obj.get("percentage"))
         gb        = _safe_float(row.get("gamesBehind"))
         team_id   = _APINBA_NAME_TO_ID.get(team_name)
+        if not conf or conf.lower() not in ("east", "west"):
+            return None
+        return dict(team_id=team_id, team_name=team_name, conference=conf,
+                    wins=wins, losses=losses, win_pct=win_pct,
+                    conf_rank=conf_rank, playoff_rank=conf_rank, games_back=gb)
+
+    # ── Shape D: team.displayName + stats[] list (nba-api-free-data confirmed) ──
+    # row = { "team": {"displayName": "Boston Celtics", "id": "..."}, "conference": "...",
+    #         "stats": [{"name": "wins", "value": 45}, {"name": "losses", "value": 20}, ...] }
+    if "team" in row and isinstance(row["team"], dict) and "stats" in row:
+        team_obj  = row["team"]
+        team_name = (team_obj.get("displayName") or team_obj.get("name") or
+                     team_obj.get("fullName") or "")
+
+        # Conference: may be on the row directly or inside a conference/group object
+        conf_raw = (row.get("conference") or row.get("group") or
+                    (row.get("conferenceInfo") or {}).get("name") or "")
+        if isinstance(conf_raw, dict):
+            conf_raw = conf_raw.get("name") or conf_raw.get("abbreviation") or ""
+        # Normalise "eastern"/"western"/"East"/"West"/"E"/"W" → "East" / "West"
+        conf_lower = str(conf_raw).lower().strip()
+        if "east" in conf_lower or conf_lower == "e":
+            conf = "East"
+        elif "west" in conf_lower or conf_lower == "w":
+            conf = "West"
+        else:
+            conf = conf_raw.capitalize()
+
+        # Parse stats list — each item: {"name": "wins", "value": 45, ...}
+        # Also handles shortDisplayName like "W"/"L", or displayName "Wins"
+        stats_list = row.get("stats") or []
+        def _stat(keys):
+            """Find value from stats list by any matching name key."""
+            for s in stats_list:
+                sname = str(s.get("name") or s.get("shortDisplayName") or
+                            s.get("abbreviation") or "").lower()
+                if any(k in sname for k in keys):
+                    return s.get("value") or s.get("displayValue")
+            return None
+
+        wins      = _safe_int(_stat(["wins", "win", "^w$"]))
+        losses    = _safe_int(_stat(["losses", "loss", "^l$"]))
+        win_pct   = _safe_float(_stat(["pct", "percent", "winp", "wp"]))
+        gb        = _safe_float(_stat(["behind", "gb"]))
+        conf_rank = _safe_int(_stat(["seed", "rank", "conferencerank", "confrank"]), 99)
+
+        # Fallback rank from top-level row fields
+        if conf_rank == 99:
+            conf_rank = _safe_int(
+                row.get("seed") or row.get("rank") or row.get("conferenceRank"), 99
+            )
+
+        team_id = (_safe_int(team_obj.get("id")) if str(team_obj.get("id", "")).isdigit()
+                   and len(str(team_obj.get("id", ""))) > 7 else None)
+        if not team_id:
+            team_id = _APINBA_NAME_TO_ID.get(team_name)
+
         if not conf or conf.lower() not in ("east", "west"):
             return None
         return dict(team_id=team_id, team_name=team_name, conference=conf,
@@ -530,46 +587,61 @@ def _fetch_standings_from_rapidapi() -> list:
     resp.raise_for_status()
 
     data = resp.json()
+    print(f"[RapidAPI] Top-level keys: {list(data.keys()) if isinstance(data, dict) else type(data).__name__}")
 
     # ── Locate the rows array ─────────────────────────────────────────────
-    # We now know the top-level shape is {"status": ..., "response": ...}.
-    # "response" may itself be a list (rows directly) or a dict with a nested list.
+    # Confirmed path: data['response']['standings']
+    # Fallback: any other common nesting just in case structure changes.
     rows = None
 
     if isinstance(data, list):
         rows = data
         print(f"[RapidAPI] Response is a bare list — {len(rows)} items")
     elif isinstance(data, dict):
-        print(f"[RapidAPI] Top-level keys: {list(data.keys())}")
-        # Step 1: look for a list directly at top level or one level deep
-        for key in ("response", "standings", "data", "body", "result", "results"):
-            val = data.get(key)
-            if isinstance(val, list) and val:
-                rows = val
-                print(f"[RapidAPI] Found rows under key '{key}' — {len(rows)} items")
-                break
-            # val is a dict — search one level deeper
-            if isinstance(val, dict):
-                print(f"[RapidAPI] '{key}' is a dict with sub-keys: {list(val.keys())}")
-                for sub_key in ("standings", "data", "teams", "results", "response"):
-                    sub = val.get(sub_key)
-                    if isinstance(sub, list) and sub:
-                        rows = sub
-                        print(f"[RapidAPI] Found rows under '{key}.{sub_key}' — {len(rows)} items")
-                        break
-                if rows:
+        resp_val = data.get("response")
+
+        # Confirmed path: response is a dict containing 'standings'
+        if isinstance(resp_val, dict):
+            print(f"[RapidAPI] response sub-keys: {list(resp_val.keys())}")
+            for sub_key in ("standings", "data", "teams", "entries", "results"):
+                sub = resp_val.get(sub_key)
+                if isinstance(sub, list) and sub:
+                    rows = sub
+                    print(f"[RapidAPI] ✓ Found rows at response.{sub_key} — {len(rows)} items")
+                    break
+
+        # Fallback: response is already a list
+        elif isinstance(resp_val, list) and resp_val:
+            rows = resp_val
+            print(f"[RapidAPI] response is a direct list — {len(rows)} items")
+
+        # Broader fallback: search all top-level keys
+        if not rows:
+            for key in ("standings", "data", "body", "result", "results"):
+                val = data.get(key)
+                if isinstance(val, list) and val:
+                    rows = val
+                    print(f"[RapidAPI] Fallback: found rows under '{key}' — {len(rows)} items")
                     break
 
     if not rows:
         raise ValueError(
-            f"Could not find standings list in response. "
+            f"Could not find standings list. "
             f"Top-level keys: {list(data.keys()) if isinstance(data, dict) else type(data).__name__}. "
-            f"Full response logged above — check Railway logs."
+            f"response type: {type(data.get('response')).__name__ if isinstance(data, dict) else 'N/A'}. "
+            f"Full response logged above."
         )
 
-    # Log first row field names so we can verify the parser will match
-    print(f"[RapidAPI] First row keys: {list(rows[0].keys()) if isinstance(rows[0], dict) else type(rows[0]).__name__}")
-    print(f"[RapidAPI] First row sample: {str(rows[0])[:500]}")
+    # Log first row so field names are visible in Railway logs
+    if isinstance(rows[0], dict):
+        print(f"[RapidAPI] First row keys: {list(rows[0].keys())}")
+        team_obj = rows[0].get("team")
+        if isinstance(team_obj, dict):
+            print(f"[RapidAPI] First row team keys: {list(team_obj.keys())}")
+        stats_list = rows[0].get("stats")
+        if isinstance(stats_list, list) and stats_list:
+            print(f"[RapidAPI] First row stats[0]: {stats_list[0]}  stats[1]: {stats_list[1] if len(stats_list)>1 else '—'}")
+    print(f"[RapidAPI] First row sample: {str(rows[0])[:600]}")
 
     # ── Parse rows with multi-shape parser ──────────────────────────────
     standings = []
