@@ -1,7 +1,33 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { RefreshCw, Trophy, WifiOff, AlertTriangle, Database, Wifi, Star, Clock, X } from 'lucide-react';
+import { RefreshCw, Trophy, WifiOff, AlertTriangle, Database, Wifi, Star, Clock, X, CalendarX } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
+
+// ── NBA team ID map for logo CDN ────────────────────────────────────────────
+const NBA_TEAM_IDS = {
+  ATL: 1610612737, BOS: 1610612738, BKN: 1610612751, CHA: 1610612766,
+  CHI: 1610612741, CLE: 1610612739, DAL: 1610612742, DEN: 1610612743,
+  DET: 1610612765, GSW: 1610612744, HOU: 1610612745, IND: 1610612754,
+  LAC: 1610612746, LAL: 1610612747, MEM: 1610612763, MIA: 1610612748,
+  MIL: 1610612749, MIN: 1610612750, NOP: 1610612740, NYK: 1610612752,
+  OKC: 1610612760, ORL: 1610612753, PHI: 1610612755, PHX: 1610612756,
+  POR: 1610612757, SAC: 1610612758, SAS: 1610612759, TOR: 1610612761,
+  UTA: 1610612762, WAS: 1610612764,
+};
+
+const TeamLogo = ({ abbr, size = 'md', className = '' }) => {
+  const teamId = NBA_TEAM_IDS[abbr?.toUpperCase()];
+  if (!teamId) return null;
+  const sz = size === 'sm' ? 'w-5 h-5' : size === 'lg' ? 'w-9 h-9' : 'w-7 h-7';
+  return (
+    <img
+      src={`https://cdn.nba.com/logos/nba/${teamId}/primary/L/logo.svg`}
+      alt={abbr}
+      className={`${sz} shrink-0 object-contain ${className}`}
+      onError={e => { e.target.style.display = 'none'; }}
+    />
+  );
+};
 
 function useTimeSince(isoString) {
   const [text, setText] = useState('');
@@ -24,7 +50,7 @@ function useTimeSince(isoString) {
 
 const GameStatusPill = ({ completed, status, clock, period }) => {
   if (completed)
-    return <span className="px-2 py-0.5 rounded-full bg-slate-700/60 text-slate-400 text-[10px] font-bold">Final</span>;
+    return <span className="px-2 py-0.5 rounded-full bg-slate-700/60 text-slate-400 text-[10px] font-bold tracking-wide">FINAL</span>;
   if (period > 0)
     return (
       <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 text-[10px] font-bold">
@@ -35,25 +61,121 @@ const GameStatusPill = ({ completed, status, clock, period }) => {
   return <span className="px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-500 text-[10px] font-bold">{status || 'Upcoming'}</span>;
 };
 
-// Compact game card used for today's schedule (no performers)
+// Game card for yesterday — prominent score + top performer per team
+const GameWithPerformersCard = ({ game, onClick }) => {
+  const { home, away, completed, status, clock, period, performers = [] } = game;
+  const hasScore = home?.score != null && away?.score != null;
+  const awayAbbr = away?.abbr?.toUpperCase() || '';
+  const homeAbbr = home?.abbr?.toUpperCase() || '';
+
+  return (
+    <div
+      className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden cursor-pointer hover:border-orange-500/40 hover:shadow-orange-500/5 hover:shadow-lg transition-all group"
+      onClick={() => onClick(game)}
+    >
+      {/* ── Score header ── */}
+      <div className="px-4 pt-3 pb-2.5 border-b border-slate-800/80">
+        {/* Scoreline: IND 118 @ LAC 105 */}
+        {hasScore ? (
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <TeamLogo abbr={awayAbbr} size="md" />
+              <span className={`text-base font-black leading-none ${away?.winner ? 'text-white' : 'text-slate-400'}`}>
+                {awayAbbr}
+              </span>
+              <span className={`text-xl font-black tabular-nums leading-none ${away?.winner ? 'text-orange-400' : 'text-slate-500'}`}>
+                {away?.score}
+              </span>
+            </div>
+
+            <span className="text-slate-600 font-bold text-sm shrink-0">@</span>
+
+            <div className="flex items-center gap-2 min-w-0 justify-end">
+              <span className={`text-xl font-black tabular-nums leading-none ${home?.winner ? 'text-orange-400' : 'text-slate-500'}`}>
+                {home?.score}
+              </span>
+              <span className={`text-base font-black leading-none ${home?.winner ? 'text-white' : 'text-slate-400'}`}>
+                {homeAbbr}
+              </span>
+              <TeamLogo abbr={homeAbbr} size="md" />
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2">
+              <TeamLogo abbr={awayAbbr} size="md" />
+              <span className="text-base font-black text-slate-300">{awayAbbr}</span>
+            </div>
+            <span className="text-slate-600 font-bold text-sm">@</span>
+            <div className="flex items-center gap-2">
+              <span className="text-base font-black text-slate-300">{homeAbbr}</span>
+              <TeamLogo abbr={homeAbbr} size="md" />
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <GameStatusPill completed={completed} status={status} clock={clock} period={period} />
+          <span className="text-[9px] text-slate-700 group-hover:text-orange-500/50 transition-colors font-medium">
+            tap for boxscore ↗
+          </span>
+        </div>
+      </div>
+
+      {/* ── Top performer per team ── */}
+      {performers.length > 0 && (
+        <div className="divide-y divide-slate-800/40">
+          {performers.map((p, i) => {
+            const isAway = p.team_abbr?.toUpperCase() === awayAbbr;
+            return (
+              <div key={i} className="flex items-center gap-2 px-3 py-2.5">
+                <TeamLogo abbr={p.team_abbr} size="sm" />
+                <span className={`text-[10px] font-black w-7 shrink-0 ${isAway ? 'text-blue-400' : 'text-red-400'}`}>
+                  {p.team_abbr}
+                </span>
+                <span className="flex-1 text-xs font-semibold text-slate-200 truncate">{p.player_name}</span>
+                <div className="flex items-center gap-2 text-[11px] tabular-nums shrink-0">
+                  <span className="font-black text-orange-400 w-5 text-right">{p.points}</span>
+                  <span className="text-slate-500 w-6 text-right">{p.rebounds}r</span>
+                  <span className="text-slate-500 w-5 text-right">{p.assists}a</span>
+                  <span className="text-slate-600 w-5 text-right hidden sm:inline">{p.fg3m}·3</span>
+                  <span className="text-slate-600 w-4 text-right hidden sm:inline">{p.steals}s</span>
+                  <span className="text-slate-600 w-4 text-right hidden sm:inline">{p.blocks}b</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Compact game card for today's schedule
 const GameCard = ({ game, onClick }) => {
   const { home, away, completed, status, clock, period, broadcast } = game;
   const hasScore = home?.score != null && away?.score != null;
+  const awayAbbr = away?.abbr?.toUpperCase() || '';
+  const homeAbbr = home?.abbr?.toUpperCase() || '';
   return (
     <div
-      className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 flex flex-col gap-2 cursor-pointer hover:border-orange-500/40 hover:bg-slate-900/80 transition-all"
+      className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 cursor-pointer hover:border-orange-500/40 hover:bg-slate-900/80 transition-all"
       onClick={() => onClick && onClick(game)}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2 mb-2.5">
         <GameStatusPill completed={completed} status={status} clock={clock} period={period} />
         {broadcast && <span className="text-[10px] text-slate-500 font-bold">{broadcast}</span>}
       </div>
-      {[away, home].map((team, i) => (
-        <div key={i} className="flex items-center justify-between gap-2">
+      {[
+        { team: away, label: 'AWY', abbr: awayAbbr },
+        { team: home, label: 'HME', abbr: homeAbbr },
+      ].map(({ team, label, abbr }, i) => (
+        <div key={i} className="flex items-center justify-between gap-2 mb-1 last:mb-0">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-[10px] text-slate-500 w-7 shrink-0">{i === 0 ? 'AWY' : 'HME'}</span>
+            <span className="text-[10px] text-slate-600 w-7 shrink-0">{label}</span>
+            <TeamLogo abbr={abbr} size="sm" />
             <span className={`text-sm font-bold truncate ${team?.winner ? 'text-white' : 'text-slate-300'}`}>
-              {team?.abbr || team?.name || '—'}
+              {abbr || '—'}
             </span>
           </div>
           {hasScore && (
@@ -67,84 +189,12 @@ const GameCard = ({ game, onClick }) => {
   );
 };
 
-// Game card with top-2 performers per team — clickable for full boxscore
-const GameWithPerformersCard = ({ game, onClick }) => {
-  const { home, away, completed, status, clock, period, performers = [] } = game;
-  const hasScore = home?.score != null && away?.score != null;
-  const awayAbbr = away?.abbr || '';
-  const homeAbbr = home?.abbr || '';
-
-  return (
-    <div
-      className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden cursor-pointer hover:border-orange-500/40 hover:bg-slate-900/80 transition-all group"
-      onClick={() => onClick(game)}
-    >
-      {/* Score header */}
-      <div className="px-4 py-2.5 border-b border-slate-800/80 flex items-center gap-3">
-        {/* Away */}
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span className={`text-sm font-black truncate ${away?.winner ? 'text-white' : 'text-slate-400'}`}>
-            {awayAbbr || '—'}
-          </span>
-          {hasScore && (
-            <span className={`text-base font-black tabular-nums ${away?.winner ? 'text-orange-400' : 'text-slate-500'}`}>
-              {away?.score}
-            </span>
-          )}
-        </div>
-
-        {/* Centre: status + hint */}
-        <div className="flex flex-col items-center gap-0.5 shrink-0">
-          <GameStatusPill completed={completed} status={status} clock={clock} period={period} />
-          <span className="text-[9px] text-slate-700 group-hover:text-orange-500/50 transition-colors">boxscore ↗</span>
-        </div>
-
-        {/* Home */}
-        <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
-          {hasScore && (
-            <span className={`text-base font-black tabular-nums ${home?.winner ? 'text-orange-400' : 'text-slate-500'}`}>
-              {home?.score}
-            </span>
-          )}
-          <span className={`text-sm font-black truncate ${home?.winner ? 'text-white' : 'text-slate-400'}`}>
-            {homeAbbr || '—'}
-          </span>
-        </div>
-      </div>
-
-      {/* Top-2 performers per team */}
-      {performers.length > 0 && (
-        <div className="divide-y divide-slate-800/40">
-          {performers.map((p, i) => {
-            const isAway = p.team_abbr === awayAbbr;
-            return (
-              <div key={i} className="flex items-center gap-2 px-3 py-2">
-                <span className={`text-[10px] font-black w-8 shrink-0 ${isAway ? 'text-blue-400' : 'text-red-400'}`}>
-                  {p.team_abbr}
-                </span>
-                <span className="flex-1 text-xs font-semibold text-slate-200 truncate">{p.player_name}</span>
-                <div className="flex items-center gap-2 text-[11px] tabular-nums shrink-0">
-                  <span className="font-black text-orange-400 w-5 text-right">{p.points}</span>
-                  <span className="text-slate-500 w-5 text-right">{p.rebounds}r</span>
-                  <span className="text-slate-500 w-5 text-right">{p.assists}a</span>
-                  <span className="text-slate-600 w-5 text-right hidden sm:block">{p.fg3m}3</span>
-                  <span className="text-slate-600 w-5 text-right hidden sm:block">{p.steals}s</span>
-                  <span className="text-slate-600 w-5 text-right hidden sm:block">{p.blocks}b</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-};
-
 // Full boxscore modal
 const BoxscoreModal = ({ game, onClose }) => {
-  const homeAbbr = game.home?.abbr || '';
-  const awayAbbr = game.away?.abbr || '';
+  const homeAbbr = game.home?.abbr?.toUpperCase() || '';
+  const awayAbbr = game.away?.abbr?.toUpperCase() || '';
   const hasScore = game.home?.score != null && game.away?.score != null;
+  const winnerAbbr = game.home?.winner ? homeAbbr : game.away?.winner ? awayAbbr : null;
 
   const { data, isLoading } = useQuery({
     queryKey: ['gameBoxscore', game.id],
@@ -153,67 +203,91 @@ const BoxscoreModal = ({ game, onClose }) => {
     staleTime: 30 * 60 * 1000,
   });
 
-  // Close on Escape
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
+  // Flatten teams into a single row stream for one table
+  const allTeams = data?.teams ?? [];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-16" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-14" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
       <div
-        className="relative bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col shadow-2xl"
+        className="relative bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[82vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         {/* Modal header */}
-        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-5 py-4 flex items-start justify-between border-b border-slate-700 shrink-0">
-          <div>
-            <h2 className="text-lg font-black text-white">
-              {awayAbbr && homeAbbr ? `${awayAbbr} @ ${homeAbbr}` : 'Boxscore'}
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {hasScore
-                ? `${awayAbbr} ${game.away?.score}  —  ${homeAbbr} ${game.home?.score}`
-                : (game.status || 'Full Game Stats')}
-            </p>
+        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-5 py-4 border-b border-slate-700 shrink-0">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <TeamLogo abbr={awayAbbr} size="lg" />
+              <div>
+                <h2 className="text-lg font-black text-white leading-tight">
+                  {awayAbbr && homeAbbr ? `${awayAbbr} @ ${homeAbbr}` : 'Boxscore'}
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {hasScore
+                    ? `${awayAbbr} ${game.away?.score}  —  ${homeAbbr} ${game.home?.score}`
+                    : (game.status || 'Full Game Stats')}
+                </p>
+              </div>
+              <TeamLogo abbr={homeAbbr} size="lg" />
+            </div>
+            <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-1 shrink-0">
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-1 ml-4 shrink-0">
-            <X className="w-5 h-5" />
-          </button>
         </div>
 
-        {/* Modal body */}
+        {/* Modal body — single scrollable table */}
         <div className="overflow-y-auto flex-1">
           {isLoading ? (
             <div className="p-10 text-center text-slate-400 text-sm animate-pulse">Loading boxscore…</div>
-          ) : data?.teams?.length ? (
-            data.teams.map(team => (
-              <div key={team.team_abbr} className="border-b border-slate-800 last:border-b-0">
-                {/* Team header */}
-                <div className="px-5 py-2 bg-slate-800/50 sticky top-0">
-                  <span className="text-xs font-black text-orange-400 tracking-widest uppercase">{team.team_abbr}</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-slate-800/20">
-                        <th className="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase">Player</th>
-                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Min</th>
-                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Pts</th>
-                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Reb</th>
-                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Ast</th>
-                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">3PM</th>
-                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Stl</th>
-                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Blk</th>
-                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Tov</th>
+          ) : allTeams.length ? (
+            <table className="w-full text-xs border-collapse">
+              {/* Sticky column headers */}
+              <thead className="sticky top-0 z-20">
+                <tr className="bg-slate-800 border-b border-slate-700">
+                  <th className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase">Player</th>
+                  <th className="px-2 py-2.5 text-center text-[10px] font-bold text-slate-400 uppercase w-10">Min</th>
+                  <th className="px-2 py-2.5 text-center text-[10px] font-bold text-orange-400 uppercase w-10">Pts</th>
+                  <th className="px-2 py-2.5 text-center text-[10px] font-bold text-slate-400 uppercase w-10">Reb</th>
+                  <th className="px-2 py-2.5 text-center text-[10px] font-bold text-slate-400 uppercase w-10">Ast</th>
+                  <th className="px-2 py-2.5 text-center text-[10px] font-bold text-slate-400 uppercase w-10">3PM</th>
+                  <th className="px-2 py-2.5 text-center text-[10px] font-bold text-slate-400 uppercase w-10">Stl</th>
+                  <th className="px-2 py-2.5 text-center text-[10px] font-bold text-slate-400 uppercase w-10">Blk</th>
+                  <th className="px-2 py-2.5 text-center text-[10px] font-bold text-slate-400 uppercase w-10">Tov</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allTeams.map(team => {
+                  const isWinner = winnerAbbr && team.team_abbr?.toUpperCase() === winnerAbbr;
+                  return (
+                    <React.Fragment key={team.team_abbr}>
+                      {/* Team separator row */}
+                      <tr className={isWinner ? 'bg-orange-500/15' : 'bg-slate-800/60'}>
+                        <td colSpan={9} className="px-4 py-2">
+                          <div className="flex items-center gap-2">
+                            <TeamLogo abbr={team.team_abbr} size="sm" />
+                            <span className={`text-[11px] font-black tracking-widest uppercase ${isWinner ? 'text-orange-400' : 'text-slate-300'}`}>
+                              {team.team_abbr}
+                            </span>
+                            {isWinner && (
+                              <span className="text-[10px] text-orange-400 font-bold">· W</span>
+                            )}
+                          </div>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/30">
+                      {/* Player rows */}
                       {team.players.map((p, i) => (
-                        <tr key={i} className="hover:bg-slate-800/20 transition-colors">
-                          <td className="px-4 py-2.5 font-semibold text-white truncate max-w-[150px]">{p.player_name}</td>
+                        <tr
+                          key={i}
+                          className={`border-b border-slate-800/30 hover:bg-slate-800/20 transition-colors ${isWinner ? 'bg-orange-500/5' : ''}`}
+                        >
+                          <td className="px-4 py-2.5 font-semibold text-white truncate max-w-[140px]">{p.player_name}</td>
                           <td className="px-2 py-2.5 text-center text-slate-500">{p.minutes}</td>
                           <td className="px-2 py-2.5 text-center font-black text-orange-400">{p.points}</td>
                           <td className="px-2 py-2.5 text-center text-slate-300">{p.rebounds}</td>
@@ -224,11 +298,11 @@ const BoxscoreModal = ({ game, onClose }) => {
                           <td className="px-2 py-2.5 text-center text-slate-400">{p.turnovers}</td>
                         </tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           ) : (
             <div className="p-10 text-center text-slate-500 text-sm">
               No boxscore data synced for this game yet.
@@ -262,7 +336,6 @@ const RecentGamesSection = () => {
   const todayGames     = todayData?.games ?? [];
   const hasYesterday   = yesterdayGames.length > 0;
   const hasTodayGames  = todayGames.length > 0;
-  const showTodayPanel = hasTodayGames || todayLoading;
 
   if (!hasYesterday && !hasTodayGames && !gwpLoading && !todayLoading) return null;
 
@@ -283,9 +356,9 @@ const RecentGamesSection = () => {
           Recent Games
         </h2>
 
-        <div className={`grid grid-cols-1 ${showTodayPanel ? 'lg:grid-cols-[2fr_1fr]' : ''} gap-6`}>
+        <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6">
 
-          {/* Yesterday's games — top-2 per team per game */}
+          {/* ── Yesterday's games ── */}
           <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden">
             <div className="bg-gradient-to-r from-orange-600/80 to-orange-800/80 px-5 py-3 flex items-center justify-between">
               <h3 className="text-sm font-black text-white flex items-center gap-2">
@@ -298,11 +371,15 @@ const RecentGamesSection = () => {
             {gwpLoading ? (
               <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="bg-slate-800/30 rounded-xl p-3 space-y-2 animate-pulse">
-                    <div className="h-4 bg-slate-800 rounded w-28" />
-                    {[1, 2, 3, 4].map(j => (
-                      <div key={j} className="h-3 bg-slate-800/60 rounded" />
-                    ))}
+                  <div key={i} className="bg-slate-800/30 rounded-xl p-3 space-y-2.5 animate-pulse">
+                    <div className="flex items-center justify-between">
+                      <div className="h-5 w-5 bg-slate-700 rounded" />
+                      <div className="h-4 bg-slate-700 rounded w-20" />
+                      <div className="h-5 w-5 bg-slate-700 rounded" />
+                    </div>
+                    <div className="h-3 bg-slate-800 rounded w-16 mx-auto" />
+                    <div className="h-3 bg-slate-800/60 rounded" />
+                    <div className="h-3 bg-slate-800/60 rounded" />
                   </div>
                 ))}
               </div>
@@ -313,42 +390,49 @@ const RecentGamesSection = () => {
                 ))}
               </div>
             ) : (
-              <div className="px-5 py-8 text-center text-slate-500 text-sm">
+              <div className="px-5 py-10 text-center text-slate-500 text-sm">
                 No game data for {fmtDate(yesterday)}
               </div>
             )}
           </div>
 
-          {/* Today's games — hidden completely when empty */}
-          {showTodayPanel && (
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Clock className="w-4 h-4 text-slate-400" />
-                <h3 className="text-sm font-black text-white">
-                  Today's Games — {fmtDate(today)}
-                </h3>
-                {todayLoading && <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
-              </div>
-
-              {todayLoading ? (
-                <div className="space-y-3">
-                  {Array.from({ length: 3 }).map((_, i) => (
-                    <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 space-y-3 animate-pulse">
-                      <div className="h-3 bg-slate-800 rounded w-16" />
-                      <div className="h-3 bg-slate-800 rounded w-full" />
-                      <div className="h-3 bg-slate-800 rounded w-full" />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {todayGames.map(g => (
-                    <GameCard key={g.id} game={g} onClick={setSelectedGame} />
-                  ))}
-                </div>
-              )}
+          {/* ── Today's games — always visible ── */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Clock className="w-4 h-4 text-slate-400" />
+              <h3 className="text-sm font-black text-white">
+                Today's Games — {fmtDate(today)}
+              </h3>
+              {todayLoading && <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
             </div>
-          )}
+
+            {todayLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 space-y-3 animate-pulse">
+                    <div className="h-3 bg-slate-800 rounded w-16" />
+                    <div className="h-3 bg-slate-800 rounded w-full" />
+                    <div className="h-3 bg-slate-800 rounded w-full" />
+                  </div>
+                ))}
+              </div>
+            ) : hasTodayGames ? (
+              <div className="space-y-3">
+                {todayGames.map(g => (
+                  <GameCard key={g.id} game={g} onClick={setSelectedGame} />
+                ))}
+              </div>
+            ) : (
+              <div className="bg-slate-900/50 border border-slate-800/60 rounded-xl px-5 py-8 flex flex-col items-center gap-3 text-center">
+                <CalendarX className="w-8 h-8 text-slate-700" />
+                <p className="text-sm font-bold text-slate-500">No games today</p>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  The next tip-offs will appear<br />here as they're scheduled.
+                </p>
+              </div>
+            )}
+          </div>
+
         </div>
       </div>
     </>
@@ -362,25 +446,21 @@ const StandingsPage = () => {
   const [syncBanner, setSyncBanner] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const {
-    data,
-    isLoading: loading,
-    error: queryError,
-  } = useQuery({
+  const { data, isLoading: loading, error: queryError } = useQuery({
     queryKey: ['standings'],
     queryFn: () => api.getStandings(),
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
   });
 
-  const standings          = data || { eastern: [], western: [] };
-  const lastUpdated        = data?.last_updated ?? null;
-  const lastSynced         = data?.last_synced_at ?? null;
-  const staticMode         = data?.static_mode ?? false;
-  const dataSource         = data?.data_source ?? null;
-  const consecutiveFails   = data?.consecutive_failures ?? 0;
-  const lastSyncError      = data?.last_sync_error ?? null;
-  const error              = queryError ? 'Could not reach server. Showing last known data.' : null;
+  const standings        = data || { eastern: [], western: [] };
+  const lastUpdated      = data?.last_updated ?? null;
+  const lastSynced       = data?.last_synced_at ?? null;
+  const staticMode       = data?.static_mode ?? false;
+  const dataSource       = data?.data_source ?? null;
+  const consecutiveFails = data?.consecutive_failures ?? 0;
+  const lastSyncError    = data?.last_sync_error ?? null;
+  const error            = queryError ? 'Could not reach server. Showing last known data.' : null;
 
   const timeSince   = useTimeSince(lastUpdated);
   const syncedSince = useTimeSince(lastSynced);
@@ -539,11 +619,9 @@ const StandingsPage = () => {
 
             {dataSource && (
               <span className={`flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full ${
-                dataSource === 'rapidapi'     ? 'bg-green-500/15 text-green-400' :
-                dataSource === 'nba_api'      ? 'bg-green-500/15 text-green-400' :
-                dataSource === 'browser_push' ? 'bg-green-500/15 text-green-400' :
-                dataSource === 'database'     ? 'bg-blue-500/15 text-blue-400' :
-                                                'bg-amber-500/15 text-amber-400'
+                ['rapidapi','nba_api','browser_push'].includes(dataSource) ? 'bg-green-500/15 text-green-400' :
+                dataSource === 'database'  ? 'bg-blue-500/15 text-blue-400' :
+                                             'bg-amber-500/15 text-amber-400'
               }`}>
                 {['rapidapi','nba_api','browser_push'].includes(dataSource) ? <Wifi className="w-3 h-3" /> :
                  dataSource === 'database' ? <Database className="w-3 h-3" /> :
@@ -582,10 +660,10 @@ const StandingsPage = () => {
         </button>
       </div>
 
-      {/* Recent Games — top performers + today's schedule */}
+      {/* Recent Games */}
       <RecentGamesSection />
 
-      {/* Conference standings tables */}
+      {/* Conference standings */}
       {loading ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {[{ conf: 'Eastern', color: 'from-blue-600 to-blue-800' }, { conf: 'Western', color: 'from-red-600 to-red-800' }].map(({ conf, color }) => (

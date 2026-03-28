@@ -3856,7 +3856,7 @@ async def get_games_with_performers(date: str | None = None, season: str = "2026
         SELECT espn_game_id, team_abbr, player_name, espn_player_id,
                points, rebounds, assists, steals, blocks, fg3m,
                turnovers, minutes, rn
-        FROM ranked WHERE rn <= 2
+        FROM ranked WHERE rn <= 1
         ORDER BY espn_game_id, team_abbr, rn
     ''', (date, season))
     rows = c.fetchall()
