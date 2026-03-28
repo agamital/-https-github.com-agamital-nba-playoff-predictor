@@ -1469,8 +1469,8 @@ def _sync_player_stats_job():
             per_mode48='PerGame',
             scope='S',
             season='2025-26',
-            season_type='Regular Season',
-            stat_category='PTS',
+            season_type_all_star='Regular Season',
+            stat_category_abbreviation='PTS',
             headers=_NBA_HEADERS,
             timeout=_NBA_TIMEOUT,
         )
