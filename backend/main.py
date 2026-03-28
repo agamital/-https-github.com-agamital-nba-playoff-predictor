@@ -52,8 +52,8 @@ _scheduler = None
 # Set RAPIDAPI_KEY in Railway environment variables.
 # Free plan: 100 requests/day — more than enough for 6-hour cron cycles.
 _RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
-_RAPIDAPI_URL  = "https://api-nba-v1.p.rapidapi.com/standings?league=standard&season=2025"
-_RAPIDAPI_HOST = "api-nba-v1.p.rapidapi.com"
+_RAPIDAPI_URL  = "https://nba-api-free-data.p.rapidapi.com/nba-standing-all-conference"
+_RAPIDAPI_HOST = "nba-api-free-data.p.rapidapi.com"
 
 # ── Fallback: direct stats.nba.com request (used when RAPIDAPI_KEY not set) ──
 _NBA_STANDINGS_URL = (
@@ -416,16 +416,96 @@ _APINBA_NAME_TO_ID = {
 }
 
 
+def _parse_rapidapi_row(row: dict) -> dict | None:
+    """
+    Try multiple known response shapes from different RapidAPI NBA providers.
+    Returns a normalised standings dict or None if the row can't be mapped.
+
+    Supported shapes:
+      Shape A (nba-api-free-data / Smart API):
+        { "TeamID": "...", "TeamCity": "...", "TeamName": "...",
+          "Conference": "East", "ConferenceRecord": "...",
+          "WINS": 45, "LOSSES": 20, "WinPCT": 0.692,
+          "ConferenceRank": 1, "GamesBehind": 0.0 }
+      Shape B (flat with teamName / conference keys):
+        { "teamName": "...", "conference": "East", "conferenceRank": 1,
+          "wins": 45, "losses": 20, "pct": "0.692", "gamesBehind": "0" }
+      Shape C (nested team+conference — old api-nba-v1 style):
+        { "team": {"name": "..."}, "conference": {"name": "east", "rank": 1},
+          "win": {"total": 45, "percentage": "0.692"}, "loss": {"total": 20},
+          "gamesBehind": "0" }
+    """
+    def _safe_float(v, default=0.0):
+        try: return float(v or default)
+        except (TypeError, ValueError): return default
+
+    def _safe_int(v, default=0):
+        try: return int(v or default)
+        except (TypeError, ValueError): return default
+
+    # ── Shape A: flat UPPERCASE keys (nba-api-free-data) ──
+    if "TeamName" in row or "WINS" in row:
+        city      = row.get("TeamCity", "") or ""
+        name      = row.get("TeamName", "") or ""
+        team_name = f"{city} {name}".strip() if city else name
+        conf      = (row.get("Conference") or "").capitalize()
+        conf_rank = _safe_int(row.get("ConferenceRank") or row.get("PlayoffRank"), 99)
+        wins      = _safe_int(row.get("WINS") or row.get("wins"))
+        losses    = _safe_int(row.get("LOSSES") or row.get("losses"))
+        win_pct   = _safe_float(row.get("WinPCT") or row.get("pct"))
+        gb        = _safe_float(row.get("GamesBehind") or row.get("gamesBehind"))
+        team_id   = _safe_int(row.get("TeamID")) or _APINBA_NAME_TO_ID.get(team_name)
+        if not conf or conf.lower() not in ("east", "west"):
+            return None
+        return dict(team_id=team_id, team_name=team_name, conference=conf,
+                    wins=wins, losses=losses, win_pct=win_pct,
+                    conf_rank=conf_rank, playoff_rank=conf_rank, games_back=gb)
+
+    # ── Shape B: flat camelCase ──
+    if "teamName" in row:
+        team_name = row.get("teamName", "")
+        conf      = (row.get("conference") or "").capitalize()
+        conf_rank = _safe_int(row.get("conferenceRank") or row.get("rank"), 99)
+        wins      = _safe_int(row.get("wins") or row.get("win"))
+        losses    = _safe_int(row.get("losses") or row.get("loss"))
+        win_pct   = _safe_float(row.get("pct") or row.get("winPct") or row.get("percentage"))
+        gb        = _safe_float(row.get("gamesBehind") or row.get("gb"))
+        team_id   = _safe_int(row.get("teamId")) or _APINBA_NAME_TO_ID.get(team_name)
+        if not conf or conf.lower() not in ("east", "west"):
+            return None
+        return dict(team_id=team_id, team_name=team_name, conference=conf,
+                    wins=wins, losses=losses, win_pct=win_pct,
+                    conf_rank=conf_rank, playoff_rank=conf_rank, games_back=gb)
+
+    # ── Shape C: nested objects (old api-nba-v1) ──
+    if "team" in row and isinstance(row["team"], dict):
+        team_name = row["team"].get("name", "")
+        conf_obj  = row.get("conference", {}) or {}
+        conf      = (conf_obj.get("name") or "").capitalize()
+        conf_rank = _safe_int(conf_obj.get("rank"), 99)
+        win_obj   = row.get("win", {}) or {}
+        loss_obj  = row.get("loss", {}) or {}
+        wins      = _safe_int(win_obj.get("total"))
+        losses    = _safe_int(loss_obj.get("total"))
+        win_pct   = _safe_float(win_obj.get("percentage"))
+        gb        = _safe_float(row.get("gamesBehind"))
+        team_id   = _APINBA_NAME_TO_ID.get(team_name)
+        if not conf or conf.lower() not in ("east", "west"):
+            return None
+        return dict(team_id=team_id, team_name=team_name, conference=conf,
+                    wins=wins, losses=losses, win_pct=win_pct,
+                    conf_rank=conf_rank, playoff_rank=conf_rank, games_back=gb)
+
+    return None
+
+
 def _fetch_standings_from_rapidapi() -> list:
     """
-    Fetch 2025-26 NBA standings from RapidAPI (api-nba-v1.p.rapidapi.com).
-    This endpoint is NOT blocked on Railway — it's a dedicated sports API
-    that doesn't apply the same IP restrictions as stats.nba.com.
+    Fetch 2025-26 NBA standings from RapidAPI (nba-api-free-data.p.rapidapi.com).
+    Provider: 'NBA API Free Data' by Smart API.
 
-    Response shape:
-      { "response": [ { "team": {"name": ...}, "conference": {"name": ..., "rank": ...},
-                        "win": {"total": ...}, "loss": {"total": ...},
-                        "gamesBehind": "...", "win": {"percentage": "..."} } ] }
+    Logs the FULL raw response on every call so structure issues are visible
+    in Railway logs. Tries multiple response-shape parsers for robustness.
     """
     import requests as _http
 
@@ -437,72 +517,75 @@ def _fetch_standings_from_rapidapi() -> list:
         "x-rapidapi-host": _RAPIDAPI_HOST,
     }
 
-    print(f"[Standings] RapidAPI fetch (season=2025, timeout=10s)…")
+    print(f"[RapidAPI] GET {_RAPIDAPI_URL}")
     resp = _http.get(_RAPIDAPI_URL, headers=headers, timeout=10)
-    print(f"[Standings] RapidAPI HTTP {resp.status_code}")
+    print(f"[RapidAPI] HTTP {resp.status_code}  content-type: {resp.headers.get('content-type','?')}")
+
+    # ── Log full response for debugging ─────────────────────────────────
+    raw_text = resp.text
+    print(f"[RapidAPI] Raw response ({len(raw_text)} chars):\n{raw_text[:2000]}")
+    if len(raw_text) > 2000:
+        print(f"[RapidAPI] ... (truncated, full length={len(raw_text)})")
+
     resp.raise_for_status()
 
     data = resp.json()
-    rows = data.get("response", [])
-    if not rows:
-        raise ValueError(f"RapidAPI returned empty response array — raw: {str(data)[:300]}")
 
+    # ── Locate the rows array — try every common key ─────────────────────
+    # Known wrappers: { "standings": [...] }, { "data": [...] },
+    #                 { "response": [...] }, { "body": [...] },
+    #                 or a bare list []
+    rows = None
+    if isinstance(data, list):
+        rows = data
+        print(f"[RapidAPI] Response is a bare list — {len(rows)} items")
+    else:
+        for key in ("standings", "data", "response", "body", "result", "results"):
+            if isinstance(data.get(key), list) and data[key]:
+                rows = data[key]
+                print(f"[RapidAPI] Found rows under key '{key}' — {len(rows)} items")
+                break
+
+    if not rows:
+        raise ValueError(
+            f"Could not find standings array in response. "
+            f"Top-level keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}. "
+            f"Full response logged above."
+        )
+
+    # Log the first row so we can see the field names
+    print(f"[RapidAPI] First row sample: {str(rows[0])[:500]}")
+
+    # ── Parse rows with multi-shape parser ──────────────────────────────
     standings = []
     skipped   = []
-    for row in rows:
-        try:
-            team_name = row["team"]["name"]
-            conf_raw  = row["conference"]["name"]          # "east" or "west"
-            conf      = conf_raw.capitalize()              # "East" / "West"
-            conf_rank = int(row["conference"]["rank"])
-            wins      = int(row["win"]["total"])
-            losses    = int(row["loss"]["total"])
-            win_pct   = float(row["win"].get("percentage") or 0)
-            try:
-                games_back = float(row.get("gamesBehind") or 0)
-            except (TypeError, ValueError):
-                games_back = 0.0
-
-            team_id = _APINBA_NAME_TO_ID.get(team_name)
-            if not team_id:
-                skipped.append(team_name)
-                print(f"[Standings] ⚠ Unknown team name from RapidAPI: '{team_name}' — skipping")
-                continue
-
-            standings.append({
-                "team_id":      team_id,
-                "team_name":    team_name,
-                "conference":   conf,
-                "wins":         wins,
-                "losses":       losses,
-                "win_pct":      win_pct,
-                "conf_rank":    conf_rank,
-                "playoff_rank": conf_rank,
-                "games_back":   games_back,
-            })
-        except (KeyError, TypeError, ValueError) as e:
-            print(f"[Standings] ⚠ Could not parse RapidAPI row: {e} — row: {str(row)[:200]}")
+    for i, row in enumerate(rows):
+        parsed = _parse_rapidapi_row(row)
+        if parsed is None:
+            print(f"[RapidAPI] ⚠ Row {i} — no parser matched: {str(row)[:200]}")
+            continue
+        if not parsed.get("team_id"):
+            skipped.append(parsed.get("team_name", f"row_{i}"))
+            print(f"[RapidAPI] ⚠ No NBA team_id for '{parsed.get('team_name')}' — skipping")
+            continue
+        standings.append(parsed)
 
     if skipped:
-        print(f"[Standings] ⚠ Skipped {len(skipped)} unknown teams: {skipped}")
+        print(f"[RapidAPI] ⚠ Skipped {len(skipped)} unmapped teams: {skipped}")
 
-    # Validate
-    bad_teams = [
-        t for t in standings
-        if t["conference"].lower() not in ("east", "west")
-        or any(kw in t["team_name"].lower() for kw in _ALLSTAR_KEYWORDS)
-    ]
-    if bad_teams:
-        raise ValueError(
-            f"RapidAPI returned All-Star data — first bad team: '{bad_teams[0]['team_name']}'"
-        )
+    # ── Validate ──────────────────────────────────────────────────────────
+    bad = [t for t in standings
+           if t["conference"].lower() not in ("east", "west")
+           or any(kw in t["team_name"].lower() for kw in _ALLSTAR_KEYWORDS)]
+    if bad:
+        raise ValueError(f"Response contains bad data (All-Star?): '{bad[0]['team_name']}'")
     if len(standings) < 28:
         raise ValueError(
-            f"RapidAPI returned only {len(standings)} mappable teams "
-            f"(skipped: {skipped}) — expected 30"
+            f"Only {len(standings)} teams parsed (skipped: {skipped}). "
+            f"Check logs for 'Row N — no parser matched' to diagnose field names."
         )
 
-    print(f"[Standings] ✓ RapidAPI — {len(standings)} teams parsed")
+    print(f"[RapidAPI] ✓ {len(standings)} teams parsed successfully")
     return standings
 
 

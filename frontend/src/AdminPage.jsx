@@ -1419,7 +1419,7 @@ const StandingsSyncCard = ({ addToast }) => {
                           : 'bg-blue-500 hover:bg-blue-600 text-white'
                 }`}>
                 <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-                {syncing ? 'Syncing…' : 'Server Sync'}
+                {syncing ? 'Syncing via RapidAPI…' : 'Sync via RapidAPI'}
               </button>
             </div>
 
@@ -1436,7 +1436,7 @@ const StandingsSyncCard = ({ addToast }) => {
 
           <p className="text-[10px] text-slate-600 leading-relaxed">
             <strong className="text-slate-500">Test Connection</strong> — checks if the server can reach NBA API directly.<br />
-            <strong className="text-slate-500">Server Sync</strong> — server fetches + saves (fails if Railway IP is blocked).<br />
+            <strong className="text-slate-500">Sync via RapidAPI</strong> — server calls RapidAPI (not IP-blocked), saves to DB.<br />
             <strong className="text-slate-500">Fetch via Browser</strong> — YOUR browser fetches the data, then sends it to the server.
             Use this if the server is IP-blocked. Requires browser CORS access to stats.nba.com.
           </p>
