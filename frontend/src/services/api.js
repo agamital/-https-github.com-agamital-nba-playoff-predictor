@@ -452,6 +452,20 @@ export const syncBoxscores = async (date = null, season = '2026') => {
   return response.data;
 };
 
+export const getGamesWithPerformers = async (date = null, season = '2026') => {
+  const params = { season };
+  if (date) params.date = date;
+  const response = await api.get('/api/players/games-with-performers', { params });
+  return response.data;
+};
+
+export const getGameBoxscore = async (espnGameId, season = '2026') => {
+  const response = await api.get('/api/players/game-boxscore', {
+    params: { espn_game_id: espnGameId, season },
+  });
+  return response.data;
+};
+
 export const getTopPerformers = async (date = null, limit = 5, season = '2026') => {
   const params = { limit, season };
   if (date) params.date = date;

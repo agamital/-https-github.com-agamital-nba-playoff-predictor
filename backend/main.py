@@ -3823,6 +3823,170 @@ async def get_top_performers(date: str | None = None, limit: int = 5,
     return {'date': date, 'players': players, 'count': len(players)}
 
 
+@app.get("/api/players/games-with-performers")
+async def get_games_with_performers(date: str | None = None, season: str = "2026"):
+    """
+    Returns each game for a date with the top-2 performers per team (from
+    player_game_stats), merged with live scores from RapidAPI.
+    """
+    import requests as _http
+    from collections import defaultdict
+
+    if date is None:
+        date = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+    else:
+        if len(date) == 8 and '-' not in date:
+            date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+
+    # ── 1. Top-2 per team per game from DB ──────────────────────────────
+    conn = get_db_conn()
+    c    = conn.cursor()
+    c.execute('''
+        WITH ranked AS (
+            SELECT espn_game_id, team_abbr, player_name, espn_player_id,
+                   points, rebounds, assists, steals, blocks, fg3m,
+                   turnovers, minutes,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY espn_game_id, team_abbr
+                       ORDER BY points DESC, rebounds DESC
+                   ) AS rn
+            FROM player_game_stats
+            WHERE game_date = %s AND season = %s
+        )
+        SELECT espn_game_id, team_abbr, player_name, espn_player_id,
+               points, rebounds, assists, steals, blocks, fg3m,
+               turnovers, minutes, rn
+        FROM ranked WHERE rn <= 2
+        ORDER BY espn_game_id, team_abbr, rn
+    ''', (date, season))
+    rows = c.fetchall()
+    cols = [d[0] for d in c.description]
+    conn.close()
+
+    performers_by_game = defaultdict(list)
+    for row in rows:
+        r = dict(zip(cols, row))
+        performers_by_game[r['espn_game_id']].append({
+            'team_abbr':      r['team_abbr'],
+            'player_name':    r['player_name'],
+            'espn_player_id': r['espn_player_id'],
+            'points':         r['points'],
+            'rebounds':       r['rebounds'],
+            'assists':        r['assists'],
+            'steals':         r['steals'],
+            'blocks':         r['blocks'],
+            'fg3m':           r['fg3m'],
+            'turnovers':      r['turnovers'],
+            'minutes':        round(r['minutes'] or 0, 1),
+        })
+
+    # ── 2. Game scores from RapidAPI ────────────────────────────────────
+    api_games: dict = {}
+    if _RAPIDAPI_KEY:
+        try:
+            date_fmt = date.replace('-', '')
+            resp = _http.get(
+                _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
+                headers={"x-rapidapi-key": _RAPIDAPI_KEY,
+                         "x-rapidapi-host": _RAPIDAPI_HOST},
+                params={"date": date_fmt},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            raw     = resp.json()
+            obj     = raw.get("response", raw)
+            events  = (obj.get("Events") or obj.get("events") or []) \
+                      if isinstance(obj, dict) else \
+                      (obj if isinstance(obj, list) else [])
+            for ev in events:
+                st    = ev.get("status") or {}
+                stype = st.get("type") or {}
+                comps = ev.get("competitions") or [{}]
+                comps0 = comps[0]
+                comps_teams = comps0.get("competitors") or []
+                home_c = next((c for c in comps_teams if c.get("homeAway") == "home"), {})
+                away_c = next((c for c in comps_teams if c.get("homeAway") == "away"), {})
+                def _tm(c):
+                    t = c.get("team") or {}
+                    return {"id": t.get("id"), "abbr": t.get("abbreviation"),
+                            "name": t.get("displayName") or t.get("name"),
+                            "score": c.get("score"), "winner": bool(c.get("winner"))}
+                gid = str(ev.get("id", ""))
+                api_games[gid] = {
+                    "id":        gid,
+                    "completed": bool(stype.get("completed")),
+                    "status":    stype.get("description") or stype.get("name"),
+                    "clock":     st.get("displayClock"),
+                    "period":    st.get("period"),
+                    "home":      _tm(home_c),
+                    "away":      _tm(away_c),
+                    "broadcast": comps0.get("broadcast") or "",
+                }
+        except Exception as e:
+            print(f"[GamesWithPerformers] RapidAPI error: {e}")
+
+    # ── 3. Merge by game_id ─────────────────────────────────────────────
+    result = []
+    for gid in sorted(performers_by_game.keys()):
+        info = api_games.get(gid) or {"id": gid, "completed": True,
+                                      "status": "Final", "clock": None,
+                                      "period": 0, "broadcast": ""}
+        # Derive home/away from performers when API data is absent
+        if not (info.get("home") or {}).get("abbr"):
+            teams = list(dict.fromkeys(p['team_abbr'] for p in performers_by_game[gid]))
+            info["away"] = {"abbr": teams[0] if teams else "", "score": None, "winner": False}
+            info["home"] = {"abbr": teams[1] if len(teams) > 1 else "", "score": None, "winner": False}
+        result.append({**info, "performers": performers_by_game[gid]})
+
+    return {"date": date, "games": result, "count": len(result)}
+
+
+@app.get("/api/players/game-boxscore")
+async def get_game_boxscore(espn_game_id: str, season: str = "2026"):
+    """Full per-player boxscore for a specific game from player_game_stats."""
+    from collections import defaultdict
+
+    conn = get_db_conn()
+    c    = conn.cursor()
+    c.execute('''
+        SELECT team_abbr, player_name, minutes, points, rebounds, assists,
+               steals, blocks, fg3m, turnovers, fgm, fga, plus_minus
+        FROM player_game_stats
+        WHERE espn_game_id = %s AND season = %s
+        ORDER BY team_abbr, points DESC
+    ''', (espn_game_id, season))
+    rows = c.fetchall()
+    cols = [d[0] for d in c.description]
+    conn.close()
+
+    if not rows:
+        raise HTTPException(404, "No boxscore data found for this game")
+
+    by_team: dict = defaultdict(list)
+    for row in rows:
+        r = dict(zip(cols, row))
+        by_team[r['team_abbr']].append({
+            'player_name': r['player_name'],
+            'minutes':     round(r['minutes'] or 0, 1),
+            'points':      r['points'],
+            'rebounds':    r['rebounds'],
+            'assists':     r['assists'],
+            'steals':      r['steals'],
+            'blocks':      r['blocks'],
+            'fg3m':        r['fg3m'],
+            'turnovers':   r['turnovers'],
+            'fgm':         r['fgm'],
+            'fga':         r['fga'],
+            'plus_minus':  r['plus_minus'],
+        })
+
+    return {
+        "espn_game_id": espn_game_id,
+        "teams": [{"team_abbr": abbr, "players": players}
+                  for abbr, players in by_team.items()],
+    }
+
+
 @app.get("/api/players/today-games")
 async def get_today_games(date: str | None = None):
     """

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { RefreshCw, Trophy, WifiOff, AlertTriangle, Database, Wifi, Star, Clock } from 'lucide-react';
+import { RefreshCw, Trophy, WifiOff, AlertTriangle, Database, Wifi, Star, Clock, X } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 
@@ -20,7 +20,7 @@ function useTimeSince(isoString) {
   return text;
 }
 
-// ── Recent Games section ────────────────────────────────────────────────────
+// ── Recent Games components ─────────────────────────────────────────────────
 
 const GameStatusPill = ({ completed, status, clock, period }) => {
   if (completed)
@@ -35,19 +35,21 @@ const GameStatusPill = ({ completed, status, clock, period }) => {
   return <span className="px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-500 text-[10px] font-bold">{status || 'Upcoming'}</span>;
 };
 
-const GameCard = ({ game }) => {
-  const { home, away, completed, status, clock, period, broadcast, venue } = game;
+// Compact game card used for today's schedule (no performers)
+const GameCard = ({ game, onClick }) => {
+  const { home, away, completed, status, clock, period, broadcast } = game;
   const hasScore = home?.score != null && away?.score != null;
   return (
-    <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
+    <div
+      className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 flex flex-col gap-2 cursor-pointer hover:border-orange-500/40 hover:bg-slate-900/80 transition-all"
+      onClick={() => onClick && onClick(game)}
+    >
+      <div className="flex items-center justify-between gap-2">
         <GameStatusPill completed={completed} status={status} clock={clock} period={period} />
         {broadcast && <span className="text-[10px] text-slate-500 font-bold">{broadcast}</span>}
       </div>
-
-      {/* Teams */}
       {[away, home].map((team, i) => (
-        <div key={i} className={`flex items-center justify-between gap-2 ${team?.winner ? '' : ''}`}>
+        <div key={i} className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-[10px] text-slate-500 w-7 shrink-0">{i === 0 ? 'AWY' : 'HME'}</span>
             <span className={`text-sm font-bold truncate ${team?.winner ? 'text-white' : 'text-slate-300'}`}>
@@ -61,46 +63,178 @@ const GameCard = ({ game }) => {
           )}
         </div>
       ))}
-
-      {venue && <p className="text-[10px] text-slate-600 truncate">{venue}</p>}
     </div>
   );
 };
 
-const TopPerformerRow = ({ rank, player }) => {
-  const fgStr = player.fga > 0 ? `${player.fgm}/${player.fga}` : '—';
+// Game card with top-2 performers per team — clickable for full boxscore
+const GameWithPerformersCard = ({ game, onClick }) => {
+  const { home, away, completed, status, clock, period, performers = [] } = game;
+  const hasScore = home?.score != null && away?.score != null;
+  const awayAbbr = away?.abbr || '';
+  const homeAbbr = home?.abbr || '';
+
   return (
-    <div className="flex items-center gap-3 px-4 py-3 hover:bg-slate-800/30 transition-colors">
-      <span className="text-sm font-black text-slate-500 w-5 shrink-0">{rank}</span>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-bold text-white truncate">{player.player_name}</p>
-        <p className="text-[11px] text-slate-500">{player.team_abbr}</p>
+    <div
+      className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden cursor-pointer hover:border-orange-500/40 hover:bg-slate-900/80 transition-all group"
+      onClick={() => onClick(game)}
+    >
+      {/* Score header */}
+      <div className="px-4 py-2.5 border-b border-slate-800/80 flex items-center gap-3">
+        {/* Away */}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span className={`text-sm font-black truncate ${away?.winner ? 'text-white' : 'text-slate-400'}`}>
+            {awayAbbr || '—'}
+          </span>
+          {hasScore && (
+            <span className={`text-base font-black tabular-nums ${away?.winner ? 'text-orange-400' : 'text-slate-500'}`}>
+              {away?.score}
+            </span>
+          )}
+        </div>
+
+        {/* Centre: status + hint */}
+        <div className="flex flex-col items-center gap-0.5 shrink-0">
+          <GameStatusPill completed={completed} status={status} clock={clock} period={period} />
+          <span className="text-[9px] text-slate-700 group-hover:text-orange-500/50 transition-colors">boxscore ↗</span>
+        </div>
+
+        {/* Home */}
+        <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
+          {hasScore && (
+            <span className={`text-base font-black tabular-nums ${home?.winner ? 'text-orange-400' : 'text-slate-500'}`}>
+              {home?.score}
+            </span>
+          )}
+          <span className={`text-sm font-black truncate ${home?.winner ? 'text-white' : 'text-slate-400'}`}>
+            {homeAbbr || '—'}
+          </span>
+        </div>
       </div>
-      <div className="flex items-center gap-4 text-sm tabular-nums shrink-0">
-        <div className="text-center">
-          <p className="font-black text-orange-400">{player.points}</p>
-          <p className="text-[10px] text-slate-500">PTS</p>
+
+      {/* Top-2 performers per team */}
+      {performers.length > 0 && (
+        <div className="divide-y divide-slate-800/40">
+          {performers.map((p, i) => {
+            const isAway = p.team_abbr === awayAbbr;
+            return (
+              <div key={i} className="flex items-center gap-2 px-3 py-2">
+                <span className={`text-[10px] font-black w-8 shrink-0 ${isAway ? 'text-blue-400' : 'text-red-400'}`}>
+                  {p.team_abbr}
+                </span>
+                <span className="flex-1 text-xs font-semibold text-slate-200 truncate">{p.player_name}</span>
+                <div className="flex items-center gap-2 text-[11px] tabular-nums shrink-0">
+                  <span className="font-black text-orange-400 w-5 text-right">{p.points}</span>
+                  <span className="text-slate-500 w-5 text-right">{p.rebounds}r</span>
+                  <span className="text-slate-500 w-5 text-right">{p.assists}a</span>
+                  <span className="text-slate-600 w-5 text-right hidden sm:block">{p.fg3m}3</span>
+                  <span className="text-slate-600 w-5 text-right hidden sm:block">{p.steals}s</span>
+                  <span className="text-slate-600 w-5 text-right hidden sm:block">{p.blocks}b</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <div className="text-center hidden sm:block">
-          <p className="font-bold text-slate-300">{player.rebounds}</p>
-          <p className="text-[10px] text-slate-500">REB</p>
-        </div>
-        <div className="text-center hidden sm:block">
-          <p className="font-bold text-slate-300">{player.assists}</p>
-          <p className="text-[10px] text-slate-500">AST</p>
-        </div>
-        <div className="text-center hidden md:block">
-          <p className="font-bold text-slate-400 text-xs">{fgStr}</p>
-          <p className="text-[10px] text-slate-500">FG</p>
-        </div>
-        {player.plus_minus != null && (
-          <div className="text-center hidden md:block">
-            <p className={`font-bold text-xs ${player.plus_minus > 0 ? 'text-green-400' : player.plus_minus < 0 ? 'text-red-400' : 'text-slate-500'}`}>
-              {player.plus_minus > 0 ? `+${player.plus_minus}` : player.plus_minus}
+      )}
+    </div>
+  );
+};
+
+// Full boxscore modal
+const BoxscoreModal = ({ game, onClose }) => {
+  const homeAbbr = game.home?.abbr || '';
+  const awayAbbr = game.away?.abbr || '';
+  const hasScore = game.home?.score != null && game.away?.score != null;
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['gameBoxscore', game.id],
+    queryFn:  () => api.getGameBoxscore(game.id),
+    enabled:  !!game.id,
+    staleTime: 30 * 60 * 1000,
+  });
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-16" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div
+        className="relative bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Modal header */}
+        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-5 py-4 flex items-start justify-between border-b border-slate-700 shrink-0">
+          <div>
+            <h2 className="text-lg font-black text-white">
+              {awayAbbr && homeAbbr ? `${awayAbbr} @ ${homeAbbr}` : 'Boxscore'}
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {hasScore
+                ? `${awayAbbr} ${game.away?.score}  —  ${homeAbbr} ${game.home?.score}`
+                : (game.status || 'Full Game Stats')}
             </p>
-            <p className="text-[10px] text-slate-500">+/-</p>
           </div>
-        )}
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-1 ml-4 shrink-0">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Modal body */}
+        <div className="overflow-y-auto flex-1">
+          {isLoading ? (
+            <div className="p-10 text-center text-slate-400 text-sm animate-pulse">Loading boxscore…</div>
+          ) : data?.teams?.length ? (
+            data.teams.map(team => (
+              <div key={team.team_abbr} className="border-b border-slate-800 last:border-b-0">
+                {/* Team header */}
+                <div className="px-5 py-2 bg-slate-800/50 sticky top-0">
+                  <span className="text-xs font-black text-orange-400 tracking-widest uppercase">{team.team_abbr}</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-slate-800/20">
+                        <th className="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase">Player</th>
+                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Min</th>
+                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Pts</th>
+                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Reb</th>
+                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Ast</th>
+                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">3PM</th>
+                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Stl</th>
+                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Blk</th>
+                        <th className="px-2 py-2 text-center text-[10px] font-bold text-slate-500 uppercase w-10">Tov</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/30">
+                      {team.players.map((p, i) => (
+                        <tr key={i} className="hover:bg-slate-800/20 transition-colors">
+                          <td className="px-4 py-2.5 font-semibold text-white truncate max-w-[150px]">{p.player_name}</td>
+                          <td className="px-2 py-2.5 text-center text-slate-500">{p.minutes}</td>
+                          <td className="px-2 py-2.5 text-center font-black text-orange-400">{p.points}</td>
+                          <td className="px-2 py-2.5 text-center text-slate-300">{p.rebounds}</td>
+                          <td className="px-2 py-2.5 text-center text-slate-300">{p.assists}</td>
+                          <td className="px-2 py-2.5 text-center text-slate-300">{p.fg3m}</td>
+                          <td className="px-2 py-2.5 text-center text-slate-300">{p.steals}</td>
+                          <td className="px-2 py-2.5 text-center text-slate-300">{p.blocks}</td>
+                          <td className="px-2 py-2.5 text-center text-slate-400">{p.turnovers}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="p-10 text-center text-slate-500 text-sm">
+              No boxscore data synced for this game yet.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -109,10 +243,11 @@ const TopPerformerRow = ({ rank, player }) => {
 const RecentGamesSection = () => {
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
   const today     = new Date().toISOString().split('T')[0];
+  const [selectedGame, setSelectedGame] = useState(null);
 
-  const { data: perfData, isLoading: perfLoading } = useQuery({
-    queryKey: ['topPerformers', yesterday],
-    queryFn:  () => api.getTopPerformers(yesterday, 5),
+  const { data: gwpData, isLoading: gwpLoading } = useQuery({
+    queryKey: ['gamesWithPerformers', yesterday],
+    queryFn:  () => api.getGamesWithPerformers(yesterday),
     staleTime: 30 * 60 * 1000,
   });
 
@@ -123,13 +258,13 @@ const RecentGamesSection = () => {
     refetchInterval: 5 * 60 * 1000,
   });
 
-  const performers  = perfData?.players  ?? [];
-  const todayGames  = todayData?.games   ?? [];
-  const perfDate    = perfData?.date     ?? yesterday;
-  const hasPerf     = performers.length > 0;
-  const hasTodayGames = todayGames.length > 0;
+  const yesterdayGames = gwpData?.games  ?? [];
+  const todayGames     = todayData?.games ?? [];
+  const hasYesterday   = yesterdayGames.length > 0;
+  const hasTodayGames  = todayGames.length > 0;
+  const showTodayPanel = hasTodayGames || todayLoading;
 
-  if (!hasPerf && !hasTodayGames && !perfLoading && !todayLoading) return null;
+  if (!hasYesterday && !hasTodayGames && !gwpLoading && !todayLoading) return null;
 
   const fmtDate = (d) => {
     try { return new Date(d + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' }); }
@@ -137,85 +272,86 @@ const RecentGamesSection = () => {
   };
 
   return (
-    <div className="mb-8">
-      <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-        <Star className="w-5 h-5 text-orange-400" />
-        Recent Games
-      </h2>
+    <>
+      {selectedGame && (
+        <BoxscoreModal game={selectedGame} onClose={() => setSelectedGame(null)} />
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="mb-8">
+        <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+          <Star className="w-5 h-5 text-orange-400" />
+          Recent Games
+        </h2>
 
-        {/* Yesterday top performers */}
-        <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden">
-          <div className="bg-gradient-to-r from-orange-600/80 to-orange-800/80 px-5 py-3 flex items-center justify-between">
-            <h3 className="text-sm font-black text-white flex items-center gap-2">
-              <Trophy className="w-4 h-4" />
-              Top Performers — {fmtDate(perfDate)}
-            </h3>
-            {perfLoading && <RefreshCw className="w-3.5 h-3.5 text-white/60 animate-spin" />}
+        <div className={`grid grid-cols-1 ${showTodayPanel ? 'lg:grid-cols-[2fr_1fr]' : ''} gap-6`}>
+
+          {/* Yesterday's games — top-2 per team per game */}
+          <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden">
+            <div className="bg-gradient-to-r from-orange-600/80 to-orange-800/80 px-5 py-3 flex items-center justify-between">
+              <h3 className="text-sm font-black text-white flex items-center gap-2">
+                <Trophy className="w-4 h-4" />
+                {fmtDate(yesterday)} — Top Performers
+              </h3>
+              {gwpLoading && <RefreshCw className="w-3.5 h-3.5 text-white/60 animate-spin" />}
+            </div>
+
+            {gwpLoading ? (
+              <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="bg-slate-800/30 rounded-xl p-3 space-y-2 animate-pulse">
+                    <div className="h-4 bg-slate-800 rounded w-28" />
+                    {[1, 2, 3, 4].map(j => (
+                      <div key={j} className="h-3 bg-slate-800/60 rounded" />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : hasYesterday ? (
+              <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {yesterdayGames.map(g => (
+                  <GameWithPerformersCard key={g.id} game={g} onClick={setSelectedGame} />
+                ))}
+              </div>
+            ) : (
+              <div className="px-5 py-8 text-center text-slate-500 text-sm">
+                No game data for {fmtDate(yesterday)}
+              </div>
+            )}
           </div>
 
-          {perfLoading ? (
-            <div className="divide-y divide-slate-800/60">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="px-4 py-3 flex items-center gap-3 animate-pulse">
-                  <div className="w-5 h-3 bg-slate-800 rounded shrink-0" />
-                  <div className="flex-1 space-y-1">
-                    <div className="h-3 bg-slate-800 rounded w-32" />
-                    <div className="h-2 bg-slate-800/60 rounded w-12" />
-                  </div>
-                  <div className="flex gap-4">
-                    {[1,2,3].map(j => <div key={j} className="w-8 h-6 bg-slate-800 rounded" />)}
-                  </div>
+          {/* Today's games — hidden completely when empty */}
+          {showTodayPanel && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Clock className="w-4 h-4 text-slate-400" />
+                <h3 className="text-sm font-black text-white">
+                  Today's Games — {fmtDate(today)}
+                </h3>
+                {todayLoading && <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
+              </div>
+
+              {todayLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 space-y-3 animate-pulse">
+                      <div className="h-3 bg-slate-800 rounded w-16" />
+                      <div className="h-3 bg-slate-800 rounded w-full" />
+                      <div className="h-3 bg-slate-800 rounded w-full" />
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          ) : hasPerf ? (
-            <div className="divide-y divide-slate-800/60">
-              {performers.map((p, i) => (
-                <TopPerformerRow key={p.espn_player_id} rank={i + 1} player={p} />
-              ))}
-            </div>
-          ) : (
-            <div className="px-5 py-8 text-center text-slate-500 text-sm">
-              No game data available for {fmtDate(perfDate)}
+              ) : (
+                <div className="space-y-3">
+                  {todayGames.map(g => (
+                    <GameCard key={g.id} game={g} onClick={setSelectedGame} />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
-
-        {/* Today's games */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <Clock className="w-4 h-4 text-slate-400" />
-            <h3 className="text-sm font-black text-white">
-              Today's Games — {fmtDate(today)}
-            </h3>
-            {todayLoading && <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
-          </div>
-
-          {todayLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 space-y-3 animate-pulse">
-                  <div className="h-3 bg-slate-800 rounded w-16" />
-                  <div className="h-3 bg-slate-800 rounded w-full" />
-                  <div className="h-3 bg-slate-800 rounded w-full" />
-                </div>
-              ))}
-            </div>
-          ) : hasTodayGames ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {todayGames.map(g => <GameCard key={g.id} game={g} />)}
-            </div>
-          ) : (
-            <div className="bg-slate-900/50 border border-slate-800 rounded-xl px-5 py-8 text-center text-slate-500 text-sm">
-              No games scheduled for {fmtDate(today)}
-            </div>
-          )}
-        </div>
-
       </div>
-    </div>
+    </>
   );
 };
 
@@ -353,7 +489,6 @@ const StandingsPage = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      {/* Static mode banner */}
       {staticMode && (
         <div className="mb-4 px-4 py-3 bg-slate-700/40 border border-slate-600/40 rounded-xl text-xs text-slate-300 font-bold flex items-center gap-2">
           <Trophy className="w-3 h-3 text-orange-400 shrink-0" />
@@ -372,8 +507,7 @@ const StandingsPage = () => {
         <div className="mb-4 px-4 py-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-400 font-bold flex items-start gap-2">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           <div>
-            <span>NBA API sync failing ({consecutiveFails} consecutive failure{consecutiveFails > 1 ? 's' : ''}) — showing {dataSource === 'database' ? 'last cached DB data' : 'hardcoded fallback data'}.
-            </span>
+            <span>NBA API sync failing ({consecutiveFails} consecutive failure{consecutiveFails > 1 ? 's' : ''}) — showing {dataSource === 'database' ? 'last cached DB data' : 'hardcoded fallback data'}.</span>
             {lastSyncError && (
               <span className="block mt-1 font-normal text-amber-400/70 break-all">{lastSyncError}</span>
             )}
@@ -405,11 +539,11 @@ const StandingsPage = () => {
 
             {dataSource && (
               <span className={`flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full ${
-                dataSource === 'rapidapi'  ? 'bg-green-500/15 text-green-400' :
-                dataSource === 'nba_api'   ? 'bg-green-500/15 text-green-400' :
+                dataSource === 'rapidapi'     ? 'bg-green-500/15 text-green-400' :
+                dataSource === 'nba_api'      ? 'bg-green-500/15 text-green-400' :
                 dataSource === 'browser_push' ? 'bg-green-500/15 text-green-400' :
-                dataSource === 'database'  ? 'bg-blue-500/15 text-blue-400' :
-                                             'bg-amber-500/15 text-amber-400'
+                dataSource === 'database'     ? 'bg-blue-500/15 text-blue-400' :
+                                                'bg-amber-500/15 text-amber-400'
               }`}>
                 {['rapidapi','nba_api','browser_push'].includes(dataSource) ? <Wifi className="w-3 h-3" /> :
                  dataSource === 'database' ? <Database className="w-3 h-3" /> :
