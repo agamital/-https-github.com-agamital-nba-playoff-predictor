@@ -87,6 +87,20 @@ _SEED_PAIR_TO_STAGE = {
     frozenset({9, 10}): STAGE_PLAYIN_9V10,
 }
 
+# ESPN competition type abbreviation → our round name
+# These come from competitions[0]['type']['abbreviation']
+_ESPN_TYPE_TO_ROUND = {
+    "RD16":  STAGE_FIRST_ROUND,      # First Round  (16 teams remain)
+    "QTR":   STAGE_CONF_SEMIS,       # Conference Semifinals (quarterfinals)
+    "SEMI":  STAGE_CONF_FINALS,      # Conference Finals (semi-finals of finals)
+    "FINAL": STAGE_NBA_FINALS,       # NBA Finals
+    # Fallbacks seen in the wild
+    "1":     STAGE_FIRST_ROUND,
+    "2":     STAGE_CONF_SEMIS,
+    "3":     STAGE_CONF_FINALS,
+    "4":     STAGE_NBA_FINALS,
+}
+
 
 def _espn_team_name_to_nba_id(display_name: str) -> int | None:
     """Map an ESPN displayName to our canonical NBA team ID."""
@@ -434,6 +448,501 @@ def sync_playin_results_from_api(season: str = "2026") -> dict:
          f"processed={summary['processed']} promoted={summary['promoted']} "
          f"skipped={summary['skipped']} errors={len(summary['errors'])}")
     return summary
+
+
+# ---------------------------------------------------------------------------
+# sync_playoff_results_from_api  — public entry point
+# ---------------------------------------------------------------------------
+
+def sync_playoff_results_from_api(season: str = "2026") -> dict:
+    """
+    Fetch the NBA scoreboard from RapidAPI, detect finished Playoff games,
+    update series win counts, and trigger bracket promotion when a team
+    reaches 4 wins.
+
+    Steps:
+      1. GET /nba-scoreboard with RAPIDAPI credentials
+      2. Filter Events where season.type==3 (post-season)
+      3. For each STATUS_FINAL + completed==true event:
+         a. Extract home/away teams + scores
+         b. Map ESPN team names → NBA team IDs
+         c. Look up the active series in our DB for those two teams
+         d. Determine winner from score or winner flag
+         e. Increment home_wins / away_wins in the series row
+         f. If either side reaches 4 wins → mark series completed + call
+            promote_team_in_bracket() for full bracket advancement
+      4. Return summary dict
+
+    Returns:
+      {
+        "processed": int,   total finished playoff games seen
+        "updated":   int,   series rows updated
+        "completed": int,   series marked as completed this run
+        "skipped":   int,   games skipped (unmappable / already processed)
+        "errors":    list,  error messages
+        "details":   list,  per-game processing log
+      }
+
+    Idempotency:
+      The function tracks which ESPN event IDs it has already applied in the
+      series_processed_events table (created on first call).  A game is
+      never counted twice even if the endpoint is called multiple times while
+      the scoreboard still shows recent finished games.
+    """
+    import requests as _http
+
+    try:
+        from main import _RAPIDAPI_KEY, _RAPIDAPI_HOST
+    except ImportError as e:
+        return {"processed": 0, "updated": 0, "completed": 0, "skipped": 0,
+                "errors": [f"Cannot import main: {e}"], "details": []}
+
+    summary = {"processed": 0, "updated": 0, "completed": 0,
+               "skipped": 0, "errors": [], "details": []}
+
+    # ── 0. Ensure dedup table exists ─────────────────────────────────────
+    _ensure_processed_events_table()
+
+    # ── 1. Fetch scoreboard ──────────────────────────────────────────────
+    if not _RAPIDAPI_KEY:
+        err = "RAPIDAPI_KEY not set — cannot fetch scoreboard"
+        _log(err)
+        summary["errors"].append(err)
+        return summary
+
+    try:
+        _log(f"GET {_RAPIDAPI_SCOREBOARD_URL} [playoff sync, season={season}]")
+        resp = _http.get(
+            _RAPIDAPI_SCOREBOARD_URL,
+            headers={"x-rapidapi-key": _RAPIDAPI_KEY, "x-rapidapi-host": _RAPIDAPI_HOST},
+            timeout=10,
+        )
+        _log(f"Scoreboard HTTP {resp.status_code}")
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        err = f"Scoreboard fetch failed: {type(e).__name__}: {e}"
+        _log(err)
+        summary["errors"].append(err)
+        return summary
+
+    # ── 2. Extract Events array ──────────────────────────────────────────
+    resp_obj = data.get("response", data)
+    if isinstance(resp_obj, dict):
+        events = resp_obj.get("Events") or resp_obj.get("events") or []
+    elif isinstance(resp_obj, list):
+        events = resp_obj
+    else:
+        events = []
+
+    _log(f"Total events in scoreboard: {len(events)}")
+
+    # ── 3. Filter Playoff events ─────────────────────────────────────────
+    playoff_events = []
+    for ev in events:
+        season_obj = ev.get("season") or {}
+        s_type = season_obj.get("type")
+        s_slug = str(season_obj.get("slug", "")).lower()
+        if s_type == 3 or str(s_type) == "3" or "post-season" in s_slug or "playoff" in s_slug:
+            playoff_events.append(ev)
+
+    _log(f"Playoff events found: {len(playoff_events)}")
+
+    # ── 4. Process each finished Playoff game ────────────────────────────
+    for ev in playoff_events:
+        event_id   = str(ev.get("id", ""))
+        event_name = ev.get("name") or ev.get("shortName") or event_id
+
+        # Skip already-processed games (idempotency guard)
+        if _is_event_processed(event_id, "playoff"):
+            _log(f"Event {event_id} already processed — skip")
+            summary["skipped"] += 1
+            continue
+
+        # Check completion
+        status_obj  = ev.get("status") or {}
+        status_type = status_obj.get("type") or {}
+        is_final     = status_type.get("name") == "STATUS_FINAL"
+        is_completed = bool(status_type.get("completed"))
+
+        if not (is_final and is_completed):
+            summary["skipped"] += 1
+            continue
+
+        summary["processed"] += 1
+
+        # Extract competition info
+        competitions = ev.get("competitions") or [{}]
+        comp0        = competitions[0]
+        competitors  = comp0.get("competitors") or []
+
+        if len(competitors) < 2:
+            msg = f"Event {event_id}: fewer than 2 competitors — skipping"
+            _log(msg)
+            summary["errors"].append(msg)
+            summary["skipped"] += 1
+            continue
+
+        # Determine round from competition type abbreviation
+        comp_type_abbr = (comp0.get("type") or {}).get("abbreviation", "")
+        round_name     = _ESPN_TYPE_TO_ROUND.get(comp_type_abbr.upper())
+        _log(f"Event {event_id} ({event_name}): comp_type={comp_type_abbr!r} → round={round_name!r}")
+
+        # Map competitors
+        teams_info = []
+        for comp in competitors:
+            t_obj   = comp.get("team") or {}
+            t_name  = t_obj.get("displayName") or t_obj.get("name") or ""
+            t_id    = _espn_team_name_to_nba_id(t_name)
+            score   = comp.get("score")
+            winner  = bool(comp.get("winner"))
+            home_away = comp.get("homeAway", "").lower()   # "home" | "away"
+            teams_info.append({
+                "name":     t_name,
+                "nba_id":   t_id,
+                "score":    int(score) if score is not None else None,
+                "winner":   winner,
+                "home_away": home_away,
+            })
+
+        t_home = next((t for t in teams_info if t["home_away"] == "home"), teams_info[0])
+        t_away = next((t for t in teams_info if t["home_away"] == "away"), teams_info[1])
+
+        _log(f"  {t_home['name']}(home,{t_home['score']}) vs "
+             f"{t_away['name']}(away,{t_away['score']})")
+
+        if not t_home["nba_id"] or not t_away["nba_id"]:
+            msg = (f"Event {event_id}: cannot map team IDs — "
+                   f"'{t_home['name']}'→{t_home['nba_id']}  "
+                   f"'{t_away['name']}'→{t_away['nba_id']}")
+            _log(msg)
+            summary["errors"].append(msg)
+            summary["skipped"] += 1
+            continue
+
+        # Determine game winner
+        winner_info = next((t for t in teams_info if t["winner"]), None)
+        if winner_info is None:
+            s_h, s_a = t_home["score"], t_away["score"]
+            if s_h is None or s_a is None or s_h == s_a:
+                msg = f"Event {event_id}: tie/missing score ({s_h}-{s_a}) — skip"
+                _log(msg)
+                summary["errors"].append(msg)
+                summary["skipped"] += 1
+                continue
+            winner_info = t_home if s_h > s_a else t_away
+
+        winner_nba_id = winner_info["nba_id"]
+
+        # Look up the active series in our DB
+        series_row = _find_series(t_home["nba_id"], t_away["nba_id"], season)
+        if series_row is None:
+            msg = (f"Event {event_id}: no active series found for "
+                   f"{t_home['name']} vs {t_away['name']} (season={season})")
+            _log(msg)
+            summary["errors"].append(msg)
+            summary["skipped"] += 1
+            continue
+
+        (series_id, db_home_id, db_away_id,
+         cur_home_wins, cur_away_wins,
+         db_round, conf, bracket_group,
+         db_home_seed, db_away_seed) = series_row
+
+        # If round_name couldn't be inferred from ESPN, use what's in the DB
+        if not round_name:
+            round_name = db_round
+            _log(f"  round_name fallback from DB: {round_name!r}")
+
+        # Increment win for the correct side
+        if winner_nba_id == db_home_id:
+            new_home_wins = cur_home_wins + 1
+            new_away_wins = cur_away_wins
+        else:
+            new_home_wins = cur_home_wins
+            new_away_wins = cur_away_wins + 1
+
+        total_games = new_home_wins + new_away_wins
+        series_winner_id = None
+        new_status = "active"
+
+        if new_home_wins >= 4:
+            series_winner_id = db_home_id
+            new_status       = "completed"
+        elif new_away_wins >= 4:
+            series_winner_id = db_away_id
+            new_status       = "completed"
+
+        # Persist the updated score
+        ok = _update_series_score(
+            series_id,
+            new_home_wins, new_away_wins,
+            series_winner_id, new_status,
+            total_games if new_status == "completed" else None,
+        )
+        if not ok:
+            msg = f"Event {event_id}: DB update failed for series {series_id}"
+            _log(msg)
+            summary["errors"].append(msg)
+            summary["skipped"] += 1
+            continue
+
+        # Mark event as processed (idempotency)
+        _mark_event_processed(event_id, "playoff", series_id)
+        summary["updated"] += 1
+
+        # Build human-readable score line
+        score_str = _series_score_str(
+            t_home["name"], new_home_wins,
+            t_away["name"], new_away_wins,
+            winner_nba_id if new_status == "completed" else None,
+            winner_info["name"],
+        )
+        _log(f"Series ID {series_id}: {score_str}")
+
+        detail = {
+            "event_id":    event_id,
+            "event_name":  event_name,
+            "series_id":   series_id,
+            "round":       round_name,
+            "score":       score_str,
+            "completed":   new_status == "completed",
+            "winner_id":   series_winner_id,
+        }
+        summary["details"].append(detail)
+
+        # If series is now complete, score predictions + advance bracket
+        if new_status == "completed":
+            summary["completed"] += 1
+            _finalize_series(
+                series_id, series_winner_id, total_games,
+                round_name, conf, bracket_group,
+                db_home_id, db_away_id, db_home_seed, db_away_seed,
+                season,
+            )
+            promo = promote_team_in_bracket(
+                series_winner_id, round_name, season=season
+            )
+            detail["promoted"]   = promo["promoted"]
+            detail["next_stage"] = promo["next_stage"]
+            _log(f"  → {promo['message']}")
+
+    _log(f"sync_playoff_results_from_api done — "
+         f"processed={summary['processed']} updated={summary['updated']} "
+         f"completed={summary['completed']} skipped={summary['skipped']} "
+         f"errors={len(summary['errors'])}")
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Helpers for sync_playoff_results_from_api
+# ---------------------------------------------------------------------------
+
+def _ensure_processed_events_table():
+    """Create series_processed_events dedup table if it doesn't exist."""
+    conn = None
+    try:
+        conn = _get_db()
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS series_processed_events (
+                event_id   TEXT NOT NULL,
+                event_type TEXT NOT NULL DEFAULT 'playoff',
+                series_id  INTEGER,
+                processed_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (event_id, event_type)
+            )
+        """)
+        conn.commit()
+    except Exception as e:
+        _log(f"_ensure_processed_events_table error: {e}")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _is_event_processed(event_id: str, event_type: str = "playoff") -> bool:
+    conn = None
+    try:
+        conn = _get_db()
+        c = conn.cursor()
+        c.execute(
+            "SELECT 1 FROM series_processed_events WHERE event_id=%s AND event_type=%s",
+            (event_id, event_type)
+        )
+        return c.fetchone() is not None
+    except Exception:
+        return False
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _mark_event_processed(event_id: str, event_type: str, series_id: int | None):
+    conn = None
+    try:
+        conn = _get_db()
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO series_processed_events (event_id, event_type, series_id)
+               VALUES (%s, %s, %s)
+               ON CONFLICT (event_id, event_type) DO NOTHING""",
+            (event_id, event_type, series_id)
+        )
+        conn.commit()
+    except Exception as e:
+        _log(f"_mark_event_processed error: {e}")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _find_series(team1_id: int, team2_id: int, season: str):
+    """
+    Return the active (or most recent) series row for two teams in a season.
+    Returns tuple or None.
+    """
+    conn = None
+    try:
+        conn = _get_db()
+        c = conn.cursor()
+        c.execute(
+            """SELECT id,
+                      home_team_id, away_team_id,
+                      COALESCE(home_wins, 0), COALESCE(away_wins, 0),
+                      round, conference, COALESCE(bracket_group, 'A'),
+                      COALESCE(home_seed, 0), COALESCE(away_seed, 0)
+               FROM series
+               WHERE season = %s
+                 AND status != 'completed'
+                 AND ((home_team_id = %s AND away_team_id = %s)
+                   OR (home_team_id = %s AND away_team_id = %s))
+               ORDER BY id DESC
+               LIMIT 1""",
+            (season, team1_id, team2_id, team2_id, team1_id)
+        )
+        return c.fetchone()
+    except Exception as e:
+        _log(f"_find_series error: {e}")
+        return None
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _update_series_score(series_id: int,
+                         home_wins: int, away_wins: int,
+                         winner_id: int | None, status: str,
+                         actual_games: int | None) -> bool:
+    conn = None
+    try:
+        conn = _get_db()
+        c = conn.cursor()
+        c.execute(
+            """UPDATE series
+               SET home_wins = %s,
+                   away_wins = %s,
+                   winner_team_id = %s,
+                   status = %s,
+                   actual_games = COALESCE(%s, actual_games)
+               WHERE id = %s""",
+            (home_wins, away_wins, winner_id, status, actual_games, series_id)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        _log(f"_update_series_score error: {e}")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        return False
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _finalize_series(series_id: int, winner_id: int, actual_games: int,
+                     round_name: str, conf: str, bracket_group: str,
+                     home_id: int, away_id: int,
+                     home_seed: int, away_seed: int,
+                     season: str):
+    """
+    Score predictions and trigger bracket advancement for a just-completed
+    series.  Mirrors the core of main.set_series_result().
+    """
+    try:
+        from main import get_db_conn, _recalculate_all_points, _try_advance_bracket
+        from scoring import calculate_series_points
+    except ImportError as e:
+        _log(f"_finalize_series: cannot import main helpers: {e}")
+        return
+
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+
+        # Score predictions
+        c.execute(
+            "SELECT id, predicted_winner_id, predicted_games "
+            "FROM predictions WHERE series_id = %s",
+            (series_id,)
+        )
+        for pred_id, pred_winner_id, pred_games in c.fetchall():
+            winner_correct = pred_winner_id == winner_id
+            games_correct  = pred_games == actual_games
+            games_diff     = abs(pred_games - actual_games) if pred_games is not None else None
+            pred_seed      = home_seed if pred_winner_id == home_id else (
+                             away_seed if pred_winner_id == away_id else None)
+            pts = calculate_series_points(
+                round_name, home_seed, away_seed, pred_seed,
+                winner_correct=winner_correct,
+                games_correct=games_correct,
+                games_diff=games_diff,
+            )
+            c.execute(
+                "UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s",
+                (1 if winner_correct else 0, pts, pred_id)
+            )
+
+        _recalculate_all_points(c)
+        _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_id)
+        conn.commit()
+        _log(f"_finalize_series: series {series_id} scored + bracket advanced")
+
+    except Exception as e:
+        _log(f"_finalize_series error for series {series_id}: {type(e).__name__}: {e}")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _series_score_str(home_name: str, home_wins: int,
+                      away_name: str, away_wins: int,
+                      winner_id: int | None, winner_name: str) -> str:
+    if winner_id is not None:
+        return f"{winner_name} wins series {max(home_wins, away_wins)}-{min(home_wins, away_wins)}"
+    leader = home_name if home_wins > away_wins else away_name
+    lead_w = max(home_wins, away_wins)
+    trail_w = min(home_wins, away_wins)
+    if lead_w == trail_w:
+        return f"Series tied {home_wins}-{away_wins}"
+    return f"{leader} leads {lead_w}-{trail_w}"
 
 
 # ---------------------------------------------------------------------------

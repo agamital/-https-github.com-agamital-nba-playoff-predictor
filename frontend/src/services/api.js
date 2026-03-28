@@ -449,4 +449,10 @@ export const syncPlayinFromApi = async (season = '2026') => {
   return response.data;
 };
 
+// Admin — Playoff series sync from API
+export const syncPlayoffsFromApi = async (season = '2026') => {
+  const response = await api.post('/api/admin/playoffs/sync-from-api', null, { params: { season } });
+  return response.data;
+};
+
 export default api;

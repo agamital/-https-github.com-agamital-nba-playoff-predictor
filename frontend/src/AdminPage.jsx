@@ -1547,6 +1547,27 @@ const AdminPage = ({ currentUser }) => {
     }
   };
 
+  const [syncingPlayoffsFromApi, setSyncingPlayoffsFromApi] = useState(false);
+  const handleSyncPlayoffsFromApi = async () => {
+    setSyncingPlayoffsFromApi(true);
+    try {
+      const res = await api.syncPlayoffsFromApi();
+      const [updatedSeries] = await Promise.all([api.getAdminSeries()]);
+      setSeries(updatedSeries);
+      const updated   = res.updated   ?? 0;
+      const completed = res.completed ?? 0;
+      const errs      = res.errors?.length ?? 0;
+      addToast(
+        `Playoff sync done — ${updated} game(s) recorded, ${completed} series completed${errs > 0 ? `, ${errs} error(s)` : ''}`,
+        errs === 0 ? 'success' : 'error'
+      );
+    } catch (e) {
+      addToast('Playoff API sync failed: ' + (e.response?.data?.detail || e.message), 'error');
+    } finally {
+      setSyncingPlayoffsFromApi(false);
+    }
+  };
+
   const [syncingFromApi, setSyncingFromApi] = useState(false);
   const handleSyncPlayinFromApi = async () => {
     setSyncingFromApi(true);
@@ -1680,6 +1701,25 @@ const AdminPage = ({ currentUser }) => {
               </div>
             );
           })()}
+
+          {/* Playoff Series header with API sync button — rendered once above all rounds */}
+          {roundOrder.some(r => seriesByRound[r]?.length) && (
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                <Trophy className="w-6 h-6 text-orange-400" /> Playoff Series
+              </h2>
+              <button
+                onClick={handleSyncPlayoffsFromApi}
+                disabled={syncingPlayoffsFromApi}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/20 border border-blue-500/40 text-blue-300 hover:bg-blue-500/30 font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Fetch finished Playoff game results from RapidAPI and update series scores">
+                {syncingPlayoffsFromApi
+                  ? <RefreshCw className="w-4 h-4 animate-spin" />
+                  : <Wifi className="w-4 h-4" />}
+                {syncingPlayoffsFromApi ? 'Syncing…' : 'Sync from API'}
+              </button>
+            </div>
+          )}
 
           {roundOrder.map(round => {
             const roundSeries = seriesByRound[round];
