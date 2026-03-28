@@ -455,4 +455,25 @@ export const syncPlayoffsFromApi = async (season = '2026') => {
   return response.data;
 };
 
+// Boxscore / player-game stats
+export const syncBoxscores = async (date = null, season = '2026') => {
+  const params = { season };
+  if (date) params.date = date;
+  const response = await api.post('/api/admin/boxscore/sync', null, { params });
+  return response.data;
+};
+
+export const getTopPerformers = async (date = null, limit = 5, season = '2026') => {
+  const params = { limit, season };
+  if (date) params.date = date;
+  const response = await api.get('/api/players/top-performers', { params });
+  return response.data;
+};
+
+export const getTodayGames = async (date = null) => {
+  const params = date ? { date } : {};
+  const response = await api.get('/api/players/today-games', { params });
+  return response.data;
+};
+
 export default api;

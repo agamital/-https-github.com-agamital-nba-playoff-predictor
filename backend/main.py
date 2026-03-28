@@ -54,6 +54,10 @@ _scheduler = None
 _RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
 _RAPIDAPI_URL  = "https://nba-api-free-data.p.rapidapi.com/nba-league-standings?year=2026"
 _RAPIDAPI_HOST = "nba-api-free-data.p.rapidapi.com"
+# Date-based scoreboard: /nba-scoreboard-by-date?date=YYYYMMDD
+_RAPIDAPI_SCOREBOARD_BY_DATE_URL = "https://nba-api-free-data.p.rapidapi.com/nba-scoreboard-by-date"
+# ESPN public summary API — no key needed, returns full boxscore
+_ESPN_BOXSCORE_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
 
 # ── Fallback: direct stats.nba.com request (used when RAPIDAPI_KEY not set) ──
 _NBA_STANDINGS_URL = (
@@ -1340,14 +1344,18 @@ def get_standings():
 
 def _apply_player_stats_migration():
     """
-    Idempotent DDL: create player_stats table if it doesn't exist.
-    UNIQUE(player_id, season) is the key used by ON CONFLICT upserts.
+    Idempotent DDL:
+      - Create player_stats if it doesn't exist; add new columns.
+      - Create player_game_stats (per-game boxscore table) if it doesn't exist.
+    Uses autocommit so each DDL statement is independent.
     """
     try:
         conn = get_db_conn()
         conn.autocommit = True
         c = conn.cursor()
         c.execute("SET search_path TO public")
+
+        # ── Base player_stats table ──────────────────────────────────────
         c.execute('''CREATE TABLE IF NOT EXISTS player_stats (
             id                SERIAL PRIMARY KEY,
             player_id         INTEGER NOT NULL,
@@ -1364,7 +1372,57 @@ def _apply_player_stats_migration():
             updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(player_id, season)
         )''')
-        print("[Migration] player_stats table ensured")
+
+        # ── New columns on player_stats (idempotent) ─────────────────────
+        new_ps_cols = [
+            ("espn_player_id", "INTEGER"),
+            ("fgm_per_game",   "REAL DEFAULT 0"),
+            ("fga_per_game",   "REAL DEFAULT 0"),
+            ("ftm_per_game",   "REAL DEFAULT 0"),
+            ("tov_per_game",   "REAL DEFAULT 0"),
+            ("min_per_game",   "REAL DEFAULT 0"),
+            ("oreb_per_game",  "REAL DEFAULT 0"),
+            ("dreb_per_game",  "REAL DEFAULT 0"),
+        ]
+        for col_name, col_type in new_ps_cols:
+            try:
+                c.execute(
+                    f"ALTER TABLE player_stats "
+                    f"ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+                )
+            except Exception as col_err:
+                print(f"[Migration] player_stats.{col_name}: {col_err}")
+
+        # ── Per-game boxscore table ───────────────────────────────────────
+        c.execute('''CREATE TABLE IF NOT EXISTS player_game_stats (
+            id             SERIAL PRIMARY KEY,
+            espn_game_id   TEXT    NOT NULL,
+            game_date      DATE    NOT NULL,
+            espn_player_id TEXT    NOT NULL,
+            player_name    TEXT    NOT NULL,
+            espn_team_id   TEXT    NOT NULL,
+            season         TEXT    DEFAULT '2026',
+            minutes        REAL    DEFAULT 0,
+            points         INTEGER DEFAULT 0,
+            rebounds       INTEGER DEFAULT 0,
+            assists        INTEGER DEFAULT 0,
+            steals         INTEGER DEFAULT 0,
+            blocks         INTEGER DEFAULT 0,
+            turnovers      INTEGER DEFAULT 0,
+            fgm            INTEGER DEFAULT 0,
+            fga            INTEGER DEFAULT 0,
+            fg3m           INTEGER DEFAULT 0,
+            fg3a           INTEGER DEFAULT 0,
+            ftm            INTEGER DEFAULT 0,
+            fta            INTEGER DEFAULT 0,
+            oreb           INTEGER DEFAULT 0,
+            dreb           INTEGER DEFAULT 0,
+            fouls          INTEGER DEFAULT 0,
+            plus_minus     INTEGER DEFAULT 0,
+            UNIQUE(espn_game_id, espn_player_id)
+        )''')
+
+        print("[Migration] player_stats + player_game_stats tables ensured")
         conn.close()
     except Exception as e:
         print(f"[Migration] player_stats: {e}")
@@ -1468,6 +1526,253 @@ def _initial_standings_sync():
     print(f"[Standings] Initial sync starts in {delay:.0f}s")
     time.sleep(delay)
     _standings_sync_job()
+
+def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> dict:
+    """
+    Fetch completed NBA games for a given date, pull full player boxscores
+    from the ESPN public summary API, and upsert into player_game_stats.
+
+    Also back-fills espn_player_id on existing player_stats rows via name match.
+
+    Args:
+        date_str: 'YYYY-MM-DD' or 'YYYYMMDD'.  Defaults to yesterday UTC.
+        season:   Season tag stored on every row (default '2026').
+
+    Returns a summary dict:
+      { date, games_found, games_processed, players_upserted, espn_id_updates, errors }
+    """
+    import requests as _http
+    from datetime import date as _date, timedelta as _td
+
+    # ── Helpers ────────────────────────────────────────────────────────────
+    def _safe_int(v, default=0):
+        try: return int(str(v).strip())
+        except: return default
+
+    def _safe_float_min(v, default=0.0):
+        """Parse "MM:SS" or plain integer minutes to a float."""
+        try:
+            s = str(v).strip()
+            if ':' in s:
+                mm, ss = s.split(':', 1)
+                return round(int(mm) + int(ss) / 60, 2)
+            return round(float(s), 2)
+        except:
+            return default
+
+    def _split_compound(v, default=0):
+        """
+        Split 'FGM-FGA' compound strings like "6-14" → (6, 14).
+        Handles negatives (plusMinus "-5") and plain integers safely.
+        """
+        s = str(v).strip()
+        # Find a '-' that is NOT the first character (not a leading minus)
+        idx = s.find('-', 1)
+        if idx > 0:
+            try:
+                return int(s[:idx]), int(s[idx + 1:])
+            except:
+                return default, default
+        try:
+            val = int(s)
+            return val, val   # single value — both sides the same
+        except:
+            return default, default
+
+    def _pm(v, default=0):
+        """Parse plus-minus: '+18' or '-5' → int."""
+        try:
+            return int(str(v).strip().lstrip('+'))
+        except:
+            return default
+
+    # ── Resolve date ───────────────────────────────────────────────────────
+    if date_str is None:
+        target = (datetime.utcnow() - _td(days=1)).date()
+    else:
+        ds = date_str.replace('-', '')
+        target = _date(int(ds[:4]), int(ds[4:6]), int(ds[6:8]))
+
+    date_fmt = target.strftime('%Y%m%d')   # YYYYMMDD for RapidAPI
+    date_iso = target.isoformat()           # YYYY-MM-DD for DB
+
+    summary = {
+        'date': date_iso, 'games_found': 0, 'games_processed': 0,
+        'players_upserted': 0, 'espn_id_updates': 0, 'errors': [],
+    }
+
+    if not _RAPIDAPI_KEY:
+        summary['errors'].append("RAPIDAPI_KEY not set")
+        return summary
+
+    # ── Step 1: Scoreboard for the date ────────────────────────────────────
+    try:
+        print(f"[Boxscore] GET scoreboard for {date_iso}")
+        resp = _http.get(
+            _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
+            headers={"x-rapidapi-key": _RAPIDAPI_KEY, "x-rapidapi-host": _RAPIDAPI_HOST},
+            params={"date": date_fmt},
+            timeout=12,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        summary['errors'].append(f"Scoreboard fetch failed: {e}")
+        return summary
+
+    resp_obj = data.get("response", data)
+    if isinstance(resp_obj, dict):
+        events = resp_obj.get("Events") or resp_obj.get("events") or []
+    elif isinstance(resp_obj, list):
+        events = resp_obj
+    else:
+        events = []
+
+    completed_events = [
+        ev for ev in events
+        if (ev.get("status") or {}).get("type", {}).get("completed") is True
+    ]
+    summary['games_found'] = len(events)
+    print(f"[Boxscore] {len(events)} games on {date_iso}, "
+          f"{len(completed_events)} completed")
+
+    if not completed_events:
+        print(f"[Boxscore] No completed games on {date_iso}")
+        return summary
+
+    conn = get_db_conn()
+    c    = conn.cursor()
+
+    for ev in completed_events:
+        event_id = str(ev.get("id", ""))
+        if not event_id:
+            continue
+
+        # ── Step 2: ESPN public boxscore ──────────────────────────────────
+        try:
+            bs = _http.get(
+                _ESPN_BOXSCORE_URL,
+                params={"event": event_id},
+                timeout=12,
+            )
+            bs.raise_for_status()
+            bs_data = bs.json()
+        except Exception as e:
+            msg = f"Boxscore fetch failed (event {event_id}): {e}"
+            print(f"[Boxscore] ⚠ {msg}")
+            summary['errors'].append(msg)
+            continue
+
+        # ── Step 3: Parse players ─────────────────────────────────────────
+        players_section = (
+            (bs_data.get("boxscore") or {}).get("players")
+            or bs_data.get("players")
+            or []
+        )
+
+        game_count = 0
+        for team_entry in players_section:
+            espn_team_id = str((team_entry.get("team") or {}).get("id", ""))
+            statistics   = team_entry.get("statistics") or []
+            if not statistics:
+                continue
+
+            stat_block = statistics[0]
+            keys       = stat_block.get("keys") or stat_block.get("labels") or []
+            athletes   = stat_block.get("athletes") or []
+
+            # Lower-cased key → index map for robust lookup
+            key_idx = {k.lower(): i for i, k in enumerate(keys)}
+
+            def _stat(key, default="0"):
+                idx = key_idx.get(key.lower())
+                if idx is not None and idx < len(stats_arr):
+                    v = stats_arr[idx]
+                    return str(v) if v is not None else default
+                return default
+
+            for ath in athletes:
+                athlete    = ath.get("athlete") or {}
+                espn_pid   = str(athlete.get("id", ""))
+                pname      = (athlete.get("displayName")
+                              or athlete.get("fullName") or "")
+                stats_arr  = ath.get("stats") or []
+
+                if not espn_pid or not pname or not stats_arr:
+                    continue
+
+                minutes    = _safe_float_min(_stat("minutes"))
+                points     = _safe_int(_stat("points"))
+                rebounds   = _safe_int(_stat("rebounds"))
+                assists    = _safe_int(_stat("assists"))
+                turnovers  = _safe_int(_stat("turnovers"))
+                steals     = _safe_int(_stat("steals"))
+                blocks     = _safe_int(_stat("blocks"))
+                oreb       = _safe_int(_stat("offensiveRebounds"))
+                dreb       = _safe_int(_stat("defensiveRebounds"))
+                fouls      = _safe_int(_stat("fouls"))
+                plus_minus = _pm(_stat("plusMinus", "0"))
+
+                # Compound stats split into made / attempted
+                fgm, fga   = _split_compound(
+                    _stat("fieldGoalsMade-fieldGoalsAttempted", "0-0"))
+                fg3m, fg3a = _split_compound(
+                    _stat("threePointFieldGoalsMade-threePointFieldGoalsAttempted", "0-0"))
+                ftm, fta   = _split_compound(
+                    _stat("freeThrowsMade-freeThrowsAttempted", "0-0"))
+
+                c.execute('''
+                    INSERT INTO player_game_stats
+                        (espn_game_id, game_date, espn_player_id, player_name,
+                         espn_team_id, season, minutes, points, rebounds, assists,
+                         steals, blocks, turnovers, fgm, fga, fg3m, fg3a,
+                         ftm, fta, oreb, dreb, fouls, plus_minus)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                            %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (espn_game_id, espn_player_id) DO UPDATE SET
+                        points     = EXCLUDED.points,
+                        rebounds   = EXCLUDED.rebounds,
+                        assists    = EXCLUDED.assists,
+                        steals     = EXCLUDED.steals,
+                        blocks     = EXCLUDED.blocks,
+                        turnovers  = EXCLUDED.turnovers,
+                        minutes    = EXCLUDED.minutes,
+                        fgm=EXCLUDED.fgm, fga=EXCLUDED.fga,
+                        fg3m=EXCLUDED.fg3m, fg3a=EXCLUDED.fg3a,
+                        ftm=EXCLUDED.ftm, fta=EXCLUDED.fta,
+                        oreb=EXCLUDED.oreb, dreb=EXCLUDED.dreb,
+                        fouls=EXCLUDED.fouls,
+                        plus_minus=EXCLUDED.plus_minus
+                ''', (event_id, date_iso, espn_pid, pname, espn_team_id,
+                      season, minutes, points, rebounds, assists,
+                      steals, blocks, turnovers, fgm, fga, fg3m, fg3a,
+                      ftm, fta, oreb, dreb, fouls, plus_minus))
+                game_count += 1
+                summary['players_upserted'] += 1
+
+                # ── Step 4: Back-fill espn_player_id on player_stats ──────
+                try:
+                    c.execute('''
+                        UPDATE player_stats
+                        SET espn_player_id = %s
+                        WHERE LOWER(player_name) = LOWER(%s)
+                          AND (espn_player_id IS NULL
+                               OR espn_player_id != %s)
+                    ''', (int(espn_pid), pname, int(espn_pid)))
+                    summary['espn_id_updates'] += c.rowcount
+                except Exception:
+                    pass  # espn_pid may not cast to int — skip silently
+
+        print(f"[Boxscore] Event {event_id}: {game_count} players processed")
+        summary['games_processed'] += 1
+
+    conn.commit()
+    conn.close()
+    print(f"[Boxscore] ✓ {date_iso} — {summary['games_processed']} games, "
+          f"{summary['players_upserted']} players, "
+          f"{summary['espn_id_updates']} ESPN ID updates")
+    return summary
+
 
 def refresh_playin_matchups(season: str = '2026') -> dict:
     """
@@ -1824,65 +2129,89 @@ async def startup():
     def _auto_sync_chain():
         from game_processor import sync_playin_results_from_api, sync_playoff_results_from_api
 
-        utc_hour = datetime.utcnow().hour
-        # Day Mode: 06:00–19:59 UTC  (09:01–22:59 IST, UTC+3)
-        is_day = 6 <= utc_hour < 20
-        mode   = "Day" if is_day else "Night"
+        utc_now  = datetime.utcnow()
+        utc_hour = utc_now.hour
+        # Day Mode: 06:00–19:59 UTC  (09:00–22:59 IST, UTC+3)
+        # Full chain runs only at hours 6, 12, 18 (every 6 h during the day).
+        # All other day-hours and all night-hours: boxscore-only.
+        is_day       = 6 <= utc_hour < 20
+        is_chain_run = utc_hour in (6, 12, 18)
+        mode         = "Day-Full" if (is_day and is_chain_run) else ("Day-BoxOnly" if is_day else "Night")
 
         print(f"[Auto-Sync] ── Starting scheduled sync (Mode: {mode}, "
-              f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC) ──")
+              f"{utc_now.strftime('%Y-%m-%d %H:%M')} UTC) ──")
 
-        if not is_day:
-            print("[Auto-Sync] Night Mode — skipping full chain (outside 06:00–19:59 UTC)")
+        # ── Boxscore sync runs on EVERY call (day + night) ──────────────
+        # Fetches both yesterday and today so recently-finished and
+        # still-live games are captured regardless of time of day.
+        for _bx_date in (None, datetime.utcnow().strftime('%Y-%m-%d')):
+            _label = "yesterday" if _bx_date is None else "today"
+            try:
+                bx = sync_daily_boxscores(date_str=_bx_date, season='2026')
+                print(f"[Auto-Sync] Boxscore ({_label}) — "
+                      f"games={bx.get('games_processed',0)} "
+                      f"players={bx.get('players_upserted',0)} "
+                      f"errors={len(bx.get('errors',[]))}")
+            except Exception as e:
+                print(f"[Auto-Sync] Boxscore ({_label}) ERROR: {type(e).__name__}: {e}")
+
+        if not is_chain_run:
+            print(f"[Auto-Sync] ── {mode} — boxscore-only run complete "
+                  f"({datetime.utcnow().strftime('%H:%M')} UTC) ──")
             return
 
+        # ── Full chain — only at 06:00, 12:00, 18:00 UTC ─────────────────
+
         # Step 1 — Standings + player stats
-        print("[Auto-Sync] Step 1/4 — Standings sync")
+        print("[Auto-Sync] Step 1/5 — Standings sync")
         try:
             standings_ok = _standings_sync_job()
-            print(f"[Auto-Sync] Step 1/4 done — standings_ok={standings_ok}")
+            print(f"[Auto-Sync] Step 1/5 done — standings_ok={standings_ok}")
         except Exception as e:
-            print(f"[Auto-Sync] Step 1/4 ERROR: {type(e).__name__}: {e}")
+            print(f"[Auto-Sync] Step 1/5 ERROR: {type(e).__name__}: {e}")
             standings_ok = False
 
         # Step 2 — Refresh play-in matchups from latest seeds
-        print("[Auto-Sync] Step 2/4 — refresh_playin_matchups")
+        print("[Auto-Sync] Step 2/5 — refresh_playin_matchups")
         try:
             pim = refresh_playin_matchups('2026')
-            print(f"[Auto-Sync] Step 2/4 done — "
+            print(f"[Auto-Sync] Step 2/5 done — "
                   f"updated={len(pim.get('updated',[]))} skipped={len(pim.get('skipped',[]))}")
         except Exception as e:
-            print(f"[Auto-Sync] Step 2/4 ERROR: {type(e).__name__}: {e}")
+            print(f"[Auto-Sync] Step 2/5 ERROR: {type(e).__name__}: {e}")
 
         # Step 3 — Sync finished Play-In games from RapidAPI scoreboard
-        print("[Auto-Sync] Step 3/4 — sync_playin_results_from_api")
+        print("[Auto-Sync] Step 3/5 — sync_playin_results_from_api")
         try:
             pi = sync_playin_results_from_api('2026')
-            print(f"[Auto-Sync] Step 3/4 done — "
+            print(f"[Auto-Sync] Step 3/5 done — "
                   f"processed={pi.get('processed',0)} promoted={pi.get('promoted',0)} "
                   f"errors={len(pi.get('errors',[]))}")
         except Exception as e:
-            print(f"[Auto-Sync] Step 3/4 ERROR: {type(e).__name__}: {e}")
+            print(f"[Auto-Sync] Step 3/5 ERROR: {type(e).__name__}: {e}")
 
         # Step 4 — Sync finished Playoff games from RapidAPI scoreboard
-        print("[Auto-Sync] Step 4/4 — sync_playoff_results_from_api")
+        print("[Auto-Sync] Step 4/5 — sync_playoff_results_from_api")
         try:
             po = sync_playoff_results_from_api('2026')
-            print(f"[Auto-Sync] Step 4/4 done — "
+            print(f"[Auto-Sync] Step 4/5 done — "
                   f"updated={po.get('updated',0)} completed={po.get('completed',0)} "
                   f"errors={len(po.get('errors',[]))}")
         except Exception as e:
-            print(f"[Auto-Sync] Step 4/4 ERROR: {type(e).__name__}: {e}")
+            print(f"[Auto-Sync] Step 4/5 ERROR: {type(e).__name__}: {e}")
 
-        print(f"[Auto-Sync] ── Chain complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
+        print(f"[Auto-Sync] ── Full chain complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
 
     _scheduler.add_job(
         _auto_sync_chain,
-        # Every 6 h — 06:00, 12:00, 18:00 UTC  (+ gate inside the job for night skip)
-        CronTrigger.from_crontab('0 */6 * * *'),
+        # Fires every hour.  The function itself gates on Day/Night:
+        #   Night (20:00–05:59 UTC = 23:00–08:59 IST): boxscore-only (lightweight)
+        #   Day  (06:00–19:59 UTC = 09:00–22:59 IST):  full 5-step chain every 6 h
+        #     → enforced by only running the full chain on hours 6, 12, 18
+        CronTrigger.from_crontab('0 * * * *'),
         id='auto_sync_chain',
         replace_existing=True,
-        misfire_grace_time=600,
+        misfire_grace_time=300,
         max_instances=1,
     )
 
@@ -3400,6 +3729,179 @@ async def admin_sync_playoffs_from_api(season: str = "2026"):
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         result = await loop.run_in_executor(pool, sync_playoff_results_from_api, season)
     return result
+
+
+@app.post("/api/admin/boxscore/sync")
+async def admin_sync_boxscores(date: str | None = None, season: str = "2026"):
+    """
+    Fetch and store per-game player boxscores for a given date.
+    date: 'YYYY-MM-DD' or 'YYYYMMDD'.  Defaults to yesterday UTC.
+    """
+    import concurrent.futures
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        result = await loop.run_in_executor(
+            pool, sync_daily_boxscores, date, season
+        )
+    return result
+
+
+@app.get("/api/players/top-performers")
+async def get_top_performers(date: str | None = None, limit: int = 5,
+                             season: str = "2026"):
+    """
+    Return the top N players by points from player_game_stats for a given date.
+    date: 'YYYY-MM-DD'.  Defaults to yesterday UTC.
+    """
+    if date is None:
+        date = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+    else:
+        # Normalise YYYYMMDD → YYYY-MM-DD
+        if len(date) == 8 and '-' not in date:
+            date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+
+    conn = get_db_conn()
+    c    = conn.cursor()
+    c.execute('''
+        SELECT pgs.espn_player_id, pgs.player_name, pgs.espn_team_id,
+               pgs.points, pgs.rebounds, pgs.assists, pgs.steals, pgs.blocks,
+               pgs.fgm, pgs.fga, pgs.fg3m, pgs.fg3a, pgs.ftm, pgs.fta,
+               pgs.minutes, pgs.turnovers, pgs.plus_minus,
+               t.abbreviation  AS team_abbr,
+               t.id            AS nba_team_id
+        FROM player_game_stats pgs
+        LEFT JOIN teams t
+               ON t.espn_team_id = pgs.espn_team_id
+               OR LOWER(t.abbreviation) = LOWER(pgs.espn_team_id)
+        WHERE pgs.game_date = %s
+          AND pgs.season    = %s
+        ORDER BY pgs.points DESC, pgs.rebounds DESC
+        LIMIT %s
+    ''', (date, season, limit))
+    rows = c.fetchall()
+    cols = [d[0] for d in c.description]
+
+    # Fallback: if the JOIN found nothing, try matching by ESPN numeric team ID
+    # stored on teams table (some tables store ESPN IDs as a string column)
+    if not rows:
+        c.execute('''
+            SELECT pgs.espn_player_id, pgs.player_name, pgs.espn_team_id,
+                   pgs.points, pgs.rebounds, pgs.assists, pgs.steals, pgs.blocks,
+                   pgs.fgm, pgs.fga, pgs.fg3m, pgs.fg3a, pgs.ftm, pgs.fta,
+                   pgs.minutes, pgs.turnovers, pgs.plus_minus,
+                   pgs.espn_team_id AS team_abbr,
+                   NULL             AS nba_team_id
+            FROM player_game_stats pgs
+            WHERE pgs.game_date = %s
+              AND pgs.season    = %s
+            ORDER BY pgs.points DESC, pgs.rebounds DESC
+            LIMIT %s
+        ''', (date, season, limit))
+        rows = c.fetchall()
+        cols = [d[0] for d in c.description]
+
+    conn.close()
+
+    players = []
+    for row in rows:
+        r = dict(zip(cols, row))
+        fga = r['fga'] or 0
+        fgm = r['fgm'] or 0
+        fg_pct = round(fgm / fga * 100, 1) if fga > 0 else 0.0
+        players.append({
+            'espn_player_id': r['espn_player_id'],
+            'player_name':    r['player_name'],
+            'team_abbr':      r['team_abbr'] or r['espn_team_id'],
+            'nba_team_id':    r['nba_team_id'],
+            'points':         r['points'],
+            'rebounds':       r['rebounds'],
+            'assists':        r['assists'],
+            'steals':         r['steals'],
+            'blocks':         r['blocks'],
+            'minutes':        round(r['minutes'] or 0, 1),
+            'fgm':            fgm,
+            'fga':            fga,
+            'fg_pct':         fg_pct,
+            'fg3m':           r['fg3m'],
+            'fg3a':           r['fg3a'],
+            'plus_minus':     r['plus_minus'],
+        })
+
+    return {'date': date, 'players': players, 'count': len(players)}
+
+
+@app.get("/api/players/today-games")
+async def get_today_games(date: str | None = None):
+    """
+    Fetch today's (or any date's) NBA scoreboard from RapidAPI.
+    Returns a list of games with status, teams, scores, and broadcast info.
+    date: 'YYYY-MM-DD'.  Defaults to today UTC.
+    """
+    import requests as _http
+
+    if date is None:
+        date = datetime.utcnow().strftime('%Y-%m-%d')
+
+    date_fmt = date.replace('-', '')   # YYYYMMDD for RapidAPI
+
+    if not _RAPIDAPI_KEY:
+        raise HTTPException(503, "RAPIDAPI_KEY not configured")
+
+    try:
+        resp = _http.get(
+            _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
+            headers={"x-rapidapi-key": _RAPIDAPI_KEY, "x-rapidapi-host": _RAPIDAPI_HOST},
+            params={"date": date_fmt},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        raise HTTPException(502, f"Scoreboard fetch failed: {e}")
+
+    resp_obj = data.get("response", data)
+    if isinstance(resp_obj, dict):
+        events = resp_obj.get("Events") or resp_obj.get("events") or []
+    elif isinstance(resp_obj, list):
+        events = resp_obj
+    else:
+        events = []
+
+    games = []
+    for ev in events:
+        status_obj  = (ev.get("status") or {})
+        status_type = status_obj.get("type") or {}
+        comps       = ev.get("competitions") or [{}]
+        competitors = comps[0].get("competitors") or []
+
+        home = next((c for c in competitors if c.get("homeAway") == "home"), {})
+        away = next((c for c in competitors if c.get("homeAway") == "away"), {})
+
+        def _team(c):
+            t = c.get("team") or {}
+            return {
+                "id":    t.get("id"),
+                "name":  t.get("displayName") or t.get("name"),
+                "abbr":  t.get("abbreviation"),
+                "score": c.get("score"),
+                "winner": bool(c.get("winner")),
+            }
+
+        games.append({
+            "id":         str(ev.get("id", "")),
+            "name":       ev.get("name") or ev.get("shortName"),
+            "date":       ev.get("date"),
+            "status":     status_type.get("description") or status_type.get("name"),
+            "completed":  bool(status_type.get("completed")),
+            "clock":      status_obj.get("displayClock"),
+            "period":     status_obj.get("period"),
+            "broadcast":  (comps[0].get("broadcast") or ""),
+            "venue":      ((comps[0].get("venue") or {}).get("fullName") or ""),
+            "home":       _team(home),
+            "away":       _team(away),
+        })
+
+    return {"date": date, "games": games, "count": len(games)}
 
 
 def _get_futures_lock() -> bool:

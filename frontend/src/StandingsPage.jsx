@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { RefreshCw, Trophy, WifiOff, AlertTriangle, Database, Wifi } from 'lucide-react';
+import { RefreshCw, Trophy, WifiOff, AlertTriangle, Database, Wifi, Star, Clock } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 
@@ -20,6 +20,207 @@ function useTimeSince(isoString) {
   return text;
 }
 
+// ── Recent Games section ────────────────────────────────────────────────────
+
+const GameStatusPill = ({ completed, status, clock, period }) => {
+  if (completed)
+    return <span className="px-2 py-0.5 rounded-full bg-slate-700/60 text-slate-400 text-[10px] font-bold">Final</span>;
+  if (period > 0)
+    return (
+      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 text-[10px] font-bold">
+        <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-ping inline-block" />
+        Q{period} {clock}
+      </span>
+    );
+  return <span className="px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-500 text-[10px] font-bold">{status || 'Upcoming'}</span>;
+};
+
+const GameCard = ({ game }) => {
+  const { home, away, completed, status, clock, period, broadcast, venue } = game;
+  const hasScore = home?.score != null && away?.score != null;
+  return (
+    <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <GameStatusPill completed={completed} status={status} clock={clock} period={period} />
+        {broadcast && <span className="text-[10px] text-slate-500 font-bold">{broadcast}</span>}
+      </div>
+
+      {/* Teams */}
+      {[away, home].map((team, i) => (
+        <div key={i} className={`flex items-center justify-between gap-2 ${team?.winner ? '' : ''}`}>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[10px] text-slate-500 w-7 shrink-0">{i === 0 ? 'AWY' : 'HME'}</span>
+            <span className={`text-sm font-bold truncate ${team?.winner ? 'text-white' : 'text-slate-300'}`}>
+              {team?.abbr || team?.name || '—'}
+            </span>
+          </div>
+          {hasScore && (
+            <span className={`text-sm tabular-nums shrink-0 ${team?.winner ? 'text-white font-black' : 'text-slate-400 font-bold'}`}>
+              {team?.score}
+            </span>
+          )}
+        </div>
+      ))}
+
+      {venue && <p className="text-[10px] text-slate-600 truncate">{venue}</p>}
+    </div>
+  );
+};
+
+const TopPerformerRow = ({ rank, player }) => {
+  const fgStr = player.fga > 0 ? `${player.fgm}/${player.fga}` : '—';
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 hover:bg-slate-800/30 transition-colors">
+      <span className="text-sm font-black text-slate-500 w-5 shrink-0">{rank}</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-bold text-white truncate">{player.player_name}</p>
+        <p className="text-[11px] text-slate-500">{player.team_abbr}</p>
+      </div>
+      <div className="flex items-center gap-4 text-sm tabular-nums shrink-0">
+        <div className="text-center">
+          <p className="font-black text-orange-400">{player.points}</p>
+          <p className="text-[10px] text-slate-500">PTS</p>
+        </div>
+        <div className="text-center hidden sm:block">
+          <p className="font-bold text-slate-300">{player.rebounds}</p>
+          <p className="text-[10px] text-slate-500">REB</p>
+        </div>
+        <div className="text-center hidden sm:block">
+          <p className="font-bold text-slate-300">{player.assists}</p>
+          <p className="text-[10px] text-slate-500">AST</p>
+        </div>
+        <div className="text-center hidden md:block">
+          <p className="font-bold text-slate-400 text-xs">{fgStr}</p>
+          <p className="text-[10px] text-slate-500">FG</p>
+        </div>
+        {player.plus_minus != null && (
+          <div className="text-center hidden md:block">
+            <p className={`font-bold text-xs ${player.plus_minus > 0 ? 'text-green-400' : player.plus_minus < 0 ? 'text-red-400' : 'text-slate-500'}`}>
+              {player.plus_minus > 0 ? `+${player.plus_minus}` : player.plus_minus}
+            </p>
+            <p className="text-[10px] text-slate-500">+/-</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const RecentGamesSection = () => {
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  const today     = new Date().toISOString().split('T')[0];
+
+  const { data: perfData, isLoading: perfLoading } = useQuery({
+    queryKey: ['topPerformers', yesterday],
+    queryFn:  () => api.getTopPerformers(yesterday, 5),
+    staleTime: 30 * 60 * 1000,
+  });
+
+  const { data: todayData, isLoading: todayLoading } = useQuery({
+    queryKey: ['todayGames', today],
+    queryFn:  () => api.getTodayGames(today),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+  });
+
+  const performers  = perfData?.players  ?? [];
+  const todayGames  = todayData?.games   ?? [];
+  const perfDate    = perfData?.date     ?? yesterday;
+  const hasPerf     = performers.length > 0;
+  const hasTodayGames = todayGames.length > 0;
+
+  if (!hasPerf && !hasTodayGames && !perfLoading && !todayLoading) return null;
+
+  const fmtDate = (d) => {
+    try { return new Date(d + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' }); }
+    catch { return d; }
+  };
+
+  return (
+    <div className="mb-8">
+      <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+        <Star className="w-5 h-5 text-orange-400" />
+        Recent Games
+      </h2>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* Yesterday top performers */}
+        <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden">
+          <div className="bg-gradient-to-r from-orange-600/80 to-orange-800/80 px-5 py-3 flex items-center justify-between">
+            <h3 className="text-sm font-black text-white flex items-center gap-2">
+              <Trophy className="w-4 h-4" />
+              Top Performers — {fmtDate(perfDate)}
+            </h3>
+            {perfLoading && <RefreshCw className="w-3.5 h-3.5 text-white/60 animate-spin" />}
+          </div>
+
+          {perfLoading ? (
+            <div className="divide-y divide-slate-800/60">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="px-4 py-3 flex items-center gap-3 animate-pulse">
+                  <div className="w-5 h-3 bg-slate-800 rounded shrink-0" />
+                  <div className="flex-1 space-y-1">
+                    <div className="h-3 bg-slate-800 rounded w-32" />
+                    <div className="h-2 bg-slate-800/60 rounded w-12" />
+                  </div>
+                  <div className="flex gap-4">
+                    {[1,2,3].map(j => <div key={j} className="w-8 h-6 bg-slate-800 rounded" />)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : hasPerf ? (
+            <div className="divide-y divide-slate-800/60">
+              {performers.map((p, i) => (
+                <TopPerformerRow key={p.espn_player_id} rank={i + 1} player={p} />
+              ))}
+            </div>
+          ) : (
+            <div className="px-5 py-8 text-center text-slate-500 text-sm">
+              No game data available for {fmtDate(perfDate)}
+            </div>
+          )}
+        </div>
+
+        {/* Today's games */}
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <Clock className="w-4 h-4 text-slate-400" />
+            <h3 className="text-sm font-black text-white">
+              Today's Games — {fmtDate(today)}
+            </h3>
+            {todayLoading && <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
+          </div>
+
+          {todayLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 space-y-3 animate-pulse">
+                  <div className="h-3 bg-slate-800 rounded w-16" />
+                  <div className="h-3 bg-slate-800 rounded w-full" />
+                  <div className="h-3 bg-slate-800 rounded w-full" />
+                </div>
+              ))}
+            </div>
+          ) : hasTodayGames ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {todayGames.map(g => <GameCard key={g.id} game={g} />)}
+            </div>
+          ) : (
+            <div className="bg-slate-900/50 border border-slate-800 rounded-xl px-5 py-8 text-center text-slate-500 text-sm">
+              No games scheduled for {fmtDate(today)}
+            </div>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+// ── Main StandingsPage ──────────────────────────────────────────────────────
+
 const StandingsPage = () => {
   const qc = useQueryClient();
   const [syncBanner, setSyncBanner] = useState(false);
@@ -33,7 +234,7 @@ const StandingsPage = () => {
     queryKey: ['standings'],
     queryFn: () => api.getStandings(),
     staleTime: 5 * 60 * 1000,
-    refetchInterval: 5 * 60 * 1000, // background refresh every 5 min
+    refetchInterval: 5 * 60 * 1000,
   });
 
   const standings          = data || { eastern: [], western: [] };
@@ -52,21 +253,14 @@ const StandingsPage = () => {
     if (!force) { qc.invalidateQueries({ queryKey: ['standings'] }); return; }
     setRefreshing(true);
     try {
-      // Step 1: Tell the server to kick off a background NBA API fetch.
-      // The endpoint returns immediately (sync runs in a daemon thread).
       await api.getStandings(true);
-
-      // Step 2: Wait for the background thread to finish fetching + writing to DB.
       await new Promise(r => setTimeout(r, 3500));
-
-      // Step 3: Re-fetch fresh data from the server and update the cache.
       const updated = await api.getStandings(false);
       qc.setQueryData(['standings'], updated);
-
       setSyncBanner(true);
       setTimeout(() => setSyncBanner(false), 5000);
     } catch {
-      // Network error — stale data is still shown from the cache
+      // stale data shown from cache
     } finally {
       setRefreshing(false);
     }
@@ -75,7 +269,6 @@ const StandingsPage = () => {
   const isLive = lastUpdated && (Date.now() - new Date(lastUpdated)) < 6 * 60 * 1000;
 
   const StatusBadge = ({ status, rank }) => {
-    // Use backend status when available; fall back to rank-based derivation
     const s = status || (rank <= 6 ? 'Playoff' : rank <= 10 ? 'Play-In' : 'Eliminated');
     if (s === 'Playoff')
       return <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] font-black">Playoff</span>;
@@ -160,7 +353,7 @@ const StandingsPage = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      {/* Static mode banner — shown after regular season ends (Apr 20 2026) */}
+      {/* Static mode banner */}
       {staticMode && (
         <div className="mb-4 px-4 py-3 bg-slate-700/40 border border-slate-600/40 rounded-xl text-xs text-slate-300 font-bold flex items-center gap-2">
           <Trophy className="w-3 h-3 text-orange-400 shrink-0" />
@@ -168,7 +361,6 @@ const StandingsPage = () => {
         </div>
       )}
 
-      {/* Sync-triggered banner */}
       {syncBanner && (
         <div className="mb-4 px-4 py-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-400 font-bold flex items-center gap-2">
           <RefreshCw className="w-3 h-3 animate-spin" />
@@ -176,7 +368,6 @@ const StandingsPage = () => {
         </div>
       )}
 
-      {/* Sync failure warning */}
       {consecutiveFails > 0 && !staticMode && (
         <div className="mb-4 px-4 py-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-400 font-bold flex items-start gap-2">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
@@ -195,7 +386,6 @@ const StandingsPage = () => {
         <div>
           <h1 className="text-2xl md:text-4xl font-black text-white mb-1">NBA Standings</h1>
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Live indicator */}
             <div className="flex items-center gap-1.5">
               {isLive ? (
                 <>
@@ -213,7 +403,6 @@ const StandingsPage = () => {
               )}
             </div>
 
-            {/* Data source badge */}
             {dataSource && (
               <span className={`flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full ${
                 dataSource === 'rapidapi'  ? 'bg-green-500/15 text-green-400' :
@@ -259,6 +448,10 @@ const StandingsPage = () => {
         </button>
       </div>
 
+      {/* Recent Games — top performers + today's schedule */}
+      <RecentGamesSection />
+
+      {/* Conference standings tables */}
       {loading ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {[{ conf: 'Eastern', color: 'from-blue-600 to-blue-800' }, { conf: 'Western', color: 'from-red-600 to-red-800' }].map(({ conf, color }) => (
