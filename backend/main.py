@@ -48,24 +48,22 @@ _RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Picks <noreply@nba-playoffs-2
 # APScheduler instance — created in startup(), referenced in shutdown()
 _scheduler = None
 
-# Headers that NBA stats.nba.com requires to not block requests
+# Headers that stats.nba.com requires to not block requests.
+# NOTE: Accept-Encoding is intentionally omitted — passing it on cloud servers
+# (Railway/Heroku) causes the library to receive compressed bytes it cannot decode,
+# resulting in silent JSON parse failures. Let requests handle encoding negotiation.
 _NBA_HEADERS = {
     'Host': 'stats.nba.com',
-    'User-Agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/120.0.0.0 Safari/537.36'
-    ),
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
     'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'x-nba-stats-origin': 'stats',
-    'x-nba-stats-token': 'true',
     'Origin': 'https://www.nba.com',
     'Referer': 'https://www.nba.com/',
     'Connection': 'keep-alive',
+    'x-nba-stats-origin': 'stats',
+    'x-nba-stats-token': 'true',
 }
-_NBA_TIMEOUT = 20  # seconds — generous timeout for slow NBA API responses
+_NBA_TIMEOUT = 30  # seconds — increased for Railway→NBA API latency
 
 # Hardcoded standings (2025-26 season, as of 2026-03-26).
 # Used instantly on startup so users never wait for the NBA API.
@@ -361,40 +359,47 @@ def sync_teams():
 def _fetch_standings_from_api():
     """
     Fetch standings from stats.nba.com with up to 3 attempts and exponential
-    backoff (2s, 4s).  Raises the last exception if all attempts fail.
+    backoff (2 s, 4 s).  Raises the last exception if all attempts fail.
+
+    Headers notes:
+    - Accept-Encoding is omitted on purpose: cloud IPs (Railway) receive
+      compressed responses that nba_api cannot always decode, causing silent
+      JSON failures.  Omitting it forces plain text responses.
+    - timeout=30 covers Railway's higher outbound latency.
     """
     last_err = None
     for attempt in range(1, 4):
         try:
-            print(f"[Standings] NBA API fetch attempt {attempt}/3…")
+            print(f"[Standings] NBA API fetch attempt {attempt}/3 "
+                  f"(season=2025-26, timeout={_NBA_TIMEOUT}s)…")
             standings_api = leaguestandingsv3.LeagueStandingsV3(
                 season='2025-26',
                 season_type_all_star='Regular Season',
                 headers=_NBA_HEADERS,
                 timeout=_NBA_TIMEOUT,
+                proxy=None,   # never route through a proxy — direct connection only
             )
             raw = standings_api.get_dict()
-            print(f"[Standings] NBA API fetch succeeded on attempt {attempt}")
+            print(f"[Standings] ✓ NBA API responded on attempt {attempt}")
             break  # success
         except Exception as e:
             last_err = e
-            # Try to surface HTTP status + body to diagnose rate-limiting / IP blocks
+            # Surface HTTP status + body for every failure so admin panel can show it
             status_code = None
             resp_text   = None
             try:
-                # requests.exceptions.HTTPError carries a response object
                 resp = getattr(e, 'response', None)
                 if resp is not None:
                     status_code = resp.status_code
-                    resp_text   = resp.text[:400]   # first 400 chars to avoid log spam
+                    resp_text   = resp.text[:600]
             except Exception:
                 pass
             if status_code:
-                print(f"[Standings] Attempt {attempt} failed — HTTP {status_code}: {resp_text}")
+                print(f"[Standings] ✗ Attempt {attempt} — HTTP {status_code}: {resp_text}")
             else:
-                print(f"[Standings] Attempt {attempt} failed — {type(e).__name__}: {e}")
+                print(f"[Standings] ✗ Attempt {attempt} — {type(e).__name__}: {e}")
             if attempt < 3:
-                backoff = 2 ** attempt  # 2s, 4s
+                backoff = 2 ** attempt  # 2 s, 4 s
                 print(f"[Standings] Retrying in {backoff}s…")
                 time.sleep(backoff)
     else:
@@ -780,6 +785,17 @@ def _standings_sync_job():
 
     if not standings_ok:
         print(f"[Standings] ✗ Sync failed (consecutive failures: {_sync_status['consecutive_failures']})")
+        # Best-effort: if the in-memory cache is empty, try to warm it from DB
+        # so at least the most recent persisted snapshot is served instead of hardcoded
+        if not _standings_cache.get("data"):
+            db_rows = _load_standings_from_db()
+            if db_rows:
+                now = datetime.now()
+                _standings_cache["data"]       = db_rows
+                _standings_cache["fetched_at"] = now
+                _standings_cache["expires"]    = now + timedelta(hours=1)
+                _sync_status["source"]         = "database"
+                print(f"[Standings] Warmed cache from DB ({len(db_rows)} rows) after API failure")
 
     # ── 2. Player stats (independent — standings failure doesn't block this) ──
     _sync_player_stats_job()
