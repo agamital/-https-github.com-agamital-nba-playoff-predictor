@@ -947,6 +947,10 @@ def _fetch_boxscore_primary(espn_game_id: str) -> list:
     resp.raise_for_status()
     data = resp.json()
 
+    # Log top-level keys to help diagnose response structure changes
+    top_keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+    print(f"[Primary /nbabox] game={espn_game_id} top-level keys: {top_keys}")
+
     def _split_compound(val: str):
         """Parse 'made-attempted' string → (int made, int attempted)."""
         try:
@@ -963,8 +967,16 @@ def _fetch_boxscore_primary(espn_game_id: str) -> list:
         try: return float(str(v or d).replace(":", "").strip() or d)
         except: return d
 
+    # Handle both flat {"players": [...]} and nested {"boxscore": {"players": [...]}}
+    raw_player_groups = (
+        data.get("players")
+        or (data.get("boxscore") or {}).get("players")
+        or []
+    )
+    print(f"[Primary /nbabox] game={espn_game_id} player_groups={len(raw_player_groups)}")
+
     players = []
-    for team_group in data.get("players", []):
+    for team_group in raw_player_groups:
         team_obj    = team_group.get("team", {})
         team_abbr   = (team_obj.get("abbreviation") or "").upper()
         espn_team_id = str(team_obj.get("id", ""))
@@ -2003,11 +2015,19 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
 
     completed_events = [ev for ev in normalized_events if ev.get("completed")]
     summary['games_found'] = len(normalized_events)
+
+    # Log each game's status to surface timezone/completion issues
+    for _ev in normalized_events:
+        print(f"[Boxscore]   game={_ev.get('id')} completed={_ev.get('completed')} "
+              f"status={_ev.get('status')!r} "
+              f"{(_ev.get('away') or {}).get('abbr','?')} @ "
+              f"{(_ev.get('home') or {}).get('abbr','?')}")
+
     print(f"[Boxscore] {len(normalized_events)} games on {date_iso} via {scoreboard_source}, "
           f"{len(completed_events)} completed")
 
     if not completed_events:
-        print(f"[Boxscore] No completed games on {date_iso}")
+        print(f"[Boxscore] No completed games on {date_iso} — skipping boxscore fetch")
         return summary
 
     conn = get_db_conn()
@@ -4260,6 +4280,45 @@ async def admin_sync_boxscores(date: str | None = None, season: str = "2026"):
             pool, sync_daily_boxscores, date, season
         )
     return result
+
+
+@app.get("/api/admin/debug/game-stats")
+async def debug_game_stats(date: str | None = None, season: str = "2026"):
+    """
+    Diagnostic: show what's in player_game_stats for a date (or recent 7 days).
+    Returns row counts per date, unique game IDs, and sample players.
+    """
+    conn = get_db_conn()
+    c    = conn.cursor()
+
+    # Dates with data in the last 14 days
+    c.execute('''
+        SELECT game_date, COUNT(*) AS rows, COUNT(DISTINCT espn_game_id) AS games
+        FROM player_game_stats
+        WHERE season = %s
+          AND game_date >= CURRENT_DATE - INTERVAL '14 days'
+        GROUP BY game_date
+        ORDER BY game_date DESC
+    ''', (season,))
+    recent = [{"date": str(r[0]), "rows": r[1], "games": r[2]} for r in c.fetchall()]
+
+    # If a specific date requested, show game IDs and top players for that date
+    detail = []
+    if date:
+        if len(date) == 8 and '-' not in date:
+            date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+        c.execute('''
+            SELECT espn_game_id, team_abbr, player_name, points
+            FROM player_game_stats
+            WHERE game_date = %s AND season = %s
+            ORDER BY points DESC
+            LIMIT 20
+        ''', (date, season))
+        detail = [{"game": r[0], "team": r[1], "player": r[2], "pts": r[3]}
+                  for r in c.fetchall()]
+
+    conn.close()
+    return {"recent_dates": recent, "date_detail": detail, "queried_date": date}
 
 
 @app.get("/api/players/top-performers")
