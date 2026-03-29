@@ -48,15 +48,38 @@ _RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Picks <noreply@nba-playoffs-2
 # APScheduler instance — created in startup(), referenced in shutdown()
 _scheduler = None
 
-# ── RapidAPI (API-NBA) — primary data source ────────────────────────────────
-# Set RAPIDAPI_KEY in Railway environment variables.
-# Free plan: 100 requests/day — more than enough for 6-hour cron cycles.
-_RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
+# ── RapidAPI — multi-source data strategy ──────────────────────────────────
+# PRIMARY:   api-basketball-nba.p.rapidapi.com  (1,500 calls/day)
+#            Endpoints: /nbastandings  /nbascoreboard  /nbabox
+# SECONDARY: nba-api-free-data.p.rapidapi.com  (fallback, monthly quota)
+#            Endpoints: /nba-league-standings  /nba-scoreboard-by-date
+# Set RAPIDAPI_KEY in Railway environment variables (shared by both hosts).
+_RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
+
+# Primary host (api-basketball-nba) — overridable via env var
+_RAPIDAPI_HOST_PRIMARY   = os.getenv("RAPIDAPI_HOST_PRIMARY",
+                                      "api-basketball-nba.p.rapidapi.com")
+# Secondary host (legacy nba-api-free-data)
+_RAPIDAPI_HOST_SECONDARY = "nba-api-free-data.p.rapidapi.com"
+# Backward-compat alias used by older call sites
+_RAPIDAPI_HOST = _RAPIDAPI_HOST_SECONDARY
+
+# Primary API endpoints
+_RAPIDAPI_PRIMARY_STANDINGS_URL   = (
+    f"https://{_RAPIDAPI_HOST_PRIMARY}/nbastandings"
+)
+_RAPIDAPI_PRIMARY_SCOREBOARD_URL  = (
+    f"https://{_RAPIDAPI_HOST_PRIMARY}/nbascoreboard"
+)
+_RAPIDAPI_PRIMARY_BOXSCORE_URL    = (
+    f"https://{_RAPIDAPI_HOST_PRIMARY}/nbabox"
+)
+
+# Secondary API endpoints (legacy)
 _RAPIDAPI_URL  = "https://nba-api-free-data.p.rapidapi.com/nba-league-standings?year=2026"
-_RAPIDAPI_HOST = "nba-api-free-data.p.rapidapi.com"
-# Date-based scoreboard: /nba-scoreboard-by-date?date=YYYYMMDD
 _RAPIDAPI_SCOREBOARD_BY_DATE_URL = "https://nba-api-free-data.p.rapidapi.com/nba-scoreboard-by-date"
-# ESPN public summary API — no key needed, returns full boxscore
+
+# ESPN public summary API — no key needed, returns full boxscore (kept as tertiary)
 _ESPN_BOXSCORE_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
 
 # ── Fallback: direct stats.nba.com request (used when RAPIDAPI_KEY not set) ──
@@ -728,6 +751,291 @@ def _fetch_standings_from_rapidapi() -> list:
     return standings
 
 
+def _fetch_standings_from_primary_api() -> list:
+    """
+    Fetch 2025-26 NBA standings from PRIMARY API (api-basketball-nba.p.rapidapi.com).
+    Endpoint: GET /nbastandings?year=2026&group=conference
+    Response shape: ESPN-format with children[conference].standings.entries[]
+      Each entry: { team: {id, abbreviation, displayName},
+                    stats: [{name, value}, ...] }
+    Stat names used: wins, losses, winPercent, gamesBehind, playoffSeed
+    """
+    import requests as _http
+
+    if not _RAPIDAPI_KEY:
+        raise RuntimeError("RAPIDAPI_KEY not set")
+
+    headers = {
+        "x-rapidapi-key":  _RAPIDAPI_KEY,
+        "x-rapidapi-host": _RAPIDAPI_HOST_PRIMARY,
+    }
+    url = _RAPIDAPI_PRIMARY_STANDINGS_URL
+    print(f"[Primary] GET {url}?year=2026&group=conference")
+    resp = _http.get(url, headers=headers, params={"year": "2026", "group": "conference"},
+                     timeout=12)
+    print(f"[Primary] HTTP {resp.status_code}")
+    resp.raise_for_status()
+    data = resp.json()
+
+    def _safe_int(v, d=0):
+        try: return int(v or d)
+        except: return d
+
+    def _safe_float(v, d=0.0):
+        try: return float(v or d)
+        except: return d
+
+    standings = []
+    for conf_block in data.get("children", []):
+        conf_abbr = conf_block.get("abbreviation", "")  # "East" or "West"
+        if "east" in conf_abbr.lower():
+            conf = "East"
+        elif "west" in conf_abbr.lower():
+            conf = "West"
+        else:
+            continue
+
+        entries = conf_block.get("standings", {}).get("entries", [])
+        for entry in entries:
+            team_obj = entry.get("team", {})
+            team_name = (team_obj.get("displayName") or
+                         f"{team_obj.get('location','')} {team_obj.get('name','')}".strip())
+            abbr      = team_obj.get("abbreviation", "")
+            espn_tid  = team_obj.get("id", "")
+
+            stats_map = {
+                s["name"].lower(): s.get("value")
+                for s in entry.get("stats", [])
+                if s.get("name")
+            }
+
+            wins      = _safe_int(stats_map.get("wins"))
+            losses    = _safe_int(stats_map.get("losses"))
+            win_pct   = _safe_float(stats_map.get("winpercent"))
+            gb_raw    = stats_map.get("gamesbehind", "0")
+            gb        = 0.0 if str(gb_raw) in ("-", "", "None") else _safe_float(gb_raw)
+            seed      = _safe_int(stats_map.get("playoffseed") or
+                                  stats_map.get("seed") or
+                                  stats_map.get("conferencerank"), 99)
+
+            if win_pct == 0.0 and (wins + losses) > 0:
+                win_pct = round(wins / (wins + losses), 3)
+
+            # Map ESPN team ID → NBA team ID via abbreviation lookup
+            team_id = _APINBA_NAME_TO_ID.get(team_name) or _APINBA_NAME_TO_ID.get(abbr, 0)
+
+            standings.append({
+                "team_id":      team_id,
+                "team_name":    team_name,
+                "conference":   conf,
+                "wins":         wins,
+                "losses":       losses,
+                "win_pct":      win_pct,
+                "conf_rank":    seed,
+                "playoff_rank": seed,
+                "games_back":   gb,
+            })
+
+    # Validate
+    bad = [t for t in standings if any(kw in t["team_name"].lower()
+                                       for kw in _ALLSTAR_KEYWORDS)]
+    if bad:
+        raise ValueError(f"Primary API returned bad data: '{bad[0]['team_name']}'")
+    if len(standings) < 20:
+        raise ValueError(f"Primary API: only {len(standings)} teams parsed (expected 30)")
+
+    e1 = next((t for t in standings if t["conference"] == "East" and t["conf_rank"] == 1), None)
+    w1 = next((t for t in standings if t["conference"] == "West" and t["conf_rank"] == 1), None)
+    print(f"[Primary] ✓ {len(standings)} teams — "
+          f"#1 East: {e1['team_name'] if e1 else '?'}  "
+          f"#1 West: {w1['team_name'] if w1 else '?'}")
+    return standings
+
+
+def _fetch_scoreboard_primary(date_str: str) -> list:
+    """
+    Fetch game list from PRIMARY API: GET /nbascoreboard?year=YYYY&month=MM&day=DD
+    Returns a list of event dicts compatible with the existing scoreboard pipeline:
+      [ { id, completed, status, clock, period, home, away, broadcast }, ... ]
+    """
+    import requests as _http
+
+    if not _RAPIDAPI_KEY:
+        return []
+
+    target = datetime.strptime(date_str, "%Y-%m-%d") if "-" in date_str \
+             else datetime.strptime(date_str, "%Y%m%d")
+
+    headers = {
+        "x-rapidapi-key":  _RAPIDAPI_KEY,
+        "x-rapidapi-host": _RAPIDAPI_HOST_PRIMARY,
+    }
+    params = {
+        "year":  target.strftime("%Y"),
+        "month": target.strftime("%m"),
+        "day":   target.strftime("%d"),
+    }
+    print(f"[Primary] GET /nbascoreboard {date_str}")
+    resp = _http.get(_RAPIDAPI_PRIMARY_SCOREBOARD_URL, headers=headers,
+                     params=params, timeout=12)
+    resp.raise_for_status()
+    data = resp.json()
+
+    events = data.get("events", [])
+    result = []
+    for ev in events:
+        comps  = ev.get("competitions") or [{}]
+        comp   = comps[0]
+        teams  = comp.get("competitors") or []
+        home_c = next((c for c in teams if c.get("homeAway") == "home"), {})
+        away_c = next((c for c in teams if c.get("homeAway") == "away"), {})
+
+        def _tm(c):
+            t = c.get("team") or {}
+            return {
+                "id":     t.get("id"),
+                "abbr":   t.get("abbreviation"),
+                "name":   t.get("displayName") or t.get("name"),
+                "score":  c.get("score"),
+                "winner": bool(c.get("winner")),
+            }
+
+        stype = (ev.get("status") or {}).get("type") or {}
+        result.append({
+            "id":        str(ev.get("id", "")),
+            "name":      ev.get("name") or ev.get("shortName"),
+            "date":      ev.get("date"),
+            "completed": bool(stype.get("completed")),
+            "status":    stype.get("description") or stype.get("name"),
+            "clock":     (ev.get("status") or {}).get("displayClock"),
+            "period":    (ev.get("status") or {}).get("period"),
+            "home":      _tm(home_c),
+            "away":      _tm(away_c),
+            "broadcast": comp.get("broadcast") or "",
+            "venue":     ((comp.get("venue") or {}).get("fullName") or ""),
+        })
+
+    print(f"[Primary] /nbascoreboard {date_str}: {len(result)} games, "
+          f"{sum(1 for e in result if e['completed'])} completed")
+    return result
+
+
+def _fetch_boxscore_primary(espn_game_id: str) -> list:
+    """
+    Fetch per-player boxscore from PRIMARY API: GET /nbabox?id={espn_game_id}
+    Stat labels: ['MIN','PTS','FG','3PT','FT','REB','AST','TO','STL','BLK',
+                  'OREB','DREB','PF','+/-']
+    Compound stats (FG/3PT/FT) are in "made-attempted" format, e.g. "7-21".
+
+    Returns list of player dicts matching our player_game_stats schema:
+      [ { espn_pid, player_name, team_abbr, espn_team_id,
+          points, rebounds, assists, steals, blocks, turnovers,
+          minutes, fgm, fga, fg3m, fg3a, ftm, fta, oreb, dreb,
+          fouls, plus_minus }, ... ]
+    """
+    import requests as _http
+
+    if not _RAPIDAPI_KEY:
+        return []
+
+    headers = {
+        "x-rapidapi-key":  _RAPIDAPI_KEY,
+        "x-rapidapi-host": _RAPIDAPI_HOST_PRIMARY,
+    }
+    resp = _http.get(_RAPIDAPI_PRIMARY_BOXSCORE_URL, headers=headers,
+                     params={"id": espn_game_id}, timeout=12)
+    resp.raise_for_status()
+    data = resp.json()
+
+    def _split_compound(val: str):
+        """Parse 'made-attempted' string → (int made, int attempted)."""
+        try:
+            parts = str(val or "0-0").split("-")
+            return int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+        except (ValueError, IndexError):
+            return 0, 0
+
+    def _safe_int(v, d=0):
+        try: return int(v or d)
+        except: return d
+
+    def _safe_float(v, d=0.0):
+        try: return float(str(v or d).replace(":", "").strip() or d)
+        except: return d
+
+    players = []
+    for team_group in data.get("players", []):
+        team_obj    = team_group.get("team", {})
+        team_abbr   = (team_obj.get("abbreviation") or "").upper()
+        espn_team_id = str(team_obj.get("id", ""))
+
+        for stat_block in team_group.get("statistics", []):
+            labels   = stat_block.get("labels", [])
+            label_idx = {lbl.upper(): i for i, lbl in enumerate(labels)}
+            athletes = stat_block.get("athletes", [])
+
+            for ath in athletes:
+                athlete   = ath.get("athlete") or {}
+                espn_pid  = str(athlete.get("id", ""))
+                pname     = athlete.get("displayName") or athlete.get("fullName") or ""
+                stats_arr = ath.get("stats") or []
+
+                if not espn_pid or not pname or not stats_arr:
+                    continue
+
+                def _get(label, default="0"):
+                    idx = label_idx.get(label.upper())
+                    if idx is not None and idx < len(stats_arr):
+                        v = stats_arr[idx]
+                        return str(v) if v is not None else default
+                    return default
+
+                # Parse minutes — may be "31" or "31:23"
+                min_raw = _get("MIN", "0")
+                try:
+                    if ":" in min_raw:
+                        parts = min_raw.split(":")
+                        minutes = float(parts[0]) + float(parts[1]) / 60
+                    else:
+                        minutes = float(min_raw or 0)
+                except (ValueError, AttributeError):
+                    minutes = 0.0
+
+                # Parse plus-minus (+14 or -5 string)
+                pm_raw = _get("+/-", "0")
+                try:
+                    plus_minus = int(str(pm_raw).replace("+", "") or 0)
+                except ValueError:
+                    plus_minus = 0
+
+                fgm,  fga  = _split_compound(_get("FG",  "0-0"))
+                fg3m, fg3a = _split_compound(_get("3PT", "0-0"))
+                ftm,  fta  = _split_compound(_get("FT",  "0-0"))
+
+                players.append({
+                    "espn_pid":     espn_pid,
+                    "player_name":  pname,
+                    "team_abbr":    team_abbr,
+                    "espn_team_id": espn_team_id,
+                    "points":       _safe_int(_get("PTS")),
+                    "rebounds":     _safe_int(_get("REB")),
+                    "assists":      _safe_int(_get("AST")),
+                    "steals":       _safe_int(_get("STL")),
+                    "blocks":       _safe_int(_get("BLK")),
+                    "turnovers":    _safe_int(_get("TO")),
+                    "minutes":      round(minutes, 2),
+                    "fgm": fgm, "fga": fga,
+                    "fg3m": fg3m, "fg3a": fg3a,
+                    "ftm": ftm, "fta": fta,
+                    "oreb":       _safe_int(_get("OREB")),
+                    "dreb":       _safe_int(_get("DREB")),
+                    "fouls":      _safe_int(_get("PF")),
+                    "plus_minus": plus_minus,
+                })
+
+    return players
+
+
 def _parse_standings_result_sets(result_sets: list) -> list:
     """
     Parse raw NBA API resultSets into our internal standings list.
@@ -1151,15 +1459,28 @@ def _standings_sync_job():
     used_source = None
 
     if _RAPIDAPI_KEY:
+        # ── Source 1: Primary API (api-basketball-nba) ──
         try:
-            print(f"[Standings] Using RapidAPI (key configured)")
-            fresh       = _fetch_standings_from_rapidapi()
-            used_source = "rapidapi"
-        except Exception as _rapid_err:
-            import traceback as _tb
-            print(f"[Standings] RapidAPI failed ({type(_rapid_err).__name__}: "
-                  f"{str(_rapid_err)[:200]}) — falling back to stats.nba.com")
-            print(f"[Standings] RapidAPI traceback:\n{_tb.format_exc()}")
+            print(f"[Standings] Trying Primary API ({_RAPIDAPI_HOST_PRIMARY})")
+            fresh       = _fetch_standings_from_primary_api()
+            used_source = "primary_api"
+            print(f"[Standings] ✓ Source: Primary API")
+        except Exception as _primary_err:
+            print(f"[Standings] Primary API failed ({type(_primary_err).__name__}: "
+                  f"{str(_primary_err)[:200]}) — trying Secondary API")
+
+        # ── Source 2: Secondary API (nba-api-free-data) ──
+        if fresh is None:
+            try:
+                print(f"[Standings] Trying Secondary API ({_RAPIDAPI_HOST_SECONDARY})")
+                fresh       = _fetch_standings_from_rapidapi()
+                used_source = "rapidapi"
+                print(f"[Standings] ✓ Source: Secondary API")
+            except Exception as _rapid_err:
+                import traceback as _tb
+                print(f"[Standings] Secondary API failed ({type(_rapid_err).__name__}: "
+                      f"{str(_rapid_err)[:200]}) — falling back to stats.nba.com")
+                print(f"[Standings] Secondary traceback:\n{_tb.format_exc()}")
 
     if fresh is None:
         try:
@@ -1624,35 +1945,65 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
         summary['errors'].append("RAPIDAPI_KEY not set")
         return summary
 
-    # ── Step 1: Scoreboard for the date ────────────────────────────────────
+    # ── Step 1: Scoreboard — Primary API first, Secondary fallback ─────────
+    normalized_events = []   # list of dicts from _fetch_scoreboard_primary()
+    scoreboard_source = "none"
+
     try:
-        print(f"[Boxscore] GET scoreboard for {date_iso}")
-        resp = _http.get(
-            _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
-            headers={"x-rapidapi-key": _RAPIDAPI_KEY, "x-rapidapi-host": _RAPIDAPI_HOST},
-            params={"date": date_fmt},
-            timeout=12,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        summary['errors'].append(f"Scoreboard fetch failed: {e}")
-        return summary
+        print(f"[Boxscore] Step 1: scoreboard via Primary API ({date_iso})")
+        normalized_events = _fetch_scoreboard_primary(date_iso)
+        scoreboard_source = "primary_api"
+    except Exception as _sb_primary_err:
+        print(f"[Boxscore] Primary scoreboard failed: {_sb_primary_err} — trying Secondary")
 
-    resp_obj = data.get("response", data)
-    if isinstance(resp_obj, dict):
-        events = resp_obj.get("Events") or resp_obj.get("events") or []
-    elif isinstance(resp_obj, list):
-        events = resp_obj
-    else:
-        events = []
+    if not normalized_events:
+        try:
+            print(f"[Boxscore] Step 1b: scoreboard via Secondary API ({date_fmt})")
+            resp = _http.get(
+                _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
+                headers={"x-rapidapi-key": _RAPIDAPI_KEY, "x-rapidapi-host": _RAPIDAPI_HOST_SECONDARY},
+                params={"date": date_fmt},
+                timeout=12,
+            )
+            resp.raise_for_status()
+            data     = resp.json()
+            resp_obj = data.get("response", data)
+            raw_events = (
+                resp_obj.get("Events") or resp_obj.get("events") or []
+                if isinstance(resp_obj, dict) else
+                (resp_obj if isinstance(resp_obj, list) else [])
+            )
+            # Normalize secondary events into same shape as primary
+            for ev in raw_events:
+                stype = (ev.get("status") or {}).get("type") or {}
+                comps = ev.get("competitions") or [{}]
+                comp  = comps[0]
+                teams = comp.get("competitors") or []
+                home_c = next((c for c in teams if c.get("homeAway") == "home"), {})
+                away_c = next((c for c in teams if c.get("homeAway") == "away"), {})
+                def _tm2(c):
+                    t = c.get("team") or {}
+                    return {"id": t.get("id"), "abbr": t.get("abbreviation"),
+                            "name": t.get("displayName") or t.get("name"),
+                            "score": c.get("score"), "winner": bool(c.get("winner"))}
+                normalized_events.append({
+                    "id":        str(ev.get("id", "")),
+                    "completed": bool(stype.get("completed")),
+                    "status":    stype.get("description") or stype.get("name"),
+                    "clock":     (ev.get("status") or {}).get("displayClock"),
+                    "period":    (ev.get("status") or {}).get("period"),
+                    "home":      _tm2(home_c),
+                    "away":      _tm2(away_c),
+                    "broadcast": comp.get("broadcast") or "",
+                })
+            scoreboard_source = "secondary_api"
+        except Exception as e:
+            summary['errors'].append(f"Scoreboard fetch failed (both APIs): {e}")
+            return summary
 
-    completed_events = [
-        ev for ev in events
-        if (ev.get("status") or {}).get("type", {}).get("completed") is True
-    ]
-    summary['games_found'] = len(events)
-    print(f"[Boxscore] {len(events)} games on {date_iso}, "
+    completed_events = [ev for ev in normalized_events if ev.get("completed")]
+    summary['games_found'] = len(normalized_events)
+    print(f"[Boxscore] {len(normalized_events)} games on {date_iso} via {scoreboard_source}, "
           f"{len(completed_events)} completed")
 
     if not completed_events:
@@ -1667,80 +2018,110 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
         if not event_id:
             continue
 
-        # ── Step 2: ESPN public boxscore ──────────────────────────────────
+        # ── Step 2: Boxscore — Primary API first, ESPN direct fallback ───────
+        parsed_players = []
+        boxscore_source = "none"
+
+        # 2a: Try Primary API (/nbabox)
         try:
-            bs = _http.get(
-                _ESPN_BOXSCORE_URL,
-                params={"event": event_id},
-                timeout=12,
-            )
-            bs.raise_for_status()
-            bs_data = bs.json()
-        except Exception as e:
-            msg = f"Boxscore fetch failed (event {event_id}): {e}"
-            print(f"[Boxscore] ⚠ {msg}")
-            summary['errors'].append(msg)
-            continue
+            parsed_players  = _fetch_boxscore_primary(event_id)
+            boxscore_source = "primary_api"
+            print(f"[Boxscore] Game {event_id}: {len(parsed_players)} players via Primary API")
+        except Exception as _bx_primary_err:
+            print(f"[Boxscore] Primary boxscore failed (game {event_id}): "
+                  f"{_bx_primary_err} — falling back to ESPN direct")
 
-        # ── Step 3: Parse players ─────────────────────────────────────────
-        players_section = (
-            (bs_data.get("boxscore") or {}).get("players")
-            or bs_data.get("players")
-            or []
-        )
+        # 2b: Fallback — ESPN public API (no key needed)
+        if not parsed_players:
+            try:
+                bs = _http.get(_ESPN_BOXSCORE_URL, params={"event": event_id}, timeout=12)
+                bs.raise_for_status()
+                bs_data = bs.json()
+                players_section = (
+                    (bs_data.get("boxscore") or {}).get("players")
+                    or bs_data.get("players") or []
+                )
+                for team_entry in players_section:
+                    team_obj      = team_entry.get("team") or {}
+                    espn_tid_raw  = str(team_obj.get("id", ""))
+                    abbr_raw      = (team_obj.get("abbreviation") or "").upper()
+                    statistics    = team_entry.get("statistics") or []
+                    if not statistics:
+                        continue
+                    sb     = statistics[0]
+                    keys   = sb.get("keys") or sb.get("labels") or []
+                    ki     = {k.lower(): i for i, k in enumerate(keys)}
 
-        game_count = 0
-        for team_entry in players_section:
-            team_obj     = team_entry.get("team") or {}
-            espn_team_id = str(team_obj.get("id", ""))
-            team_abbr_val = (team_obj.get("abbreviation") or team_obj.get("displayName") or "").upper()
-            statistics   = team_entry.get("statistics") or []
-            if not statistics:
+                    def _espn_stat(key, default="0", _arr=None):
+                        idx = ki.get(key.lower())
+                        if idx is not None and idx < len(_arr or []):
+                            v = (_arr or [])[idx]
+                            return str(v) if v is not None else default
+                        return default
+
+                    for ath in (sb.get("athletes") or []):
+                        athlete   = ath.get("athlete") or {}
+                        pid_raw   = str(athlete.get("id", ""))
+                        pname_raw = athlete.get("displayName") or athlete.get("fullName") or ""
+                        sarr      = ath.get("stats") or []
+                        if not pid_raw or not pname_raw or not sarr:
+                            continue
+                        def _s(k, d="0"): return _espn_stat(k, d, sarr)
+                        fgm_e,  fga_e  = _split_compound(_s("fieldGoalsMade-fieldGoalsAttempted","0-0"))
+                        fg3m_e, fg3a_e = _split_compound(_s("threePointFieldGoalsMade-threePointFieldGoalsAttempted","0-0"))
+                        ftm_e,  fta_e  = _split_compound(_s("freeThrowsMade-freeThrowsAttempted","0-0"))
+                        parsed_players.append({
+                            "espn_pid":     pid_raw,
+                            "player_name":  pname_raw,
+                            "team_abbr":    abbr_raw,
+                            "espn_team_id": espn_tid_raw,
+                            "points":       _safe_int(_s("points")),
+                            "rebounds":     _safe_int(_s("rebounds")),
+                            "assists":      _safe_int(_s("assists")),
+                            "steals":       _safe_int(_s("steals")),
+                            "blocks":       _safe_int(_s("blocks")),
+                            "turnovers":    _safe_int(_s("turnovers")),
+                            "minutes":      _safe_float_min(_s("minutes")),
+                            "fgm": fgm_e,   "fga": fga_e,
+                            "fg3m": fg3m_e, "fg3a": fg3a_e,
+                            "ftm": ftm_e,   "fta": fta_e,
+                            "oreb":       _safe_int(_s("offensiveRebounds")),
+                            "dreb":       _safe_int(_s("defensiveRebounds")),
+                            "fouls":      _safe_int(_s("fouls")),
+                            "plus_minus": _pm(_s("plusMinus", "0")),
+                        })
+                boxscore_source = "espn_direct"
+                print(f"[Boxscore] Game {event_id}: {len(parsed_players)} players via ESPN direct")
+            except Exception as e:
+                msg = f"Boxscore fetch failed (game {event_id}, both sources): {e}"
+                print(f"[Boxscore] ⚠ {msg}")
+                summary['errors'].append(msg)
                 continue
 
-            stat_block = statistics[0]
-            keys       = stat_block.get("keys") or stat_block.get("labels") or []
-            athletes   = stat_block.get("athletes") or []
+        if not parsed_players:
+            print(f"[Boxscore] ⚠ Game {event_id}: no players from any source")
+            continue
 
-            # Lower-cased key → index map for robust lookup
-            key_idx = {k.lower(): i for i, k in enumerate(keys)}
-
-            def _stat(key, default="0"):
-                idx = key_idx.get(key.lower())
-                if idx is not None and idx < len(stats_arr):
-                    v = stats_arr[idx]
-                    return str(v) if v is not None else default
-                return default
-
-            for ath in athletes:
-                athlete    = ath.get("athlete") or {}
-                espn_pid   = str(athlete.get("id", ""))
-                pname      = (athlete.get("displayName")
-                              or athlete.get("fullName") or "")
-                stats_arr  = ath.get("stats") or []
-
-                if not espn_pid or not pname or not stats_arr:
-                    continue
-
-                minutes    = _safe_float_min(_stat("minutes"))
-                points     = _safe_int(_stat("points"))
-                rebounds   = _safe_int(_stat("rebounds"))
-                assists    = _safe_int(_stat("assists"))
-                turnovers  = _safe_int(_stat("turnovers"))
-                steals     = _safe_int(_stat("steals"))
-                blocks     = _safe_int(_stat("blocks"))
-                oreb       = _safe_int(_stat("offensiveRebounds"))
-                dreb       = _safe_int(_stat("defensiveRebounds"))
-                fouls      = _safe_int(_stat("fouls"))
-                plus_minus = _pm(_stat("plusMinus", "0"))
-
-                # Compound stats split into made / attempted
-                fgm, fga   = _split_compound(
-                    _stat("fieldGoalsMade-fieldGoalsAttempted", "0-0"))
-                fg3m, fg3a = _split_compound(
-                    _stat("threePointFieldGoalsMade-threePointFieldGoalsAttempted", "0-0"))
-                ftm, fta   = _split_compound(
-                    _stat("freeThrowsMade-freeThrowsAttempted", "0-0"))
+        # ── Step 3: Upsert parsed players into DB ─────────────────────────
+        game_count = 0
+        for p in parsed_players:
+                espn_pid      = p["espn_pid"]
+                pname         = p["player_name"]
+                espn_team_id  = p["espn_team_id"]
+                team_abbr_val = p["team_abbr"]
+                minutes       = p["minutes"]
+                points        = p["points"]
+                rebounds      = p["rebounds"]
+                assists       = p["assists"]
+                steals        = p["steals"]
+                blocks        = p["blocks"]
+                turnovers     = p["turnovers"]
+                fgm, fga      = p["fgm"], p["fga"]
+                fg3m, fg3a    = p["fg3m"], p["fg3a"]
+                ftm, fta      = p["ftm"], p["fta"]
+                oreb, dreb    = p["oreb"], p["dreb"]
+                fouls         = p["fouls"]
+                plus_minus    = p["plus_minus"]
 
                 c.execute('''
                     INSERT INTO player_game_stats
@@ -1785,7 +2166,9 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
                 except Exception:
                     pass  # espn_pid may not cast to int — skip silently
 
-        print(f"[Boxscore] Event {event_id}: {game_count} players processed")
+        print(f"[Boxscore] ✓ Success: Synced boxscore for game {event_id} via "
+              f"{'Primary API' if boxscore_source == 'primary_api' else 'ESPN direct'} "
+              f"({game_count} players, scoreboard via {scoreboard_source})")
         summary['games_processed'] += 1
 
     conn.commit()
@@ -2154,11 +2537,11 @@ async def startup():
         utc_now  = datetime.utcnow()
         utc_hour = utc_now.hour
         # Day Mode: 06:00–19:59 UTC  (09:00–22:59 IST, UTC+3)
-        # Full chain runs only at hours 6, 12, 18 (every 6 h during the day).
-        # All other day-hours and all night-hours: boxscore-only.
+        # Full chain (standings + all steps) runs every hour during Day Mode.
+        # Night hours: boxscore-only (lightweight).
         is_day       = 6 <= utc_hour < 20
-        is_chain_run = utc_hour in (6, 12, 18)
-        mode         = "Day-Full" if (is_day and is_chain_run) else ("Day-BoxOnly" if is_day else "Night")
+        is_chain_run = is_day   # standings every 60 min during day (Primary API: 1,500 calls/day)
+        mode         = "Day-Full" if is_day else "Night-BoxOnly"
 
         print(f"[Auto-Sync] ── Starting scheduled sync (Mode: {mode}, "
               f"{utc_now.strftime('%Y-%m-%d %H:%M')} UTC) ──")
@@ -2237,7 +2620,34 @@ async def startup():
         max_instances=1,
     )
 
-    # ── 2) Missing-picks morning alert — 06:00 UTC = 09:00 Jerusalem (IDT) ──
+    # ── 2) Game-hours boxscore — every 15 min during 20:00–04:00 UTC ────────
+    # NBA tip-offs cluster 20:00–03:00 UTC (3pm–10pm ET).
+    # Fires at :00, :15, :30, :45 of hours 20–23 and 0–4 UTC.
+    def _game_hours_boxscore():
+        utc_hour = datetime.utcnow().hour
+        # Gate: 20:00–04:59 UTC only (avoids wasted calls mid-afternoon)
+        if not (utc_hour >= 20 or utc_hour < 5):
+            return
+        for _bx_date in (None, datetime.utcnow().strftime('%Y-%m-%d')):
+            _label = "yesterday" if _bx_date is None else "today"
+            try:
+                bx = sync_daily_boxscores(date_str=_bx_date, season='2026')
+                print(f"[GameHours-Sync] Boxscore ({_label}) — "
+                      f"games={bx.get('games_processed',0)} "
+                      f"players={bx.get('players_upserted',0)}")
+            except Exception as e:
+                print(f"[GameHours-Sync] Boxscore ({_label}) ERROR: {type(e).__name__}: {e}")
+
+    _scheduler.add_job(
+        _game_hours_boxscore,
+        CronTrigger.from_crontab('*/15 * * * *'),
+        id='game_hours_boxscore',
+        replace_existing=True,
+        misfire_grace_time=120,
+        max_instances=1,
+    )
+
+    # ── 3) Missing-picks morning alert — 06:00 UTC = 09:00 Jerusalem (IDT) ──
     _scheduler.add_job(
         _send_missing_picks_alert,
         CronTrigger.from_crontab('0 6 * * *'),
@@ -2259,7 +2669,8 @@ async def startup():
 
     _scheduler.start()
     print("[Scheduler] APScheduler started"
-          " — auto_sync_chain: 0 */6 * * * UTC (Day Mode only: 06:00–19:59 UTC)"
+          " — auto_sync_chain: 0 * * * * (standings every 60min Day 06–20 UTC; boxscore every hour)"
+          " — game_hours_boxscore: */15 * * * * (15-min boxscore during 20:00–04:59 UTC)"
           " — missing-picks: 0 6 * * * UTC (09:00 IL) + 0 18 * * * UTC (21:00 IL)"
           f" — active until {_STANDINGS_SYNC_CUTOFF.date()}")
 
@@ -3986,50 +4397,55 @@ async def get_games_with_performers(date: str | None = None, season: str = "2026
             'minutes':        round(r['minutes'] or 0, 1),
         })
 
-    # ── 2. Game scores from RapidAPI ────────────────────────────────────
+    # ── 2. Game scores — Primary API first, Secondary fallback ──────────
     api_games: dict = {}
     if _RAPIDAPI_KEY:
+        # Try primary API
         try:
-            date_fmt = date.replace('-', '')
-            resp = _http.get(
-                _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
-                headers={"x-rapidapi-key": _RAPIDAPI_KEY,
-                         "x-rapidapi-host": _RAPIDAPI_HOST},
-                params={"date": date_fmt},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            raw     = resp.json()
-            obj     = raw.get("response", raw)
-            events  = (obj.get("Events") or obj.get("events") or []) \
-                      if isinstance(obj, dict) else \
-                      (obj if isinstance(obj, list) else [])
-            for ev in events:
-                st    = ev.get("status") or {}
-                stype = st.get("type") or {}
-                comps = ev.get("competitions") or [{}]
-                comps0 = comps[0]
-                comps_teams = comps0.get("competitors") or []
-                home_c = next((c for c in comps_teams if c.get("homeAway") == "home"), {})
-                away_c = next((c for c in comps_teams if c.get("homeAway") == "away"), {})
-                def _tm(c):
-                    t = c.get("team") or {}
-                    return {"id": t.get("id"), "abbr": t.get("abbreviation"),
-                            "name": t.get("displayName") or t.get("name"),
-                            "score": c.get("score"), "winner": bool(c.get("winner"))}
-                gid = str(ev.get("id", ""))
-                api_games[gid] = {
-                    "id":        gid,
-                    "completed": bool(stype.get("completed")),
-                    "status":    stype.get("description") or stype.get("name"),
-                    "clock":     st.get("displayClock"),
-                    "period":    st.get("period"),
-                    "home":      _tm(home_c),
-                    "away":      _tm(away_c),
-                    "broadcast": comps0.get("broadcast") or "",
-                }
-        except Exception as e:
-            print(f"[GamesWithPerformers] RapidAPI error: {e}")
+            norm_events = _fetch_scoreboard_primary(date)
+            for ev in norm_events:
+                api_games[ev["id"]] = ev
+        except Exception as _primary_sb_err:
+            print(f"[GamesWithPerformers] Primary scoreboard error: {_primary_sb_err} — trying secondary")
+            # Fallback: secondary API
+            try:
+                date_fmt = date.replace('-', '')
+                resp = _http.get(
+                    _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
+                    headers={"x-rapidapi-key": _RAPIDAPI_KEY,
+                             "x-rapidapi-host": _RAPIDAPI_HOST_SECONDARY},
+                    params={"date": date_fmt},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                raw    = resp.json()
+                obj    = raw.get("response", raw)
+                events = (obj.get("Events") or obj.get("events") or []) \
+                         if isinstance(obj, dict) else \
+                         (obj if isinstance(obj, list) else [])
+                for ev in events:
+                    st     = ev.get("status") or {}
+                    stype  = st.get("type") or {}
+                    comps  = ev.get("competitions") or [{}]
+                    comps0 = comps[0]
+                    ctms   = comps0.get("competitors") or []
+                    home_c = next((c for c in ctms if c.get("homeAway") == "home"), {})
+                    away_c = next((c for c in ctms if c.get("homeAway") == "away"), {})
+                    def _tm(c):
+                        t = c.get("team") or {}
+                        return {"id": t.get("id"), "abbr": t.get("abbreviation"),
+                                "name": t.get("displayName") or t.get("name"),
+                                "score": c.get("score"), "winner": bool(c.get("winner"))}
+                    gid = str(ev.get("id", ""))
+                    api_games[gid] = {
+                        "id": gid, "completed": bool(stype.get("completed")),
+                        "status": stype.get("description") or stype.get("name"),
+                        "clock": st.get("displayClock"), "period": st.get("period"),
+                        "home": _tm(home_c), "away": _tm(away_c),
+                        "broadcast": comps0.get("broadcast") or "",
+                    }
+            except Exception as e:
+                print(f"[GamesWithPerformers] Both scoreboards failed: {e}")
 
     # ── 3. Merge by game_id ─────────────────────────────────────────────
     result = []
@@ -4114,8 +4530,9 @@ async def get_game_boxscore(espn_game_id: str, season: str = "2026"):
 @app.get("/api/players/today-games")
 async def get_today_games(date: str | None = None):
     """
-    Fetch today's (or any date's) NBA scoreboard from RapidAPI.
-    Returns a list of games with status, teams, scores, and broadcast info.
+    Fetch today's (or any date's) NBA scoreboard.
+    Primary: api-basketball-nba Primary API (/nbascoreboard)
+    Fallback: nba-api-free-data Secondary API (/nba-scoreboard-by-date)
     date: 'YYYY-MM-DD'.  Defaults to today UTC.
     """
     import requests as _http
@@ -4123,66 +4540,88 @@ async def get_today_games(date: str | None = None):
     if date is None:
         date = datetime.utcnow().strftime('%Y-%m-%d')
 
-    date_fmt = date.replace('-', '')   # YYYYMMDD for RapidAPI
-
     if not _RAPIDAPI_KEY:
         raise HTTPException(503, "RAPIDAPI_KEY not configured")
 
-    try:
-        resp = _http.get(
-            _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
-            headers={"x-rapidapi-key": _RAPIDAPI_KEY, "x-rapidapi-host": _RAPIDAPI_HOST},
-            params={"date": date_fmt},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        raise HTTPException(502, f"Scoreboard fetch failed: {e}")
-
-    resp_obj = data.get("response", data)
-    if isinstance(resp_obj, dict):
-        events = resp_obj.get("Events") or resp_obj.get("events") or []
-    elif isinstance(resp_obj, list):
-        events = resp_obj
-    else:
-        events = []
-
+    # ── Source 1: Primary API (/nbascoreboard) ────────────────────────────
+    source = "primary"
     games = []
-    for ev in events:
-        status_obj  = (ev.get("status") or {})
-        status_type = status_obj.get("type") or {}
-        comps       = ev.get("competitions") or [{}]
-        competitors = comps[0].get("competitors") or []
+    try:
+        events = _fetch_scoreboard_primary(date)
+        # _fetch_scoreboard_primary returns already-normalized dicts
+        for ev in events:
+            games.append({
+                "id":        ev.get("id", ""),
+                "name":      ev.get("name"),
+                "date":      ev.get("date"),
+                "status":    ev.get("status"),
+                "completed": ev.get("completed", False),
+                "clock":     ev.get("clock"),
+                "period":    ev.get("period"),
+                "broadcast": ev.get("broadcast", ""),
+                "venue":     ev.get("venue", ""),
+                "home":      ev.get("home", {}),
+                "away":      ev.get("away", {}),
+            })
+    except Exception as primary_err:
+        print(f"[today-games] Primary API failed: {primary_err}; trying secondary")
+        source = "secondary"
 
-        home = next((c for c in competitors if c.get("homeAway") == "home"), {})
-        away = next((c for c in competitors if c.get("homeAway") == "away"), {})
+    # ── Source 2: Secondary API (nba-api-free-data) ───────────────────────
+    if not games and source == "secondary":
+        date_fmt = date.replace('-', '')   # YYYYMMDD
+        try:
+            resp = _http.get(
+                _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
+                headers={"x-rapidapi-key": _RAPIDAPI_KEY, "x-rapidapi-host": _RAPIDAPI_HOST},
+                params={"date": date_fmt},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            resp_obj = data.get("response", data)
+            if isinstance(resp_obj, dict):
+                events = resp_obj.get("Events") or resp_obj.get("events") or []
+            elif isinstance(resp_obj, list):
+                events = resp_obj
+            else:
+                events = []
 
-        def _team(c):
-            t = c.get("team") or {}
-            return {
-                "id":    t.get("id"),
-                "name":  t.get("displayName") or t.get("name"),
-                "abbr":  t.get("abbreviation"),
-                "score": c.get("score"),
-                "winner": bool(c.get("winner")),
-            }
+            for ev in events:
+                status_obj  = (ev.get("status") or {})
+                status_type = status_obj.get("type") or {}
+                comps       = ev.get("competitions") or [{}]
+                competitors = comps[0].get("competitors") or []
+                home = next((c for c in competitors if c.get("homeAway") == "home"), {})
+                away = next((c for c in competitors if c.get("homeAway") == "away"), {})
 
-        games.append({
-            "id":         str(ev.get("id", "")),
-            "name":       ev.get("name") or ev.get("shortName"),
-            "date":       ev.get("date"),
-            "status":     status_type.get("description") or status_type.get("name"),
-            "completed":  bool(status_type.get("completed")),
-            "clock":      status_obj.get("displayClock"),
-            "period":     status_obj.get("period"),
-            "broadcast":  (comps[0].get("broadcast") or ""),
-            "venue":      ((comps[0].get("venue") or {}).get("fullName") or ""),
-            "home":       _team(home),
-            "away":       _team(away),
-        })
+                def _team(c):
+                    t = c.get("team") or {}
+                    return {
+                        "id":     t.get("id"),
+                        "name":   t.get("displayName") or t.get("name"),
+                        "abbr":   t.get("abbreviation"),
+                        "score":  c.get("score"),
+                        "winner": bool(c.get("winner")),
+                    }
 
-    return {"date": date, "games": games, "count": len(games)}
+                games.append({
+                    "id":        str(ev.get("id", "")),
+                    "name":      ev.get("name") or ev.get("shortName"),
+                    "date":      ev.get("date"),
+                    "status":    status_type.get("description") or status_type.get("name"),
+                    "completed": bool(status_type.get("completed")),
+                    "clock":     status_obj.get("displayClock"),
+                    "period":    status_obj.get("period"),
+                    "broadcast": (comps[0].get("broadcast") or ""),
+                    "venue":     ((comps[0].get("venue") or {}).get("fullName") or ""),
+                    "home":      _team(home),
+                    "away":      _team(away),
+                })
+        except Exception as sec_err:
+            raise HTTPException(502, f"All scoreboard sources failed: {sec_err}")
+
+    return {"date": date, "games": games, "count": len(games), "source": source}
 
 
 def _get_futures_lock() -> bool:
