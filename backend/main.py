@@ -2013,21 +2013,34 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
             summary['errors'].append(f"Scoreboard fetch failed (both APIs): {e}")
             return summary
 
-    completed_events = [ev for ev in normalized_events if ev.get("completed")]
+    _FINAL_STATUSES = {"final", "status_final", "game over", "f/ot", "f/2ot"}
+
+    def _is_finished(ev: dict) -> bool:
+        """
+        Accept a game as finished if EITHER:
+          • status.type.completed == true  (ESPN boolean)
+          • status description text contains 'final' (Primary API may omit boolean)
+        """
+        if ev.get("completed"):
+            return True
+        st = (ev.get("status") or "").lower().strip()
+        return st in _FINAL_STATUSES or st.startswith("final")
+
+    completed_events = [ev for ev in normalized_events if _is_finished(ev)]
     summary['games_found'] = len(normalized_events)
 
     # Log each game's status to surface timezone/completion issues
     for _ev in normalized_events:
         print(f"[Boxscore]   game={_ev.get('id')} completed={_ev.get('completed')} "
-              f"status={_ev.get('status')!r} "
+              f"status={_ev.get('status')!r} finished={_is_finished(_ev)} "
               f"{(_ev.get('away') or {}).get('abbr','?')} @ "
               f"{(_ev.get('home') or {}).get('abbr','?')}")
 
     print(f"[Boxscore] {len(normalized_events)} games on {date_iso} via {scoreboard_source}, "
-          f"{len(completed_events)} completed")
+          f"{len(completed_events)} finished (completed flag OR Final status)")
 
     if not completed_events:
-        print(f"[Boxscore] No completed games on {date_iso} — skipping boxscore fetch")
+        print(f"[Boxscore] No finished games on {date_iso} — skipping boxscore fetch")
         return summary
 
     conn = get_db_conn()
@@ -2173,18 +2186,58 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
                 game_count += 1
                 summary['players_upserted'] += 1
 
-                # ── Step 4: Back-fill espn_player_id on player_stats ──────
+                # ── Step 4: Ensure player exists in player_stats ──────────
+                # Needed so the MVP autocomplete can find every player seen in
+                # a boxscore, even players not in LeagueLeaders top-150.
                 try:
+                    espn_pid_int = int(espn_pid)
+
+                    # 4a: try to update by name (existing NBA-API row)
                     c.execute('''
                         UPDATE player_stats
                         SET espn_player_id = %s
                         WHERE LOWER(player_name) = LOWER(%s)
                           AND (espn_player_id IS NULL
                                OR espn_player_id != %s)
-                    ''', (int(espn_pid), pname, int(espn_pid)))
-                    summary['espn_id_updates'] += c.rowcount
+                    ''', (espn_pid_int, pname, espn_pid_int))
+                    name_matched = c.rowcount
+
+                    # 4b: also try to update by existing espn_player_id (rename)
+                    if name_matched == 0:
+                        c.execute('''
+                            UPDATE player_stats
+                            SET player_name = %s, team_abbreviation = %s
+                            WHERE espn_player_id = %s AND season = %s
+                        ''', (pname, team_abbr_val, espn_pid_int, season))
+                        name_matched = c.rowcount
+
+                    # 4c: player not found at all — insert a minimal row so
+                    #     MVP search can find them.
+                    #     player_id uses ESPN-ID-based synthetic key (offset by
+                    #     10_000_000 to avoid collisions with real NBA API IDs).
+                    if name_matched == 0:
+                        synthetic_id = 10_000_000 + espn_pid_int
+                        c.execute('''
+                            INSERT INTO player_stats
+                                (player_id, player_name, team_abbreviation,
+                                 espn_player_id, season,
+                                 pts_per_game, ast_per_game, reb_per_game,
+                                 stl_per_game, blk_per_game, games_played)
+                            VALUES (%s, %s, %s, %s, %s,
+                                    %s, %s, %s, %s, %s, 1)
+                            ON CONFLICT (player_id, season) DO UPDATE SET
+                                player_name       = EXCLUDED.player_name,
+                                team_abbreviation = EXCLUDED.team_abbreviation,
+                                espn_player_id    = EXCLUDED.espn_player_id
+                        ''', (synthetic_id, pname, team_abbr_val,
+                              espn_pid_int, season,
+                              float(points), float(assists), float(rebounds),
+                              float(steals), float(blocks)))
+                        summary['espn_id_updates'] += 1
+                    else:
+                        summary['espn_id_updates'] += name_matched
                 except Exception:
-                    pass  # espn_pid may not cast to int — skip silently
+                    pass  # espn_pid non-numeric or DB error — skip silently
 
         print(f"[Boxscore] ✓ Success: Synced boxscore for game {event_id} via "
               f"{'Primary API' if boxscore_source == 'primary_api' else 'ESPN direct'} "
