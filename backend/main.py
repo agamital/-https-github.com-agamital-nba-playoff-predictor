@@ -968,12 +968,21 @@ def _fetch_boxscore_primary(espn_game_id: str) -> list:
         except: return d
 
     # Handle both flat {"players": [...]} and nested {"boxscore": {"players": [...]}}
-    raw_player_groups = (
-        data.get("players")
-        or (data.get("boxscore") or {}).get("players")
-        or []
-    )
-    print(f"[Primary /nbabox] game={espn_game_id} player_groups={len(raw_player_groups)}")
+    # Try every known path; log which one resolved so structure changes are visible.
+    _flat    = data.get("players")          or []
+    _nested  = (data.get("boxscore") or {}).get("players") or []
+    raw_player_groups = _flat or _nested
+
+    if raw_player_groups:
+        _src = "data['players']" if _flat else "data['boxscore']['players']"
+        print(f"[Primary /nbabox] game={espn_game_id} "
+              f"player_groups={len(raw_player_groups)} via {_src}")
+    else:
+        print(f"[Primary /nbabox] ⚠ WARNING game={espn_game_id}: "
+              f"0 player groups found — checked data['players'] and "
+              f"data['boxscore']['players']. "
+              f"Actual top-level keys: {top_keys}. "
+              f"ESPN fallback will be attempted.")
 
     players = []
     for team_group in raw_player_groups:
@@ -2059,10 +2068,16 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
         try:
             parsed_players  = _fetch_boxscore_primary(event_id)
             boxscore_source = "primary_api"
-            print(f"[Boxscore] Game {event_id}: {len(parsed_players)} players via Primary API")
+            if parsed_players:
+                print(f"[Boxscore] Primary OK: game {event_id} — "
+                      f"{len(parsed_players)} players parsed")
+            else:
+                print(f"[Boxscore] ⚠ Primary returned 0 players for game {event_id} "
+                      f"— trying ESPN direct fallback")
         except Exception as _bx_primary_err:
-            print(f"[Boxscore] Primary boxscore failed (game {event_id}): "
-                  f"{_bx_primary_err} — falling back to ESPN direct")
+            print(f"[Boxscore] ⚠ Primary /nbabox FAILED (game {event_id}): "
+                  f"{type(_bx_primary_err).__name__}: {_bx_primary_err} "
+                  f"— trying ESPN direct fallback")
 
         # 2b: Fallback — ESPN public API (no key needed)
         if not parsed_players:
@@ -2123,16 +2138,26 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
                             "fouls":      _safe_int(_s("fouls")),
                             "plus_minus": _pm(_s("plusMinus", "0")),
                         })
-                boxscore_source = "espn_direct"
-                print(f"[Boxscore] Game {event_id}: {len(parsed_players)} players via ESPN direct")
+                if parsed_players:
+                    boxscore_source = "espn_direct"
+                    print(f"[Boxscore] ESPN fallback OK: game {event_id} — "
+                          f"{len(parsed_players)} players parsed")
+                else:
+                    msg = (f"ESPN fallback returned 0 players for game {event_id} "
+                           f"(HTTP 200 but empty athletes array)")
+                    print(f"[Boxscore] ⚠ {msg}")
+                    summary['errors'].append(msg)
             except Exception as e:
-                msg = f"Boxscore fetch failed (game {event_id}, both sources): {e}"
+                msg = (f"Both sources failed for game {event_id}: "
+                       f"{type(e).__name__}: {e}")
                 print(f"[Boxscore] ⚠ {msg}")
                 summary['errors'].append(msg)
                 continue
 
         if not parsed_players:
-            print(f"[Boxscore] ⚠ Game {event_id}: no players from any source")
+            print(f"[Boxscore] ✗ SKIPPED game {event_id}: "
+                  f"0 players from Primary API + ESPN fallback — "
+                  f"no rows written to DB for this game")
             continue
 
         # ── Step 3: Upsert parsed players into DB ─────────────────────────
@@ -2239,9 +2264,9 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
                 except Exception:
                     pass  # espn_pid non-numeric or DB error — skip silently
 
-        print(f"[Boxscore] ✓ Success: Synced boxscore for game {event_id} via "
-              f"{'Primary API' if boxscore_source == 'primary_api' else 'ESPN direct'} "
-              f"({game_count} players, scoreboard via {scoreboard_source})")
+        print(f"[Boxscore] ✓ game {event_id}: wrote {game_count} rows to DB "
+              f"(source: {'Primary API' if boxscore_source == 'primary_api' else 'ESPN direct'}, "
+              f"scoreboard: {scoreboard_source})")
         summary['games_processed'] += 1
 
     conn.commit()
