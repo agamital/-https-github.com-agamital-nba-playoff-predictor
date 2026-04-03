@@ -1,3 +1,11 @@
+// ── Privacy lock ──────────────────────────────────────────────────────────────
+// Community picks / vote distributions are hidden until the first Play-In game.
+// 2026 NBA Play-In tip-off: April 15 @ 7:30 PM ET = 23:30 UTC
+export const PICKS_REVEAL_DATE = new Date('2026-04-15T23:30:00Z');
+
+/** Returns true when community picks may be shown to users. */
+export const picksRevealed = () => Date.now() >= PICKS_REVEAL_DATE.getTime();
+
 // ── Series base points ─────────────────────────────────────────────────────
 export const BASE_WINNER_PTS   = 50;
 export const BASE_GAMES_PTS    = 30;   // exact series length bonus (was 50)

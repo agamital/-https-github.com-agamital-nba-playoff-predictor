@@ -60,12 +60,16 @@ const PlayerDropdown = ({ label, value, onChange, players, disabled, statKey = '
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Dedup by player_id, then sort by the relevant stat descending
+  // Dedup by both player_id AND normalised name (handles cross-source ID splits),
+  // then sort by the relevant stat descending.
   const sorted = React.useMemo(() => {
-    const seen = new Set();
+    const seenIds   = new Set();
+    const seenNames = new Set();
     const unique = players.filter(p => {
-      if (seen.has(p.player_id)) return false;
-      seen.add(p.player_id);
+      const normName = p.name?.trim().toLowerCase();
+      if (seenIds.has(p.player_id) || seenNames.has(normName)) return false;
+      seenIds.add(p.player_id);
+      seenNames.add(normName);
       return true;
     });
     return unique.sort((a, b) => (b[statKey] ?? 0) - (a[statKey] ?? 0));

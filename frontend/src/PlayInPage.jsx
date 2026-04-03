@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Trophy, Lock, CheckCircle, Clock } from 'lucide-react';
 import * as api from './services/api';
 import CommunityInsights from './components/CommunityInsights';
+import { PLAYIN_PTS, PLAYIN_UNDERDOG_PTS } from './scoringConstants';
 
 const Card = ({ children, className }) => (
   <div className={`bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur-sm ${className}`}>
@@ -99,23 +100,32 @@ const PlayInPage = ({ currentUser }) => {
         })()}
 
         {/* Prediction buttons */}
-        {!isCompleted && (
-          currentUser ? (
+        {!isCompleted && (() => {
+          // Higher seed = underdog
+          const underdogId = game.team1.seed > game.team2.seed ? game.team1.id : game.team2.id;
+          return currentUser ? (
             <div className="grid grid-cols-2 gap-3">
-              {[game.team1, game.team2].map(team => (
-                <button key={team.id}
-                  onClick={() => handlePrediction(game.id, team.id)}
-                  className={`py-2.5 rounded-lg font-bold text-sm text-white transition-all ${accent.pick}`}>
-                  Pick {team.abbreviation}
-                </button>
-              ))}
+              {[game.team1, game.team2].map(team => {
+                const isUnderdog = team.id === underdogId;
+                const pts = isUnderdog ? PLAYIN_UNDERDOG_PTS : PLAYIN_PTS;
+                return (
+                  <button key={team.id}
+                    onClick={() => handlePrediction(game.id, team.id)}
+                    className={`relative py-2.5 rounded-lg font-bold text-sm text-white transition-all ${accent.pick} ${isUnderdog ? 'ring-1 ring-amber-400/50' : ''}`}>
+                    Pick {team.abbreviation}
+                    <span className={`absolute -top-1.5 -right-1.5 text-[9px] font-black px-1.5 py-0.5 rounded-full ${
+                      isUnderdog ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-300'
+                    }`}>+{pts}</span>
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <div className="flex items-center justify-center py-3 bg-slate-800/50 rounded-lg text-slate-400 text-sm gap-2">
               <Lock className="w-4 h-4" /> Login to predict
             </div>
-          )
-        )}
+          );
+        })()}
 
         <CommunityInsights
           gameId={game.id}

@@ -5,6 +5,7 @@ import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Downl
 import OneSignal from 'react-onesignal';
 import * as api from './services/api';
 import { supabase } from './lib/supabase';
+import { picksRevealed, PICKS_REVEAL_DATE } from './scoringConstants';
 import './index.css';
 
 // Eagerly-loaded small pages
@@ -700,6 +701,16 @@ const BettingPage = ({ currentUser }) => {
 
 // ── Global Stats helpers ──────────────────────────────────────────────────────
 
+const PicksLockedPlaceholder = () => (
+  <div className="flex items-center gap-2 px-4 py-3 text-slate-600 text-[11px] font-bold">
+    <Download className="w-3.5 h-3.5 shrink-0 opacity-50" />
+    Predictions revealed when the tournament starts
+    <span className="ml-auto text-[10px] text-slate-700">
+      {PICKS_REVEAL_DATE.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+    </span>
+  </div>
+);
+
 const SeriesVoteBar = ({ s, currentUser }) => {
   const [expanded, setExpanded]       = useState(false);
   const [picks, setPicks]             = useState(null);
@@ -776,40 +787,44 @@ const SeriesVoteBar = ({ s, currentUser }) => {
           </div>
         </div>
 
-        {/* Dual-colour vote bar */}
-        <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
-          <div
-            className="h-full bg-blue-500/80 transition-all duration-700"
-            style={{ width: noVotes ? '50%' : `${homePct}%` }}
-          />
-          <div className="h-full bg-orange-500/70 flex-1" />
-          <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
-            <span className="text-xs font-black text-white drop-shadow-md">
-              {noVotes ? '—' : `${homePct}%`}
-            </span>
-            <span className="text-xs font-black text-white drop-shadow-md">
-              {noVotes ? '—' : `${awayPct}%`}
-            </span>
-          </div>
-        </div>
-
-        {/* Footer row: abbrev + picks toggle */}
-        <div className="flex items-center justify-between mt-2 px-1">
-          <span className="text-[10px] text-blue-400 font-black">{s.home_team.abbreviation}</span>
-          <button
-            onClick={handleToggle}
-            className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors"
-          >
-            <Users className="w-3 h-3" />
-            {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
-            <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-          </button>
-          <span className="text-[10px] text-orange-400 font-black">{s.away_team.abbreviation}</span>
-        </div>
+        {/* Vote bar / lock placeholder */}
+        {picksRevealed() ? (
+          <>
+            <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
+              <div
+                className="h-full bg-blue-500/80 transition-all duration-700"
+                style={{ width: noVotes ? '50%' : `${homePct}%` }}
+              />
+              <div className="h-full bg-orange-500/70 flex-1" />
+              <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
+                <span className="text-xs font-black text-white drop-shadow-md">
+                  {noVotes ? '—' : `${homePct}%`}
+                </span>
+                <span className="text-xs font-black text-white drop-shadow-md">
+                  {noVotes ? '—' : `${awayPct}%`}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-2 px-1">
+              <span className="text-[10px] text-blue-400 font-black">{s.home_team.abbreviation}</span>
+              <button
+                onClick={handleToggle}
+                className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors"
+              >
+                <Users className="w-3 h-3" />
+                {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
+                <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+              </button>
+              <span className="text-[10px] text-orange-400 font-black">{s.away_team.abbreviation}</span>
+            </div>
+          </>
+        ) : (
+          <PicksLockedPlaceholder />
+        )}
       </div>
 
-      {/* Expandable per-user picks */}
-      {expanded && (
+      {/* Expandable per-user picks (only after reveal) */}
+      {picksRevealed() && expanded && (
         <div className="border-t border-slate-800/80 bg-slate-950/40">
           {loadingPicks ? (
             <div className="flex justify-center py-5">
@@ -945,8 +960,8 @@ const GlobalStatsTab = ({ currentUser }) => {
         </div>
       </div>
 
-      {/* ── Series votes by round ── */}
-      {sortedRounds.map(round => (
+      {/* ── Series votes by round / lock gate ── */}
+      {picksRevealed() ? sortedRounds.map(round => (
         <div key={round}>
           <div className="flex items-center gap-2 mb-3">
             <div className="h-px flex-1 bg-slate-800" />
@@ -959,10 +974,22 @@ const GlobalStatsTab = ({ currentUser }) => {
             ))}
           </div>
         </div>
-      ))}
+      )) : (
+        <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 flex flex-col items-center gap-3 text-center">
+          <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center">
+            <Download className="w-5 h-5 text-slate-500 opacity-60" />
+          </div>
+          <div>
+            <p className="text-sm font-black text-white">Picks Hidden Until Tournament Starts</p>
+            <p className="text-xs text-slate-500 mt-1">
+              Community predictions unlock on {PICKS_REVEAL_DATE.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} when Play-In tips off.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Futures top picks ── */}
-      {hasFutures && (
+      {picksRevealed() && hasFutures && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <div className="h-px flex-1 bg-slate-800" />

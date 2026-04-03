@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Users, ChevronDown } from 'lucide-react';
+import { Users, ChevronDown, Lock } from 'lucide-react';
 import * as api from '../services/api';
+import { picksRevealed } from '../scoringConstants';
 
 /**
  * Community vote bar + expandable picks list for a series or play-in game.
@@ -18,6 +19,18 @@ const CommunityInsights = ({ seriesId, gameId, homeTeam, awayTeam, initialStats 
   const [picks, setPicks]     = useState(null);
   const [loading, setLoading] = useState(false);
   const [stats, setStats]     = useState(initialStats);
+
+  // Before the tournament starts: show locked placeholder instead of picks.
+  if (!picksRevealed()) {
+    return (
+      <div className="pt-2 border-t border-slate-800/60 mt-1">
+        <div className="flex items-center gap-2 py-1.5 text-slate-600">
+          <Lock className="w-3 h-3 shrink-0" />
+          <span className="text-[10px] font-bold">Predictions revealed when the tournament starts</span>
+        </div>
+      </div>
+    );
+  }
 
   // With pre-fetched stats: hide if nobody voted yet.
   // Without pre-fetched stats: always render (shows a lazy-load button).
