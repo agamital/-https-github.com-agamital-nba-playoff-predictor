@@ -5303,7 +5303,8 @@ async def get_series_players(series_id: int, season: str = "2026"):
             return []
         abbrevs = [row[0].upper(), row[1].upper()]
         c.execute("""
-            SELECT ps.player_id, ps.player_name, ps.team_abbreviation,
+            SELECT DISTINCT ON (ps.player_id)
+                   ps.player_id, ps.player_name, ps.team_abbreviation,
                    COALESCE(ps.pts_per_game, 0) AS ppg,
                    COALESCE(ps.reb_per_game, 0) AS rpg,
                    COALESCE(ps.ast_per_game, 0) AS apg,
@@ -5311,7 +5312,7 @@ async def get_series_players(series_id: int, season: str = "2026"):
             FROM player_stats ps
             LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
             WHERE ps.season = %s AND UPPER(ps.team_abbreviation) = ANY(%s)
-            ORDER BY ps.pts_per_game DESC NULLS LAST
+            ORDER BY ps.player_id, ps.pts_per_game DESC NULLS LAST
         """, (season, abbrevs))
         return [
             {'player_id': r[0], 'name': r[1], 'team': r[2],

@@ -229,7 +229,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
 
         {/* How Scoring Works */}
         <button
-          onClick={() => onNavigate('guide')}
+          onClick={() => onNavigate('scoring')}
           className="w-full flex items-center gap-3 p-4 mb-5 rounded-xl bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/15 transition-all text-left group active:scale-[0.99]"
         >
           <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center shrink-0">

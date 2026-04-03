@@ -42,7 +42,10 @@ const HLine = ({ width = 28 }) => (
 
 // ── Player dropdown for series leader picks ───────────────────────────────────
 
-const PlayerDropdown = ({ label, value, onChange, players, disabled }) => {
+// statKey: 'ppg' | 'rpg' | 'apg' — controls sort order and stat label shown in dropdown
+const STAT_LABELS = { ppg: 'PPG', rpg: 'RPG', apg: 'APG' };
+
+const PlayerDropdown = ({ label, value, onChange, players, disabled, statKey = 'ppg' }) => {
   const [open, setOpen]   = useState(false);
   const [query, setQuery] = useState(value || '');
   const ref               = useRef(null);
@@ -57,9 +60,22 @@ const PlayerDropdown = ({ label, value, onChange, players, disabled }) => {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Dedup by player_id, then sort by the relevant stat descending
+  const sorted = React.useMemo(() => {
+    const seen = new Set();
+    const unique = players.filter(p => {
+      if (seen.has(p.player_id)) return false;
+      seen.add(p.player_id);
+      return true;
+    });
+    return unique.sort((a, b) => (b[statKey] ?? 0) - (a[statKey] ?? 0));
+  }, [players, statKey]);
+
   const filtered = query.length >= 2
-    ? players.filter(p => p.name.toLowerCase().includes(query.toLowerCase())).slice(0, 6)
-    : players.slice(0, 6);
+    ? sorted.filter(p => p.name.toLowerCase().includes(query.toLowerCase())).slice(0, 8)
+    : sorted.slice(0, 8);
+
+  const statLabel = STAT_LABELS[statKey] || statKey.toUpperCase();
 
   return (
     <div ref={ref} className="relative w-full">
@@ -79,13 +95,13 @@ const PlayerDropdown = ({ label, value, onChange, players, disabled }) => {
         )}
       </div>
       {open && filtered.length > 0 && (
-        <div className="absolute left-0 right-0 top-full mt-0.5 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-36 overflow-y-auto">
+        <div className="absolute left-0 right-0 top-full mt-0.5 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-40 overflow-y-auto">
           {filtered.map(p => (
             <button key={p.player_id} onMouseDown={() => { setQuery(p.name); onChange(p.name); setOpen(false); }}
               className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-slate-800 transition-colors text-left">
-              {p.logo_url && <img src={p.logo_url} alt="" className="w-4 h-4 shrink-0" onError={e => e.target.style.display='none'} />}
+              {p.logo_url && <img src={p.logo_url} alt="" className="w-4 h-4 shrink-0 object-contain" loading="lazy" onError={e => e.target.style.display='none'} />}
               <span className="text-[10px] text-white font-bold truncate flex-1">{p.name}</span>
-              <span className="text-[9px] text-slate-500 shrink-0">{p.team}</span>
+              <span className="text-[9px] text-orange-400 font-black shrink-0">{(p[statKey] ?? 0).toFixed(1)} {statLabel}</span>
             </button>
           ))}
         </div>
@@ -290,13 +306,13 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
       <div className="pt-1 border-t border-slate-800/60 space-y-1.5">
         <PlayerDropdown label="Leading Scorer" value={pick?.scorer || ''}
           onChange={v => onLeaderSelect(seriesId, 'scorer', v)}
-          players={seriesPlayers} />
+          players={seriesPlayers} statKey="ppg" />
         <PlayerDropdown label="Leading Rebounder" value={pick?.rebounder || ''}
           onChange={v => onLeaderSelect(seriesId, 'rebounder', v)}
-          players={seriesPlayers} />
+          players={seriesPlayers} statKey="rpg" />
         <PlayerDropdown label="Leading Assister" value={pick?.assister || ''}
           onChange={v => onLeaderSelect(seriesId, 'assister', v)}
-          players={seriesPlayers} />
+          players={seriesPlayers} statKey="apg" />
       </div>
 
       <button onClick={() => onSave(seriesId)} disabled={!pick?.games}
@@ -601,13 +617,13 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
             <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Series Leaders</p>
             <PlayerDropdown label="Leading Scorer" value={pick?.scorer || ''}
               onChange={v => onLeaderSelect(series.id, 'scorer', v)}
-              players={seriesPlayers} />
+              players={seriesPlayers} statKey="ppg" />
             <PlayerDropdown label="Leading Rebounder" value={pick?.rebounder || ''}
               onChange={v => onLeaderSelect(series.id, 'rebounder', v)}
-              players={seriesPlayers} />
+              players={seriesPlayers} statKey="rpg" />
             <PlayerDropdown label="Leading Assister" value={pick?.assister || ''}
               onChange={v => onLeaderSelect(series.id, 'assister', v)}
-              players={seriesPlayers} />
+              players={seriesPlayers} statKey="apg" />
           </div>
 
           <button onClick={() => onSave(series.id)} disabled={!pick?.games}

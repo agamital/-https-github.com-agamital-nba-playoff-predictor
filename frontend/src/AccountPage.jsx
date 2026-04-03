@@ -88,43 +88,46 @@ const AvatarUpload = ({ userId, currentAvatarUrl, onSaved }) => {
 
   return (
     <div className="space-y-4">
-      {/* Current / preview */}
+      {/* Current / preview — clicking the avatar opens the file picker */}
       <div className="flex items-end gap-4">
-        <div className="relative">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="relative group rounded-full focus:outline-none"
+          title="Click to change photo"
+        >
           {preview ? (
             <img src={preview} alt="Preview" className="w-20 h-20 rounded-full object-cover ring-2 ring-orange-500" />
           ) : currentAvatarUrl ? (
-            <img src={currentAvatarUrl} alt="Avatar" className="w-20 h-20 rounded-full object-cover ring-2 ring-slate-600" />
+            <img src={currentAvatarUrl} alt="Avatar" className="w-20 h-20 rounded-full object-cover ring-2 ring-slate-600 group-hover:ring-orange-500 transition-all" />
           ) : (
-            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center group-hover:opacity-80 transition-opacity">
               <Camera className="w-8 h-8 text-white/60" />
             </div>
           )}
+          {/* Camera overlay on hover */}
+          <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <Camera className="w-6 h-6 text-white" />
+          </div>
           {preview && (
             <span className="absolute -bottom-1 -right-1 text-[9px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">Preview</span>
           )}
-        </div>
+        </button>
 
         <div className="flex flex-col gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold hover:bg-slate-700 transition-colors"
-          >
-            <Camera className="w-3.5 h-3.5" /> Choose Photo
-          </button>
           <button
             onClick={() => setShowDefaults(v => !v)}
             className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold hover:bg-slate-700 transition-colors"
           >
             <ImageIcon className="w-3.5 h-3.5" /> Default Avatars
           </button>
+          <p className="text-[10px] text-slate-500 leading-tight">Tap photo to change</p>
         </div>
       </div>
 
