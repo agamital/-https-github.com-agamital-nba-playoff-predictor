@@ -24,6 +24,8 @@ const TeamLogo = ({ abbr, size = 'md', className = '' }) => {
       src={`https://cdn.nba.com/logos/nba/${teamId}/primary/L/logo.svg`}
       alt={abbr}
       className={`${sz} shrink-0 object-contain ${className}`}
+      loading="lazy"
+      decoding="async"
       onError={e => { e.target.style.display = 'none'; }}
     />
   );

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -46,6 +46,10 @@ _ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY",  "")
 # Resend email credentials
 _RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 _RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Picks <noreply@nba-playoffs-2026.vercel.app>")
+
+# Supabase Storage — for user avatar uploads
+_SUPABASE_URL              = os.getenv("SUPABASE_URL", "").rstrip("/")
+_SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 # APScheduler instance — created in startup(), referenced in shutdown()
 _scheduler = None
@@ -5588,6 +5592,48 @@ async def change_username(user_id: int, new_username: str):
     conn.commit()
     conn.close()
     return {"message": "Username updated", "username": new_username}
+
+
+@app.post("/api/users/{user_id}/avatar")
+async def upload_avatar(user_id: int, file: UploadFile = File(...)):
+    """Upload a profile avatar to Supabase Storage and save the public URL."""
+    _ALLOWED = {"image/jpeg", "image/png", "image/webp"}
+    _EXT_MAP  = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+    if file.content_type not in _ALLOWED:
+        raise HTTPException(400, "Only JPEG, PNG, and WebP images are supported")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Image must be under 5 MB")
+
+    if not _SUPABASE_URL or not _SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(503, "Avatar storage not configured — set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Railway environment")
+
+    ext = _EXT_MAP[file.content_type]
+    object_path = f"{user_id}.{ext}"
+    upload_url  = f"{_SUPABASE_URL}/storage/v1/object/avatars/{object_path}"
+
+    import requests as _http
+    resp = _http.put(
+        upload_url,
+        data=content,
+        headers={
+            "Authorization": f"Bearer {_SUPABASE_SERVICE_ROLE_KEY}",
+            "Content-Type":  file.content_type,
+            "x-upsert":      "true",
+        },
+        timeout=20,
+    )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(502, f"Storage upload failed ({resp.status_code}): {resp.text[:200]}")
+
+    public_url = f"{_SUPABASE_URL}/storage/v1/object/public/avatars/{object_path}"
+    conn = get_db_conn()
+    c    = conn.cursor()
+    c.execute("UPDATE users SET avatar_url = %s WHERE id = %s", (public_url, user_id))
+    conn.commit()
+    conn.close()
+    return {"avatar_url": public_url}
 
 
 @app.patch("/api/account/password")

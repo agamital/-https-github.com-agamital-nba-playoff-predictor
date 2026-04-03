@@ -101,6 +101,15 @@ export const deleteAccount = async (userId) => {
   return response.data;
 };
 
+export const uploadAvatar = async (userId, file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await api.post(`/api/users/${userId}/avatar`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return response.data;
+};
+
 // Series
 export const getSeries = async (season = '2026', status = null) => {
   const params = { season };

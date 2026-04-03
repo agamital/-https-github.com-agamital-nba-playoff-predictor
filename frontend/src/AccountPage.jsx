@@ -1,7 +1,172 @@
-import React, { useState, useEffect } from 'react';
-import { User, Mail, Shield, Calendar, Trophy, Key, AlertTriangle, Check, X, Loader } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { User, Mail, Shield, Calendar, Trophy, Key, AlertTriangle, Check, X, Loader, Camera, ImageIcon } from 'lucide-react';
 import * as api from './services/api';
 import { Avatar } from './UserProfilePage';
+
+// ── Default NBA-themed SVG avatars ────────────────────────────────────────────
+const DEFAULT_AVATARS = [
+  { id: 'orange', label: 'Orange', svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#f97316"/><circle cx="50" cy="50" r="48" fill="none" stroke="#c2410c" stroke-width="3"/><path d="M50 2 Q52 50 50 98" stroke="#c2410c" stroke-width="3" fill="none"/><path d="M2 50 Q50 52 98 50" stroke="#c2410c" stroke-width="3" fill="none"/><path d="M12 20 Q50 38 88 20" stroke="#c2410c" stroke-width="2.5" fill="none"/><path d="M12 80 Q50 62 88 80" stroke="#c2410c" stroke-width="2.5" fill="none"/></svg>` },
+  { id: 'gold',   label: 'Gold',   svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#eab308"/><circle cx="50" cy="50" r="48" fill="none" stroke="#a16207" stroke-width="3"/><path d="M50 2 Q52 50 50 98" stroke="#a16207" stroke-width="3" fill="none"/><path d="M2 50 Q50 52 98 50" stroke="#a16207" stroke-width="3" fill="none"/><path d="M12 20 Q50 38 88 20" stroke="#a16207" stroke-width="2.5" fill="none"/><path d="M12 80 Q50 62 88 80" stroke="#a16207" stroke-width="2.5" fill="none"/></svg>` },
+  { id: 'blue',   label: 'Blue',   svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#3b82f6"/><circle cx="50" cy="50" r="48" fill="none" stroke="#1d4ed8" stroke-width="3"/><path d="M50 2 Q52 50 50 98" stroke="#1d4ed8" stroke-width="3" fill="none"/><path d="M2 50 Q50 52 98 50" stroke="#1d4ed8" stroke-width="3" fill="none"/><path d="M12 20 Q50 38 88 20" stroke="#1d4ed8" stroke-width="2.5" fill="none"/><path d="M12 80 Q50 62 88 80" stroke="#1d4ed8" stroke-width="2.5" fill="none"/></svg>` },
+  { id: 'red',    label: 'Red',    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#ef4444"/><circle cx="50" cy="50" r="48" fill="none" stroke="#b91c1c" stroke-width="3"/><path d="M50 2 Q52 50 50 98" stroke="#b91c1c" stroke-width="3" fill="none"/><path d="M2 50 Q50 52 98 50" stroke="#b91c1c" stroke-width="3" fill="none"/><path d="M12 20 Q50 38 88 20" stroke="#b91c1c" stroke-width="2.5" fill="none"/><path d="M12 80 Q50 62 88 80" stroke="#b91c1c" stroke-width="2.5" fill="none"/></svg>` },
+  { id: 'green',  label: 'Green',  svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#22c55e"/><circle cx="50" cy="50" r="48" fill="none" stroke="#15803d" stroke-width="3"/><path d="M50 2 Q52 50 50 98" stroke="#15803d" stroke-width="3" fill="none"/><path d="M2 50 Q50 52 98 50" stroke="#15803d" stroke-width="3" fill="none"/><path d="M12 20 Q50 38 88 20" stroke="#15803d" stroke-width="2.5" fill="none"/><path d="M12 80 Q50 62 88 80" stroke="#15803d" stroke-width="2.5" fill="none"/></svg>` },
+  { id: 'purple', label: 'Purple', svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#a855f7"/><circle cx="50" cy="50" r="48" fill="none" stroke="#7e22ce" stroke-width="3"/><path d="M50 2 Q52 50 50 98" stroke="#7e22ce" stroke-width="3" fill="none"/><path d="M2 50 Q50 52 98 50" stroke="#7e22ce" stroke-width="3" fill="none"/><path d="M12 20 Q50 38 88 20" stroke="#7e22ce" stroke-width="2.5" fill="none"/><path d="M12 80 Q50 62 88 80" stroke="#7e22ce" stroke-width="2.5" fill="none"/></svg>` },
+];
+
+const svgToDataUrl = (svg) =>
+  `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+
+// ── AvatarUpload component ────────────────────────────────────────────────────
+const AvatarUpload = ({ userId, currentAvatarUrl, onSaved }) => {
+  const [preview, setPreview]     = useState(null); // data URL for preview
+  const [previewFile, setPreviewFile] = useState(null); // actual File object
+  const [uploading, setUploading] = useState(false);
+  const [msg, setMsg]             = useState(null);
+  const [showDefaults, setShowDefaults] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setMsg({ type: 'error', text: 'Only JPEG, PNG, or WebP images are supported.' });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setMsg({ type: 'error', text: 'Image must be under 5 MB.' });
+      return;
+    }
+    setMsg(null);
+    setPreviewFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setPreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleUpload = async () => {
+    if (!previewFile) return;
+    setUploading(true);
+    setMsg(null);
+    try {
+      const data = await api.uploadAvatar(userId, previewFile);
+      setPreview(null);
+      setPreviewFile(null);
+      setMsg({ type: 'ok', text: 'Avatar saved!' });
+      onSaved(data.avatar_url);
+    } catch (err) {
+      setMsg({ type: 'error', text: err.response?.data?.detail || 'Upload failed — is storage configured?' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleSelectDefault = async (avatarObj) => {
+    setUploading(true);
+    setMsg(null);
+    setShowDefaults(false);
+    try {
+      // Convert SVG to a File blob and upload
+      const blob = new Blob([avatarObj.svg], { type: 'image/svg+xml' });
+      // Supabase doesn't accept SVG; convert via canvas to PNG
+      const img = new window.Image();
+      img.src = svgToDataUrl(avatarObj.svg);
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+      const canvas = document.createElement('canvas');
+      canvas.width = 200; canvas.height = 200;
+      canvas.getContext('2d').drawImage(img, 0, 0, 200, 200);
+      const pngBlob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      const file = new File([pngBlob], `avatar-${avatarObj.id}.png`, { type: 'image/png' });
+      const data = await api.uploadAvatar(userId, file);
+      setMsg({ type: 'ok', text: 'Avatar saved!' });
+      onSaved(data.avatar_url);
+    } catch (err) {
+      setMsg({ type: 'error', text: err.response?.data?.detail || 'Upload failed — is storage configured?' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Current / preview */}
+      <div className="flex items-end gap-4">
+        <div className="relative">
+          {preview ? (
+            <img src={preview} alt="Preview" className="w-20 h-20 rounded-full object-cover ring-2 ring-orange-500" />
+          ) : currentAvatarUrl ? (
+            <img src={currentAvatarUrl} alt="Avatar" className="w-20 h-20 rounded-full object-cover ring-2 ring-slate-600" />
+          ) : (
+            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+              <Camera className="w-8 h-8 text-white/60" />
+            </div>
+          )}
+          {preview && (
+            <span className="absolute -bottom-1 -right-1 text-[9px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">Preview</span>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold hover:bg-slate-700 transition-colors"
+          >
+            <Camera className="w-3.5 h-3.5" /> Choose Photo
+          </button>
+          <button
+            onClick={() => setShowDefaults(v => !v)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold hover:bg-slate-700 transition-colors"
+          >
+            <ImageIcon className="w-3.5 h-3.5" /> Default Avatars
+          </button>
+        </div>
+      </div>
+
+      {/* Default avatar picker */}
+      {showDefaults && (
+        <div className="grid grid-cols-6 gap-2 p-3 bg-slate-800/60 rounded-xl border border-slate-700">
+          {DEFAULT_AVATARS.map(av => (
+            <button
+              key={av.id}
+              onClick={() => handleSelectDefault(av)}
+              disabled={uploading}
+              title={av.label}
+              className="group relative rounded-full overflow-hidden ring-2 ring-transparent hover:ring-orange-500 transition-all focus:outline-none"
+            >
+              <img src={svgToDataUrl(av.svg)} alt={av.label} className="w-12 h-12" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Save button (only shown when a file is chosen via picker) */}
+      {previewFile && (
+        <button
+          onClick={handleUpload}
+          disabled={uploading}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white font-bold text-sm disabled:opacity-50 transition-colors"
+        >
+          {uploading && <Loader className="w-4 h-4 animate-spin" />}
+          {uploading ? 'Uploading…' : 'Save Avatar'}
+        </button>
+      )}
+      {uploading && !previewFile && (
+        <div className="flex items-center gap-2 text-sm text-slate-400">
+          <Loader className="w-4 h-4 animate-spin" /> Saving…
+        </div>
+      )}
+
+      <StatusMsg msg={msg} />
+      <p className="text-[11px] text-slate-500">JPEG, PNG or WebP · max 5 MB</p>
+    </div>
+  );
+};
 
 const Card = ({ children, className = '' }) => (
   <div className={`bg-slate-900/50 border border-slate-800 rounded-xl backdrop-blur-sm ${className}`}>
@@ -44,6 +209,12 @@ const StatusMsg = ({ msg }) => {
 const AccountPage = ({ currentUser, onLogout, onUserUpdate }) => {
   const [account, setAccount] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Avatar
+  const handleAvatarSaved = (newUrl) => {
+    setAccount(a => ({ ...a, avatar_url: newUrl }));
+    onUserUpdate({ ...currentUser, avatar_url: newUrl });
+  };
 
   // Change username
   const [newUsername, setNewUsername] = useState('');
@@ -156,6 +327,18 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate }) => {
         <Field label="Email" value={account.email} />
         <Field label="Member since" value={memberSince} />
         <Field label="Total points" value={`${account.points} pts`} sub={`Rank #${account.rank}`} />
+
+        {/* ── Avatar Upload ── */}
+        <div className="mt-5 pt-5 border-t border-slate-800">
+          <p className="text-sm font-black text-white mb-3 flex items-center gap-2">
+            <Camera className="w-4 h-4 text-orange-400" /> Profile Photo
+          </p>
+          <AvatarUpload
+            userId={currentUser.user_id}
+            currentAvatarUrl={account.avatar_url}
+            onSaved={handleAvatarSaved}
+          />
+        </div>
       </Card>
 
       {/* ── Change Username ── */}

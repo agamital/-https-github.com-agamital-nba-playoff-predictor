@@ -21,6 +21,8 @@ export const Avatar = ({ username, avatarUrl, size = 'md' }) => {
         src={avatarUrl}
         alt={username}
         className={`${sizes[size]} rounded-full object-cover ring-2 ring-slate-700`}
+        loading="lazy"
+        decoding="async"
         onError={(e) => { e.target.onerror = null; e.target.style.display = 'none'; }}
       />
     );
