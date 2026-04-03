@@ -48,7 +48,13 @@ _RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 _RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Picks <noreply@nba-playoffs-2026.vercel.app>")
 
 # Supabase Storage — for user avatar uploads
-_SUPABASE_URL              = os.getenv("SUPABASE_URL", "").rstrip("/")
+# URL is the same project used for Google OAuth (already public in the frontend).
+# Service role key must be set in Railway env vars (Settings → Variables).
+_SUPABASE_URL = (
+    os.getenv("SUPABASE_URL")
+    or os.getenv("VITE_SUPABASE_URL")          # some deployments mirror the frontend var
+    or "https://nvfmfbedpbulynqmbdqt.supabase.co"   # project-specific fallback
+).rstrip("/")
 _SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 # APScheduler instance — created in startup(), referenced in shutdown()
@@ -5417,7 +5423,8 @@ async def search_players(q: str = "", conference: str = "All",
         params.append(conference)
 
     c.execute(f'''
-        SELECT ps.player_id, ps.player_name, ps.team_abbreviation,
+        SELECT DISTINCT ON (ps.player_id)
+               ps.player_id, ps.player_name, ps.team_abbreviation,
                COALESCE(ps.pts_per_game, 0) AS ppg,
                t.logo_url, t.conference
         FROM player_stats ps
@@ -5425,7 +5432,7 @@ async def search_players(q: str = "", conference: str = "All",
         WHERE ps.season = %s
           AND ps.player_name ILIKE %s
           {conf_filter}
-        ORDER BY ps.pts_per_game DESC NULLS LAST
+        ORDER BY ps.player_id, ps.pts_per_game DESC NULLS LAST
         LIMIT %s
     ''', params + [limit])
     rows = c.fetchall()
@@ -5607,8 +5614,11 @@ async def upload_avatar(user_id: int, file: UploadFile = File(...)):
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(400, "Image must be under 5 MB")
 
-    if not _SUPABASE_URL or not _SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(503, "Avatar storage not configured — set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Railway environment")
+    if not _SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(503,
+            "Avatar storage not configured: add SUPABASE_SERVICE_ROLE_KEY in Railway → Settings → Variables. "
+            f"(SUPABASE_URL is {'set' if _SUPABASE_URL else 'missing'})"
+        )
 
     ext = _EXT_MAP[file.content_type]
     object_path = f"{user_id}.{ext}"

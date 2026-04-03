@@ -56,8 +56,8 @@ const GoogleIcon = () => (
 );
 
 const HomePage = ({ currentUser, onNavigate, onLogin }) => {
-  const [mode, setMode] = useState('login'); // 'login' | 'reset'
-  const [formData, setFormData] = useState({ username: '', password: '', newPassword: '' });
+  const [mode, setMode] = useState('login'); // 'login' | 'register' | 'reset'
+  const [formData, setFormData] = useState({ username: '', email: '', password: '', confirmPassword: '', newPassword: '' });
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
@@ -117,6 +117,21 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
       if (mode === 'login') {
         const user = await api.login(formData.username, formData.password);
         onLogin(user);
+      } else if (mode === 'register') {
+        if (formData.password !== formData.confirmPassword) {
+          setError('Passwords do not match.');
+          return;
+        }
+        if (formData.password.length < 4) {
+          setError('Password must be at least 4 characters.');
+          return;
+        }
+        if (formData.username.length < 3 || !/^[a-zA-Z0-9_]+$/.test(formData.username)) {
+          setError('Username must be 3+ characters (letters, numbers, underscores only).');
+          return;
+        }
+        const user = await api.register(formData.username, formData.email, formData.password);
+        onLogin(user);
       } else if (mode === 'reset') {
         await api.resetPassword(formData.username, formData.newPassword);
         setSuccess('Password updated! You can now log in.');
@@ -128,6 +143,12 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const switchMode = (next) => {
+    setMode(next);
+    setError('');
+    setSuccess('');
   };
 
   if (currentUser) {
@@ -321,7 +342,75 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
     );
   }
 
-  // ── Auth page (login / reset) ─────────────────────────────────────────────
+  // ── Auth page (login / register / reset) ──────────────────────────────────
+  if (mode === 'register') {
+    return (
+      <div className="min-h-[calc(100dvh-7rem)] flex flex-col items-center justify-center px-4 py-8">
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-7">
+            <div className="w-14 h-14 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg">
+              <Trophy className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-2xl font-black text-white">Create Account</h1>
+            <p className="text-slate-400 text-sm mt-1">Join the 2026 Playoff Predictor</p>
+          </div>
+          <div className="bg-slate-900/70 border border-slate-700/60 rounded-2xl p-6 space-y-3">
+            <input
+              type="text"
+              placeholder="Username (letters, numbers, _)"
+              value={formData.username}
+              onChange={e => setFormData({ ...formData, username: e.target.value })}
+              className="w-full px-4 py-3.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-base focus:outline-none focus:border-orange-500 transition-colors"
+              autoCapitalize="none" autoCorrect="off"
+              required
+            />
+            <input
+              type="email"
+              placeholder="Email address"
+              value={formData.email}
+              onChange={e => setFormData({ ...formData, email: e.target.value })}
+              className="w-full px-4 py-3.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-base focus:outline-none focus:border-orange-500 transition-colors"
+              required
+            />
+            <input
+              type="password"
+              placeholder="Password (min 4 characters)"
+              value={formData.password}
+              onChange={e => setFormData({ ...formData, password: e.target.value })}
+              className="w-full px-4 py-3.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-base focus:outline-none focus:border-orange-500 transition-colors"
+              required
+            />
+            <input
+              type="password"
+              placeholder="Confirm password"
+              value={formData.confirmPassword}
+              onChange={e => setFormData({ ...formData, confirmPassword: e.target.value })}
+              className="w-full px-4 py-3.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-base focus:outline-none focus:border-orange-500 transition-colors"
+              required
+            />
+            {error   && <p className="text-red-400 text-sm">{error}</p>}
+            {success && <p className="text-green-400 text-sm">{success}</p>}
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="w-full py-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-black text-base transition-colors disabled:opacity-60"
+              style={{ minHeight: 52 }}
+            >
+              {loading ? 'Creating account…' : 'Create Account'}
+            </button>
+          </div>
+          <button
+            onClick={() => switchMode('login')}
+            className="w-full mt-4 py-3 text-slate-400 hover:text-slate-300 text-sm font-medium transition-colors"
+            style={{ minHeight: 44 }}
+          >
+            Already have an account? Sign in
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (mode === 'reset') {
     return (
       <div className="min-h-[calc(100dvh-7rem)] flex flex-col items-center justify-center px-4 py-8">
@@ -358,7 +447,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             </button>
           </div>
           <button
-            onClick={() => setMode('login')}
+            onClick={() => switchMode('login')}
             className="w-full mt-4 py-3 text-orange-400 hover:text-orange-300 active:text-orange-200 text-sm font-semibold transition-colors"
           >
             ← Back to sign in
@@ -438,13 +527,24 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
           </button>
         </div>
 
-        <button
-          onClick={() => setMode('reset')}
-          className="w-full mt-4 py-3 text-slate-400 hover:text-slate-300 active:text-slate-200 text-sm font-medium transition-colors"
-          style={{ minHeight: 44 }}
-        >
-          Forgot password?
-        </button>
+        <div className="flex flex-col items-center mt-4 gap-1">
+          <button
+            onClick={() => switchMode('reset')}
+            className="py-2 text-slate-400 hover:text-slate-300 text-sm font-medium transition-colors"
+            style={{ minHeight: 40 }}
+          >
+            Forgot password?
+          </button>
+          <div className="flex items-center gap-1.5 text-sm">
+            <span className="text-slate-500">New here?</span>
+            <button
+              onClick={() => switchMode('register')}
+              className="text-orange-400 hover:text-orange-300 font-black transition-colors"
+            >
+              Create an account
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
