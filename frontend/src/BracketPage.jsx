@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
@@ -39,6 +39,60 @@ const HLine = ({ width = 28 }) => (
     <div style={{ width: '100%', height: 2, background: '#1e3a5f' }} />
   </div>
 );
+
+// ── Player dropdown for series leader picks ───────────────────────────────────
+
+const PlayerDropdown = ({ label, value, onChange, players, disabled }) => {
+  const [open, setOpen]   = useState(false);
+  const [query, setQuery] = useState(value || '');
+  const ref               = useRef(null);
+
+  useEffect(() => {
+    if (value !== query) setQuery(value || '');
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = query.length >= 2
+    ? players.filter(p => p.name.toLowerCase().includes(query.toLowerCase())).slice(0, 6)
+    : players.slice(0, 6);
+
+  return (
+    <div ref={ref} className="relative w-full">
+      <p className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-0.5">{label}</p>
+      <div className="relative">
+        <input
+          type="text"
+          value={query}
+          disabled={disabled}
+          onChange={e => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder="Search player…"
+          className="w-full px-2 py-1 text-[10px] bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-600 focus:outline-none focus:border-orange-500/60 disabled:opacity-40"
+        />
+        {value && (
+          <button onClick={() => { setQuery(''); onChange(''); }} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-[10px]">✕</button>
+        )}
+      </div>
+      {open && filtered.length > 0 && (
+        <div className="absolute left-0 right-0 top-full mt-0.5 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-36 overflow-y-auto">
+          {filtered.map(p => (
+            <button key={p.player_id} onMouseDown={() => { setQuery(p.name); onChange(p.name); setOpen(false); }}
+              className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-slate-800 transition-colors text-left">
+              {p.logo_url && <img src={p.logo_url} alt="" className="w-4 h-4 shrink-0" onError={e => e.target.style.display='none'} />}
+              <span className="text-[10px] text-white font-bold truncate flex-1">{p.name}</span>
+              <span className="text-[9px] text-slate-500 shrink-0">{p.team}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 // ── TBD / Finals cards ────────────────────────────────────────────────────────
 
@@ -168,7 +222,7 @@ const PlayInCard = ({ game, pick, onTeamClick }) => {
 
 // ── Inline pickers ────────────────────────────────────────────────────────────
 
-const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onSave, saved }) => {
+const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, onSave, saved }) => {
   const homeSeed   = series?.home_seed   ?? series?.home_team?.seed   ?? null;
   const awaySeed   = series?.away_seed   ?? series?.away_team?.seed   ?? null;
   const roundName  = series?.round ?? 'First Round';
@@ -180,6 +234,13 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onSave, saved }) 
   const roundMult  = getRoundMult(roundName);
   const underdogMult = getUnderdogMult(roundName, homeSeed, awaySeed, pickedSeed);
   const isUnderdog = underdogMult > 1.0;
+
+  const { data: seriesPlayers = [] } = useQuery({
+    queryKey: ['seriesPlayers', seriesId],
+    queryFn:  () => api.getSeriesPlayers(seriesId),
+    staleTime: 30 * 60 * 1000,
+    enabled: !!seriesId,
+  });
 
   return (
     <div className={`w-44 rounded-xl px-3 py-2 space-y-1.5 shadow-lg transition-all ${
@@ -224,6 +285,20 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onSave, saved }) 
             }`}>{g}</button>
         ))}
       </div>
+
+      {/* Series leader picks */}
+      <div className="pt-1 border-t border-slate-800/60 space-y-1.5">
+        <PlayerDropdown label="Leading Scorer" value={pick?.scorer || ''}
+          onChange={v => onLeaderSelect(seriesId, 'scorer', v)}
+          players={seriesPlayers} />
+        <PlayerDropdown label="Leading Rebounder" value={pick?.rebounder || ''}
+          onChange={v => onLeaderSelect(seriesId, 'rebounder', v)}
+          players={seriesPlayers} />
+        <PlayerDropdown label="Leading Assister" value={pick?.assister || ''}
+          onChange={v => onLeaderSelect(seriesId, 'assister', v)}
+          players={seriesPlayers} />
+      </div>
+
       <button onClick={() => onSave(seriesId)} disabled={!pick?.games}
         className={`w-full py-1.5 rounded-lg text-[10px] font-black tracking-wide transition-all ${
           saved ? 'bg-green-500/20 border border-green-500/40 text-green-400' :
@@ -325,7 +400,7 @@ const SeedWaitingCard = ({ team }) => (
 // slot index → which seed team "owns" that slot (no series yet)
 const SEED_SLOT = { 0: 1, 3: 2 }; // slot 0 = 1-seed, slot 3 = 2-seed
 
-const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onSave, saved, seedTeams }) => (
+const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, seedTeams }) => (
   <div style={{ flexShrink: 0 }}>
     <p className="text-xs text-slate-500 uppercase font-bold mb-3 text-center tracking-wider">{label}</p>
     <div style={{ height: BH + 28, display: 'flex', flexDirection: 'column' }}>
@@ -338,7 +413,7 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onSave, saved,
                 <MatchCard series={s} pick={picks[s.id]} onTeamClick={onTeamClick} />
                 {picks[s.id]?.teamId && s.status === 'active' && (
                   <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
-                    <InlinePicker seriesId={s.id} series={s} pick={picks[s.id]} onGamesSelect={onGamesSelect} onSave={onSave} saved={saved[s.id]} />
+                    <InlinePicker seriesId={s.id} series={s} pick={picks[s.id]} onGamesSelect={onGamesSelect} onLeaderSelect={onLeaderSelect} onSave={onSave} saved={saved[s.id]} />
                   </div>
                 )}
               </div>
@@ -422,7 +497,7 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
   );
 };
 
-const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, saved, communityStats }) => {
+const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, communityStats }) => {
   const { home_team: h, away_team: a } = series;
   const hp = pick?.teamId === h.id;
   const ap = pick?.teamId === a.id;
@@ -471,6 +546,13 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
   const isHUnderdog = hp && getUnderdogMult(series.round, homeSeed, awaySeed, homeSeed) > 1.0;
   const isAUnderdog = ap && getUnderdogMult(series.round, homeSeed, awaySeed, awaySeed) > 1.0;
 
+  const { data: seriesPlayers = [] } = useQuery({
+    queryKey: ['seriesPlayers', series.id],
+    queryFn:  () => api.getSeriesPlayers(series.id),
+    staleTime: 30 * 60 * 1000,
+    enabled: !!(picked && !isCompleted && !isLocked),
+  });
+
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-3">
       <div className="flex items-center justify-between">
@@ -514,6 +596,20 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onSave, sav
                 }`}>{g}</button>
             ))}
           </div>
+          {/* Series leader predictions */}
+          <div className="space-y-2 pt-1 border-t border-slate-800/60">
+            <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Series Leaders</p>
+            <PlayerDropdown label="Leading Scorer" value={pick?.scorer || ''}
+              onChange={v => onLeaderSelect(series.id, 'scorer', v)}
+              players={seriesPlayers} />
+            <PlayerDropdown label="Leading Rebounder" value={pick?.rebounder || ''}
+              onChange={v => onLeaderSelect(series.id, 'rebounder', v)}
+              players={seriesPlayers} />
+            <PlayerDropdown label="Leading Assister" value={pick?.assister || ''}
+              onChange={v => onLeaderSelect(series.id, 'assister', v)}
+              players={seriesPlayers} />
+          </div>
+
           <button onClick={() => onSave(series.id)} disabled={!pick?.games}
             className={`w-full py-3.5 rounded-xl font-black text-sm transition-all ${
               saved ? 'bg-green-500 text-white' :
@@ -631,6 +727,9 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const handleGamesSelect = (seriesId, games) => {
     setPicks(p => ({ ...p, [seriesId]: { ...p[seriesId], games } }));
   };
+  const handleLeaderSelect = (seriesId, field, value) => {
+    setPicks(p => ({ ...p, [seriesId]: { ...p[seriesId], [field]: value } }));
+  };
   const handleSave = async (seriesId) => {
     if (!currentUser) return;
     const pick = picks[seriesId];
@@ -638,7 +737,10 @@ const BracketPage = ({ currentUser, onNavigate }) => {
     // Optimistic: show saved instantly
     setSaved(p => ({ ...p, [seriesId]: true }));
     try {
-      await api.makePrediction(currentUser.user_id, seriesId, pick.teamId, pick.games);
+      await api.makePrediction(
+        currentUser.user_id, seriesId, pick.teamId, pick.games,
+        { scorer: pick.scorer, rebounder: pick.rebounder, assister: pick.assister }
+      );
       setTimeout(() => setSaved(p => ({ ...p, [seriesId]: false })), 2000);
       // Invalidate notification badge so it reflects this new pick
       qc.invalidateQueries({ queryKey: ['notifications', currentUser.user_id] });
@@ -797,7 +899,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
             <HLine width={20} />
 
             {/* WEST R1 */}
-            <R1Col label="Round 1" slots={westSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onSave={handleSave} saved={saved} seedTeams={westSeedTeams} />
+            <R1Col label="Round 1" slots={westSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={westSeedTeams} />
 
             {/* WEST Semis → Finals (only if showFull) */}
             {showFull && (
@@ -817,7 +919,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
             )}
 
             {/* EAST R1 */}
-            <R1Col label="Round 1" slots={eastSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onSave={handleSave} saved={saved} seedTeams={eastSeedTeams} />
+            <R1Col label="Round 1" slots={eastSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={eastSeedTeams} />
 
             {/* EAST Play-In */}
             <HLine width={20} />
@@ -885,7 +987,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {westSeries.length > 0 ? westSeries.map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
@@ -932,7 +1034,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {eastSeries.length > 0 ? eastSeries.map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}

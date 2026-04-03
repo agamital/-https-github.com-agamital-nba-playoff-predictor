@@ -189,6 +189,9 @@ class Prediction(BaseModel):
     series_id: int
     predicted_winner_id: int
     predicted_games: Optional[int] = None
+    leading_scorer: Optional[str] = None
+    leading_rebounder: Optional[str] = None
+    leading_assister: Optional[str] = None
 
 class TeamOddsUpdate(BaseModel):
     team_id: int
@@ -261,6 +264,15 @@ def init_db():
     except Exception as e:
         print(f"init_db: predictions.predicted_games migration: {e}")
         c.execute('ROLLBACK TO SAVEPOINT sp_pred_games')
+    # Add leading stat columns for series leader predictions
+    for _col in ('leading_scorer', 'leading_rebounder', 'leading_assister'):
+        c.execute(f'SAVEPOINT sp_{_col}')
+        try:
+            c.execute(f'ALTER TABLE predictions ADD COLUMN IF NOT EXISTS {_col} TEXT')
+            c.execute(f'RELEASE SAVEPOINT sp_{_col}')
+        except Exception as e:
+            print(f"init_db: predictions.{_col} migration: {e}")
+            c.execute(f'ROLLBACK TO SAVEPOINT sp_{_col}')
     # Add actual_games column to series if it doesn't exist
     c.execute('SAVEPOINT sp_series_games')
     try:
@@ -1791,9 +1803,10 @@ def _apply_player_stats_migration():
 
 def _sync_player_stats_job():
     """
-    Fetch top 150 players by points-per-game from LeagueLeaders and upsert
-    into player_stats.  Called from _standings_sync_job() so both syncs share
-    the same 6-hour APScheduler cron cycle.
+    Fetch ALL active players' per-game stats from LeagueDashPlayerStats and upsert
+    into player_stats.  Uses LeagueDashPlayerStats (returns every player who played
+    at least 1 game this season) instead of LeagueLeaders top-150, so the full
+    playoff roster including lower-usage players is available for MVP/leader search.
     Returns True on success.
     """
     if datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF:
@@ -1804,22 +1817,19 @@ def _sync_player_stats_job():
         return False
 
     try:
-        from nba_api.stats.endpoints import leagueleaders
-        print("[Players] Fetching league leaders from NBA API…")
-        ll = leagueleaders.LeagueLeaders(
-            league_id='00',
-            per_mode48='PerGame',
-            scope='S',
+        from nba_api.stats.endpoints import leaguedashplayerstats
+        print("[Players] Fetching all player stats (LeagueDashPlayerStats)…")
+        lp = leaguedashplayerstats.LeagueDashPlayerStats(
             season='2025-26',
             season_type_all_star='Regular Season',
-            stat_category_abbreviation='PTS',
+            per_mode_simple='PerGame',
+            league_id_nullable='00',
             headers=_NBA_HEADERS,
             timeout=_NBA_TIMEOUT,
         )
-        raw = ll.get_dict()
+        raw = lp.get_dict()
 
-        # LeagueLeaders uses 'resultSet' (singular), not 'resultSets'
-        result_set = raw.get('resultSet') or raw.get('resultSets', [{}])[0]
+        result_set  = raw.get('resultSets', [{}])[0]
         col_headers = result_set['headers']
         rows        = result_set['rowSet']
 
@@ -1834,10 +1844,10 @@ def _sync_player_stats_job():
         synced_at = datetime.utcnow()
         count     = 0
 
-        for row in rows[:150]:  # top 150 by PTS covers all statistical leaders
+        for row in rows:  # ALL players — no limit
             pid  = col(row, 'PLAYER_ID')
-            name = col(row, 'PLAYER', '')
-            team = col(row, 'TEAM', '')
+            name = col(row, 'PLAYER_NAME', '')
+            team = col(row, 'TEAM_ABBREVIATION', '')
             gp   = int(col(row, 'GP') or 0)
             pts  = float(col(row, 'PTS') or 0)
             ast  = float(col(row, 'AST') or 0)
@@ -1872,8 +1882,63 @@ def _sync_player_stats_job():
         print(f"[Players] ✓ {count} player stats upserted at {synced_at.strftime('%Y-%m-%d %H:%M:%S')} UTC")
         return True
     except Exception as e:
-        print(f"[Players] Sync error: {e}")
-        return False
+        import traceback
+        print(f"[Players] LeagueDashPlayerStats error: {e}\n{traceback.format_exc()}")
+        # Fallback to LeagueLeaders top-150 if LeagueDashPlayerStats fails
+        try:
+            from nba_api.stats.endpoints import leagueleaders
+            print("[Players] Falling back to LeagueLeaders top-300…")
+            ll = leagueleaders.LeagueLeaders(
+                league_id='00',
+                per_mode48='PerGame',
+                scope='S',
+                season='2025-26',
+                season_type_all_star='Regular Season',
+                stat_category_abbreviation='PTS',
+                headers=_NBA_HEADERS,
+                timeout=_NBA_TIMEOUT,
+            )
+            raw2        = ll.get_dict()
+            rs2         = raw2.get('resultSet') or raw2.get('resultSets', [{}])[0]
+            col_h2      = rs2['headers']
+            rows2       = rs2['rowSet']
+            def col2(row, name, default=0):
+                try: return row[col_h2.index(name)]
+                except (ValueError, IndexError): return default
+            conn2     = get_db_conn()
+            c2        = conn2.cursor()
+            synced2   = datetime.utcnow()
+            count2    = 0
+            for row in rows2[:300]:
+                pid  = col2(row, 'PLAYER_ID')
+                name = col2(row, 'PLAYER', '')
+                team = col2(row, 'TEAM', '')
+                if not pid or not name: continue
+                c2.execute('''
+                    INSERT INTO player_stats
+                        (player_id, player_name, team_abbreviation, season,
+                         games_played, pts_per_game, ast_per_game, reb_per_game,
+                         stl_per_game, blk_per_game, fg3m_per_game, updated_at)
+                    VALUES (%s,%s,%s,'2026',%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (player_id, season) DO UPDATE SET
+                        player_name=EXCLUDED.player_name,team_abbreviation=EXCLUDED.team_abbreviation,
+                        games_played=EXCLUDED.games_played,pts_per_game=EXCLUDED.pts_per_game,
+                        ast_per_game=EXCLUDED.ast_per_game,reb_per_game=EXCLUDED.reb_per_game,
+                        stl_per_game=EXCLUDED.stl_per_game,blk_per_game=EXCLUDED.blk_per_game,
+                        fg3m_per_game=EXCLUDED.fg3m_per_game,updated_at=EXCLUDED.updated_at
+                ''', (pid, name, team,
+                      int(col2(row,'GP') or 0), float(col2(row,'PTS') or 0),
+                      float(col2(row,'AST') or 0), float(col2(row,'REB') or 0),
+                      float(col2(row,'STL') or 0), float(col2(row,'BLK') or 0),
+                      float(col2(row,'FG3M') or 0), synced2))
+                count2 += 1
+            conn2.commit()
+            conn2.close()
+            print(f"[Players] ✓ Fallback: {count2} players upserted")
+            return True
+        except Exception as e2:
+            print(f"[Players] Fallback also failed: {e2}")
+            return False
 
 
 def _initial_standings_sync():
@@ -2627,19 +2692,19 @@ async def startup():
     _scheduler = BackgroundScheduler(timezone='UTC', daemon=True)
 
     # ── 1) Full data sync chain ──────────────────────────────────────────
-    # Runs every 6 hours during Day Mode (06:00–19:59 UTC = 09:00–22:59 IST).
+    # Hourly job; full chain (standings + players) fires only at 06:00 & 18:00 UTC
+    # (09:00 & 21:00 IST) = 2 API calls/day. Boxscore runs every hour.
     # Chain: standings → refresh_playin_matchups → playin results → playoff results
     def _auto_sync_chain():
         from game_processor import sync_playin_results_from_api, sync_playoff_results_from_api
 
         utc_now  = datetime.utcnow()
         utc_hour = utc_now.hour
-        # Day Mode: 06:00–19:59 UTC  (09:00–22:59 IST, UTC+3)
-        # Full chain (standings + all steps) runs every hour during Day Mode.
-        # Night hours: boxscore-only (lightweight).
-        is_day       = 6 <= utc_hour < 20
-        is_chain_run = is_day   # standings every 60 min during day (Primary API: 1,500 calls/day)
-        mode         = "Day-Full" if is_day else "Night-BoxOnly"
+        # Full chain (standings + player stats) runs only at 06:00 and 18:00 UTC
+        # (= 09:00 and 21:00 IST) to limit RapidAPI usage to 2 calls/day.
+        # All other hours: boxscore-only (lightweight).
+        is_chain_run = utc_hour in (6, 18)
+        mode         = "Full-Chain" if is_chain_run else "BoxOnly"
 
         print(f"[Auto-Sync] ── Starting scheduled sync (Mode: {mode}, "
               f"{utc_now.strftime('%Y-%m-%d %H:%M')} UTC) ──")
@@ -2663,7 +2728,7 @@ async def startup():
                   f"({datetime.utcnow().strftime('%H:%M')} UTC) ──")
             return
 
-        # ── Full chain — only at 06:00, 12:00, 18:00 UTC ─────────────────
+        # ── Full chain — only at 06:00 and 18:00 UTC (2x/day) ───────────
 
         # Step 1 — Standings + player stats
         print("[Auto-Sync] Step 1/5 — Standings sync")
@@ -2707,10 +2772,9 @@ async def startup():
 
     _scheduler.add_job(
         _auto_sync_chain,
-        # Fires every hour.  The function itself gates on Day/Night:
-        #   Night (20:00–05:59 UTC = 23:00–08:59 IST): boxscore-only (lightweight)
-        #   Day  (06:00–19:59 UTC = 09:00–22:59 IST):  full 5-step chain every 6 h
-        #     → enforced by only running the full chain on hours 6, 12, 18
+        # Fires every hour.  The function itself only runs the full standings+player
+        # chain at 06:00 and 18:00 UTC (09:00 and 21:00 IST) to conserve RapidAPI
+        # quota (2 full syncs/day).  All other hours: boxscore-only.
         CronTrigger.from_crontab('0 * * * *'),
         id='auto_sync_chain',
         replace_existing=True,
@@ -2767,7 +2831,7 @@ async def startup():
 
     _scheduler.start()
     print("[Scheduler] APScheduler started"
-          " — auto_sync_chain: 0 * * * * (standings every 60min Day 06–20 UTC; boxscore every hour)"
+          " — auto_sync_chain: 0 * * * * (full-chain 2x/day at 06:00 & 18:00 UTC; boxscore every hour)"
           " — game_hours_boxscore: */15 * * * * (15-min boxscore during 20:00–04:59 UTC)"
           " — missing-picks: 0 6 * * * UTC (09:00 IL) + 0 18 * * * UTC (21:00 IL)"
           f" — active until {_STANDINGS_SYNC_CUTOFF.date()}")
@@ -3352,11 +3416,18 @@ async def api_playin(season: str = "2026"):
 async def make_pred(prediction: Prediction, user_id: int):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute('''INSERT INTO predictions (user_id, series_id, predicted_winner_id, predicted_games)
-                 VALUES (%s, %s, %s, %s) ON CONFLICT(user_id, series_id)
-                 DO UPDATE SET predicted_winner_id = %s, predicted_games = %s''',
+    c.execute('''INSERT INTO predictions
+                     (user_id, series_id, predicted_winner_id, predicted_games,
+                      leading_scorer, leading_rebounder, leading_assister)
+                 VALUES (%s, %s, %s, %s, %s, %s, %s)
+                 ON CONFLICT(user_id, series_id) DO UPDATE SET
+                     predicted_winner_id = EXCLUDED.predicted_winner_id,
+                     predicted_games     = EXCLUDED.predicted_games,
+                     leading_scorer      = EXCLUDED.leading_scorer,
+                     leading_rebounder   = EXCLUDED.leading_rebounder,
+                     leading_assister    = EXCLUDED.leading_assister''',
               (user_id, prediction.series_id, prediction.predicted_winner_id, prediction.predicted_games,
-               prediction.predicted_winner_id, prediction.predicted_games))
+               prediction.leading_scorer, prediction.leading_rebounder, prediction.leading_assister))
     conn.commit()
     conn.close()
     return {"message": "Saved"}
@@ -3759,7 +3830,10 @@ async def my_predictions(user_id: int, season: str = "2026"):
 
     # Get playoff predictions
     c.execute('''
-        SELECT p.*, s.round, s.conference,
+        SELECT p.id, p.user_id, p.series_id, p.predicted_winner_id,
+               p.predicted_at, p.is_correct, p.points_earned, p.predicted_games,
+               p.leading_scorer, p.leading_rebounder, p.leading_assister,
+               s.round, s.conference,
                ht.name, ht.abbreviation, ht.logo_url,
                at.name, at.abbreviation, at.logo_url,
                wt.name, wt.abbreviation, wt.logo_url
@@ -3777,11 +3851,14 @@ async def my_predictions(user_id: int, season: str = "2026"):
             'id': row[0],
             'series_id': row[2],
             'predicted_games': row[7],
-            'round': row[8],
-            'conference': row[9],
-            'home_team': {'name': row[10], 'abbreviation': row[11], 'logo_url': row[12]},
-            'away_team': {'name': row[13], 'abbreviation': row[14], 'logo_url': row[15]},
-            'predicted_winner': {'name': row[16], 'abbreviation': row[17], 'logo_url': row[18]},
+            'leading_scorer': row[8],
+            'leading_rebounder': row[9],
+            'leading_assister': row[10],
+            'round': row[11],
+            'conference': row[12],
+            'home_team': {'name': row[13], 'abbreviation': row[14], 'logo_url': row[15]},
+            'away_team': {'name': row[16], 'abbreviation': row[17], 'logo_url': row[18]},
+            'predicted_winner': {'name': row[19], 'abbreviation': row[20], 'logo_url': row[21]},
             'predicted_at': row[4],
             'is_correct': row[5],
             'points_earned': row[6]
@@ -5160,6 +5237,56 @@ async def players_playoff_eligible(season: str = "2026"):
         ]
     except Exception as e:
         print(f"players_playoff_eligible error: {e}")
+        return []
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+@app.get("/api/series/{series_id}/players")
+async def get_series_players(series_id: int, season: str = "2026"):
+    """
+    Return all players from both teams in a series, sorted by PPG.
+    Used to populate Leading Scorer / Rebounder / Assister dropdowns.
+    """
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+        # Get home/away team abbreviations for this series
+        c.execute("""
+            SELECT ht.abbreviation, at.abbreviation
+            FROM series s
+            JOIN teams ht ON ht.id = s.home_team_id
+            JOIN teams at ON at.id = s.away_team_id
+            WHERE s.id = %s
+        """, (series_id,))
+        row = c.fetchone()
+        if not row:
+            return []
+        abbrevs = [row[0].upper(), row[1].upper()]
+        c.execute("""
+            SELECT ps.player_id, ps.player_name, ps.team_abbreviation,
+                   COALESCE(ps.pts_per_game, 0) AS ppg,
+                   COALESCE(ps.reb_per_game, 0) AS rpg,
+                   COALESCE(ps.ast_per_game, 0) AS apg,
+                   t.logo_url
+            FROM player_stats ps
+            LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
+            WHERE ps.season = %s AND UPPER(ps.team_abbreviation) = ANY(%s)
+            ORDER BY ps.pts_per_game DESC NULLS LAST
+        """, (season, abbrevs))
+        return [
+            {'player_id': r[0], 'name': r[1], 'team': r[2],
+             'ppg': round(float(r[3] or 0), 1),
+             'rpg': round(float(r[4] or 0), 1),
+             'apg': round(float(r[5] or 0), 1),
+             'logo_url': r[6]}
+            for r in c.fetchall()
+        ]
+    except Exception as e:
+        print(f"get_series_players error: {e}")
         return []
     finally:
         if conn:

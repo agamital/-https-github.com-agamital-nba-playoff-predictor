@@ -18,7 +18,7 @@ from datetime import datetime
 # Keep in sync with main.py:_STANDINGS_SYNC_CUTOFF.
 # ---------------------------------------------------------------------------
 _CUTOFF = datetime(2026, 4, 21, 0, 0, 0)   # exclusive — stops ON April 21
-_INTERVAL_SECONDS = 6 * 60 * 60            # 6 hours
+_INTERVAL_SECONDS = 12 * 60 * 60           # 12 hours (2x/day to conserve RapidAPI quota)
 
 # Ensure the backend package is importable when run directly
 sys.path.insert(0, os.path.dirname(__file__))
@@ -27,7 +27,7 @@ from main import _standings_sync_job, NBA_API_AVAILABLE  # noqa: E402
 
 
 def run():
-    print(f"[Worker] Standings sync worker started — runs every {_INTERVAL_SECONDS // 3600}h until {_CUTOFF.date()}")
+    print(f"[Worker] Standings sync worker started — runs every {_INTERVAL_SECONDS // 3600}h (2x/day) until {_CUTOFF.date()}")
 
     if not NBA_API_AVAILABLE:
         print("[Worker] nba_api not installed — worker cannot fetch standings. Exiting.")

@@ -110,12 +110,20 @@ export const getSeries = async (season = '2026', status = null) => {
 };
 
 // Predictions
-export const makePrediction = async (userId, seriesId, predictedWinnerId, predictedGames = null) => {
+export const makePrediction = async (userId, seriesId, predictedWinnerId, predictedGames = null, leaders = {}) => {
   const response = await api.post(`/api/predictions?user_id=${userId}`, {
     series_id: seriesId,
     predicted_winner_id: predictedWinnerId,
     predicted_games: predictedGames,
+    leading_scorer: leaders.scorer || null,
+    leading_rebounder: leaders.rebounder || null,
+    leading_assister: leaders.assister || null,
   });
+  return response.data;
+};
+
+export const getSeriesPlayers = async (seriesId, season = '2026') => {
+  const response = await api.get(`/api/series/${seriesId}/players`, { params: { season } });
   return response.data;
 };
 
