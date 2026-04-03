@@ -9,111 +9,82 @@ recalc, bracket advancement) picks it up automatically.
 SCORING RULES SUMMARY
 ----------------------------------------------------------------------------
 
-NBA EXPERT 50/25/22/3 SCORING MODEL
-Weight allocation:  Series 50% | Leaders 25% | Futures 22% | Play-In 3%
+1. PLAY-IN  -------------------------------------------------------------
+   Correct winner (favourite):   5 pts
+   Correct winner (underdog):    8 pts   (underdog = higher-seeded team)
+   Wrong pick:                   0 pts
 
-1. PLAY-IN (3%)  -------------------------------------------------------------
-   Correct winner:   20 pts (flat)
-   Underdog bonus:  +10 pts  (the higher-seeded / away team wins)
-   Maximum per game: 30 pts
-
-2. PLAYOFF SERIES (50%)  ------------------------------------------------------
-   Base points (before multipliers):
-     Correct winner:              50 pts
-     Exact games (winner also ✓): 50 pts  → 100 pts combined
-     Close Call  (winner ✓, games off by 1): +15 pts  (instead of 50)
+2. PLAYOFF SERIES  -------------------------------------------------------
+   Base points:
+     Correct winner:            50 pts
+     Exact games (winner ✓):   +30 pts  ->80 pts combined
 
    Round multipliers (applied to all pts):
-     First Round              x1.0
-     Conference Semifinals    x1.5
-     Conference Finals        x2.0
-     NBA Finals               x3.0
+     First Round              ×1.0
+     Conference Semifinals    ×1.0
+     Conference Finals        ×1.5
+     NBA Finals (winner)      ×2.5  ← "Correct Champion" bonus
+     NBA Finals (games)       ×2.0
 
-   Underdog multipliers (applied on top of round multiplier):
-     The underdog is always the team with the HIGHER seed number.
-     Picking the favourite -> underdog_mult = 1.0 (no bonus).
-     Picking the underdog (correct):
-       First Round  1 vs 8 -> x2.5
-       First Round  2 vs 7 -> x2.0
-       First Round  3 vs 6 -> x1.5
-       First Round  4 vs 5 -> x1.0   (evenly seeded — no real underdog)
-       Semis / CF / Finals  -> x1.5  (any underdog correct pick)
+   First-Round underdog multipliers (applied on top of round mult):
+     1 vs 8  ->×2.0
+     2 vs 7  ->×1.5
+     3 vs 6  ->×1.2
+     4 vs 5  ->×1.0  (no bonus)
 
-   Full formula:
-     winner_pts   = 50  x round_mult x underdog_mult
-     games_pts    = 50  x round_mult x underdog_mult   (exact games; 0 if wrong)
-     close_bonus  = 15  x round_mult x underdog_mult   (off-by-1 games; 0 otherwise)
-     total        = winner_pts + games_pts  (or winner_pts + close_bonus)
+   Example: R1 1v8 underdog, winner + exact games:
+     winner = 50×1.0×2.0 = 100 pts
+     games  = 30×1.0×2.0 =  60 pts  ->160 pts
 
-   Example calculations:
-     R1 1v8, pick 8-seed correct, games correct:
-       winner_pts = 50 x 1.0 x 2.5 = 125
-       games_pts  = 50 x 1.0 x 2.5 = 125
-       total      = 250 pts
+   Example: Conference Finals favourite, winner + games:
+     winner = 50×1.5×1.0 = 75 pts
+     games  = 30×1.5×1.0 = 45 pts  ->120 pts
 
-     R1 2v7, pick 2-seed (fav) correct, games off by 1 (close call):
-       winner_pts  = 50 x 1.0 x 1.0 = 50
-       close_bonus = 15 x 1.0 x 1.0 = 15
-       total       = 65 pts
+   Example: NBA Finals correct champion + exact games:
+     winner = 50×2.5×1.0 = 125 pts
+     games  = 30×2.0×1.0 =  60 pts ->185 pts
 
-     Conf Semis, pick underdog correct, games correct:
-       winner_pts = 50 x 1.5 x 1.5 = 112
-       games_pts  = 50 x 1.5 x 1.5 = 112
-       total      = 224 pts   (truncated from 225 due to int())
+   Series Statistical Leaders (per series, NEW):
+     Correctly predicting the series leader in Points:   +10 pts
+     Correctly predicting the series leader in Rebounds: +10 pts
+     Correctly predicting the series leader in Assists:  +10 pts
+     (case-insensitive name match)
 
-     NBA Finals, pick favourite correct, games correct:
-       winner_pts = 50 x 3.0 x 1.0 = 150
-       games_pts  = 50 x 3.0 x 1.0 = 150
-       total      = 300 pts
-
-3. FUTURES (22%)  -------------------------------------------------------------
+3. FUTURES / GLOBAL PREDICTIONS  ----------------------------------------
    Base points:
-     NBA Champion          200 pts
-     Western Conference     100 pts
-     Eastern Conference     100 pts
-     Finals MVP             150 pts  (elevated — hard single pick)
-     West Finals MVP         50 pts
-     East Finals MVP         50 pts
+     NBA Champion             100 pts
+     Western Conference        40 pts
+     Eastern Conference        40 pts
+     League MVP (Finals MVP)   30 pts
+     West Conference MVP       20 pts
+     East Conference MVP       20 pts
 
    Odds multiplier:
-     Team categories (champion / west_champ / east_champ):
-       Per-team multiplier stored in teams.odds_championship or teams.odds_conference.
-       Default 1.0 — admin sets per-team odds in the Admin panel.
-       points = base x team.odds_championship   (champion)
-       points = base x team.odds_conference     (conf champs)
-     Player categories (Finals MVP / West MVP / East MVP):
-       Per-category multiplier stored in site_settings (odds_finals_mvp, etc.).
-       points = base x odds_multiplier
-   Team categories matched by integer team_id.
-   Player (MVP) categories matched by case-insensitive string.
+     Team categories: per-team multiplier from teams.odds_championship /
+                      teams.odds_conference  (default 1.0)
+     Player categories: per-category from site_settings (default 1.0)
 
-4. PLAYOFF HIGHS (Leaders)  --------------------------------------------------
-   Users predict the MAX stat value (integer), not the player name.
-   Tiered proximity scoring — closer guesses earn more.
+4. VARIANCE-BASED (Playoff Highs / Leaders)  ----------------------------
+   Users predict the MAX cumulative stat across all playoffs.
+   Tiered proximity scoring.
 
-   Points (scorer):
-     Exact match (delta 0)   : 350 pts  🎯 Bullseye
-     Off by 1–2  (delta 1-2) : 100 pts  ✅ Close
-     Off by 3–4  (delta 3-4) :  40 pts  🟡 Near
-     Off by 5+               :   0 pts  ❌ Miss
+   Points / Assists:
+     Exact  (Δ=0)  : 80 pts
+     Off ±1 (Δ=1)  : 40 pts
+     Off ±2 (Δ=2)  : 20 pts
+     Off ±3+       :  0 pts
 
-   Rebounds & Assists:
-     Exact  (delta 0)        : 300 pts  🎯 Bullseye
-     Off by 1  (delta 1)     :  80 pts  ✅ Close
-     Off by 2  (delta 2)     :  30 pts  🟡 Near
-     Off by 3+               :   0 pts  ❌ Miss
+   Rebounds / Threes:
+     Exact  (Δ=0)  : 50 pts
+     Off ±1 (Δ=1)  : 25 pts
+     Off ±2+       :  0 pts
 
-   Threes Made (3PM):
-     Exact  (delta 0)        : 250 pts  🎯 Bullseye
-     Off by 1  (delta 1)     :  50 pts  ✅ Close
-     Off by 2+               :   0 pts  ❌ Miss
-
-   Steals & Blocks (exact only):
-     Exact  (delta 0)        : 200 pts  🎯 Bullseye
-     Off by 1+               :   0 pts  ❌ Miss
+   Steals / Blocks:
+     Exact  (Δ=0)  : 35 pts
+     Off ±1+       :  0 pts
 
    correctness return values:
-     2 = "bullseye" — exact match
+     2 = "bullseye" — exact match (full points)
      1 = "close"    — proximity hit (partial points)
      0 = miss
      None = result not yet set
@@ -124,61 +95,64 @@ Weight allocation:  Series 50% | Leaders 25% | Futures 22% | Play-In 3%
 from __future__ import annotations
 
 # -- Play-In --------------------------------------------------------------------
-PLAYIN_CORRECT_PTS: int   = 20
-PLAYIN_UNDERDOG_BONUS: int = 10
+PLAYIN_CORRECT_PTS: int    = 5
+PLAYIN_UNDERDOG_BONUS: int = 3   # underdog total = 5+3 = 8 pts
 
 
 # -- Playoff Series -------------------------------------------------------------
-BASE_WINNER_PTS: int  = 50
-BASE_GAMES_PTS: int   = 50
-CLOSE_CALL_BONUS: int = 15   # winner correct + games off by exactly 1
+BASE_WINNER_PTS: int = 50
+BASE_GAMES_PTS: int  = 30   # exact series length bonus
 
+# Round multipliers — applied to both winner and games pts, except Finals winner.
 ROUND_MULTIPLIERS: dict[str, float] = {
     "First Round":            1.0,
-    "Conference Semifinals":  1.5,
-    "Conference Finals":      2.0,
-    "NBA Finals":             3.0,
+    "Conference Semifinals":  1.0,
+    "Conference Finals":      1.5,
+    "NBA Finals":             2.0,   # used for games pts in Finals
 }
 
-# First Round underdog multipliers.
-# Applied only when the correctly predicted team is the UNDERDOG (higher seed).
-# Key = frozenset of the two seed numbers in the matchup.
+# The NBA Finals winner earns the "Correct Champion" multiplier (higher than 2.0×).
+NBA_FINALS_CHAMPION_MULT: float = 2.5
+
+# First Round underdog multipliers (applied when predicted winner = higher seed).
 R1_UNDERDOG_MULTIPLIERS: dict[frozenset, float] = {
-    frozenset({1, 8}): 2.5,
-    frozenset({2, 7}): 2.0,
-    frozenset({3, 6}): 1.5,
-    frozenset({4, 5}): 1.0,  # effectively no bonus — seeds are nearly equal
+    frozenset({1, 8}): 2.0,
+    frozenset({2, 7}): 1.5,
+    frozenset({3, 6}): 1.2,
+    frozenset({4, 5}): 1.0,
 }
 
-# Conf Semis, Conf Finals, NBA Finals: any correct underdog pick gets this.
+# Semis / CF / Finals: any correct underdog pick gets this flat bonus.
 LATE_ROUND_UNDERDOG_MULT: float = 1.5
+
+# Series statistical leader bonus (new — per series, per category)
+SERIES_LEADER_BONUS: int = 10
 
 
 # -- Futures --------------------------------------------------------------------
 FUTURES_BASE_POINTS: dict[str, int] = {
-    "champion":        200,
-    "west_champ":      100,
-    "east_champ":      100,
-    "finals_mvp":      150,
-    "west_finals_mvp":  50,
-    "east_finals_mvp":  50,
+    "champion":        100,   # NBA Champion
+    "west_champ":       40,   # Western Conference Champion
+    "east_champ":       40,   # Eastern Conference Champion
+    "finals_mvp":       30,   # League / Finals MVP
+    "west_finals_mvp":  20,   # West Conference MVP
+    "east_finals_mvp":  20,   # East Conference MVP
 }
 
 
-# -- Playoff Highs (Leaders) ----------------------------------------------------
+# -- Playoff Highs (Leaders) — variance-based tiers ----------------------------
 # Each tier: (max_delta_inclusive, points_awarded).
-# Tiers are checked in order — first matching delta wins.
-# An empty tail means "exact only"; any delta beyond the last tier = 0 pts.
+# Tiers checked in order — first matching delta wins.
 LEADERS_TIERS: dict[str, list[tuple[int, int]]] = {
-    "scorer":   [(0, 350), (2, 100), (4, 40)],   # exact=350, Δ1-2=100, Δ3-4=40
-    "assists":  [(0, 300), (1,  80), (2, 30)],   # exact=300, Δ1=80,   Δ2=30
-    "rebounds": [(0, 300), (1,  80), (2, 30)],   # exact=300, Δ1=80,   Δ2=30
-    "threes":   [(0, 250), (1,  50)],            # exact=250, Δ1=50
-    "steals":   [(0, 200)],                      # exact only
-    "blocks":   [(0, 200)],                      # exact only
+    "scorer":   [(0, 80), (1, 40), (2, 20)],  # exact=80, Δ1=40, Δ2=20
+    "assists":  [(0, 80), (1, 40), (2, 20)],  # exact=80, Δ1=40, Δ2=20
+    "rebounds": [(0, 50), (1, 25)],            # exact=50, Δ1=25
+    "threes":   [(0, 50), (1, 25)],            # exact=50, Δ1=25
+    "steals":   [(0, 35)],                     # exact only
+    "blocks":   [(0, 35)],                     # exact only
 }
 
-# Convenience alias — exact-match point values used by the scoring guide / UI.
+# Convenience alias — exact-match values used by scoring guide / UI.
 LEADERS_POINTS: dict[str, int] = {cat: tiers[0][1] for cat, tiers in LEADERS_TIERS.items()}
 
 
@@ -187,9 +161,9 @@ LEADERS_POINTS: dict[str, int] = {cat: tiers[0][1] for cat, tiers in LEADERS_TIE
 def calculate_play_in_points(is_correct: bool, is_underdog: bool = False) -> int:
     """
     Play-in points.
-    Correct pick:           PLAYIN_CORRECT_PTS (20)
-    + Underdog bonus:      +PLAYIN_UNDERDOG_BONUS (10) when the higher-seeded team wins
-    Wrong pick:             0
+    Correct pick (favourite):  PLAYIN_CORRECT_PTS  (5)
+    Correct pick (underdog):   PLAYIN_CORRECT_PTS + PLAYIN_UNDERDOG_BONUS  (8)
+    Wrong pick:                0
     """
     if not is_correct:
         return 0
@@ -197,7 +171,7 @@ def calculate_play_in_points(is_correct: bool, is_underdog: bool = False) -> int
 
 
 def get_round_multiplier(round_name: str) -> float:
-    """Round multiplier for *round_name*. Returns 1.0 for unknown rounds."""
+    """Games-pts round multiplier for *round_name*. Returns 1.0 for unknown rounds."""
     return ROUND_MULTIPLIERS.get(round_name, 1.0)
 
 
@@ -210,12 +184,9 @@ def get_underdog_multiplier(
     """
     Underdog multiplier for a single series prediction.
 
-    Returns 1.0 when:
-      - any seed is unknown (safe default)
-      - the predicted winner is the favourite (lower seed number)
-
+    Returns 1.0 when seeds are unknown or the predicted winner is the favourite.
     Returns seed-based multiplier (R1) or LATE_ROUND_UNDERDOG_MULT (Semis+)
-    when the predicted winner is the underdog (higher seed number).
+    when the correctly predicted winner is the underdog (higher seed).
     """
     if home_seed is None or away_seed is None or predicted_winner_seed is None:
         return 1.0
@@ -243,12 +214,11 @@ def calculate_series_points(
     """
     Points earned for one playoff-series prediction.
 
-    winner_pts   = BASE_WINNER_PTS x round_mult x underdog_mult
-    games_pts    = BASE_GAMES_PTS  x round_mult x underdog_mult   (exact games)
-    close_bonus  = CLOSE_CALL_BONUS x round_mult x underdog_mult  (games off by 1)
-    total        = winner_pts + games_pts  (or winner_pts + close_bonus)
+    For the NBA Finals the winner uses the champion multiplier (2.5×) while
+    the exact-games bonus still uses the standard round multiplier (2.0×).
+    All other rounds: winner and games share the same multiplier.
 
-    games_diff: abs(predicted_games - actual_games). None → no close-call check.
+    games_diff: abs(predicted_games - actual_games). Unused (kept for API compat).
     """
     if not winner_correct:
         return 0
@@ -256,16 +226,42 @@ def calculate_series_points(
     round_mult    = get_round_multiplier(round_name)
     underdog_mult = get_underdog_multiplier(round_name, home_seed, away_seed, predicted_winner_seed)
 
-    winner_pts = int(BASE_WINNER_PTS * round_mult * underdog_mult)
-
-    if games_correct:
-        games_pts = int(BASE_GAMES_PTS * round_mult * underdog_mult)
-    elif games_diff == 1:
-        games_pts = int(CLOSE_CALL_BONUS * round_mult * underdog_mult)
+    # Finals winner uses the champion multiplier; games use the standard one.
+    if round_name == "NBA Finals":
+        winner_pts = int(BASE_WINNER_PTS * NBA_FINALS_CHAMPION_MULT * underdog_mult)
     else:
-        games_pts = 0
+        winner_pts = int(BASE_WINNER_PTS * round_mult * underdog_mult)
+
+    games_pts = int(BASE_GAMES_PTS * round_mult * underdog_mult) if games_correct else 0
 
     return winner_pts + games_pts
+
+
+def calculate_series_leader_points(
+    predicted: dict,
+    actual: dict,
+) -> int:
+    """
+    Score the three series-leader predictions (scorer, rebounder, assister).
+    Each correct name match earns SERIES_LEADER_BONUS (10 pts).
+    Comparison is case-insensitive; strips whitespace.
+
+    Args:
+        predicted  {'scorer': str|None, 'rebounder': str|None, 'assister': str|None}
+        actual     {'scorer': str|None, 'rebounder': str|None, 'assister': str|None}
+                   falsy value = result not yet set ->skip category.
+
+    Returns total pts (0–30).
+    """
+    pts = 0
+    for cat in ('scorer', 'rebounder', 'assister'):
+        pred_val   = predicted.get(cat)
+        actual_val = actual.get(cat)
+        if not actual_val or not pred_val:
+            continue
+        if str(pred_val).strip().lower() == str(actual_val).strip().lower():
+            pts += SERIES_LEADER_BONUS
+    return pts
 
 
 def calculate_futures_points(
@@ -278,16 +274,11 @@ def calculate_futures_points(
 
     Args:
         predictions  {cat: team_id (int) | player name (str)}
-        actuals      {cat: team_id (int) | player name (str)}  — falsy = result unknown
-        odds         {cat: float}  — multipliers per category.
-                     For team categories (champion/west_champ/east_champ), the caller
-                     should supply the *predicted* team's specific odds from
-                     teams.odds_championship / teams.odds_conference (default 1.0).
-                     For player categories, these come from site_settings.
+        actuals      {cat: team_id (int) | player name (str)}  — falsy = unknown
+        odds         {cat: float}  — per-category multipliers (default 1.0).
 
-    Returns:
-        (total_points, correctness)
-        correctness values: 1 = correct, 0 = wrong, None = result not yet set
+    Returns (total_points, correctness).
+    correctness values: 1 = correct, 0 = wrong, None = result not yet set.
     """
     pts: int = 0
     correct: dict = {}
@@ -300,7 +291,6 @@ def calculate_futures_points(
             correct[cat] = None
             continue
 
-        # Team categories: integer ID comparison.  Player categories: case-insensitive string.
         if isinstance(actual, int):
             is_c = 1 if (pred is not None and int(pred) == actual) else 0
         else:
@@ -318,22 +308,11 @@ def calculate_leaders_points(
     actuals: dict,
 ) -> tuple[int, dict]:
     """
-    Score a playoff-highs (leaders) prediction row using tiered proximity scoring.
+    Score a playoff-highs (leaders) prediction using tiered proximity scoring.
+    Users predict the MAX cumulative stat value across the playoffs as an integer.
 
-    Users predict the MAX stat value as a positive integer (e.g. 550 total points).
-    Points scale down as the prediction moves further from the actual value.
-
-    Args:
-        predictions  {cat: int | str | None}  — user's predicted max stat value
-        actuals      {cat: int | str | None}  — actual max stat value; falsy = not set
-
-    Returns:
-        (total_points, correctness)
-        correctness values:
-            2    = bullseye (exact match — full points)
-            1    = close    (proximity hit — partial points)
-            0    = miss     (no points)
-            None = result not yet set
+    Returns (total_points, correctness).
+    correctness values: 2=bullseye, 1=close, 0=miss, None=not set.
     """
     pts: int = 0
     correct: dict = {}
@@ -342,12 +321,10 @@ def calculate_leaders_points(
         pred   = predictions.get(cat)
         actual = actuals.get(cat)
 
-        # Result not yet set
         if actual is None or actual == '' or actual == 0:
             correct[cat] = None
             continue
 
-        # Coerce both to int (handles strings from DB/API)
         try:
             actual_int = int(actual)
             pred_int   = int(pred) if pred is not None and pred != '' else None
@@ -365,7 +342,6 @@ def calculate_leaders_points(
 
         delta = abs(pred_int - actual_int)
 
-        # Walk tiers — first tier whose max_delta >= delta wins
         awarded = 0
         for max_delta, tier_pts in tiers:
             if delta <= max_delta:
@@ -395,152 +371,100 @@ if __name__ == "__main__":
             print(f"  OK  {label}: {got}")
 
     print("\n-- Play-In -------------------------------------------")
-    check("correct pick, no underdog",    calculate_play_in_points(True),               20)
-    check("correct pick, underdog bonus", calculate_play_in_points(True, is_underdog=True), 30)
-    check("wrong pick",                   calculate_play_in_points(False),               0)
+    check("correct pick favourite (5)",        calculate_play_in_points(True),               5)
+    check("correct pick underdog (8)",         calculate_play_in_points(True, is_underdog=True), 8)
+    check("wrong pick (0)",                    calculate_play_in_points(False),               0)
 
-    print("\n-- Series: First Round (x1.0) ----------------------")
-    # 1v8 underdog correct + games correct -> 50x1x2.5 + 50x1x2.5 = 125+125 = 250
-    check("R1 1v8 underdog+games", calculate_series_points("First Round", 1, 8, 8, True, True),  250)
-    # 1v8 underdog correct, games off by 1 (close call) -> 125 + 15x1x2.5 = 125+37 = 162
-    check("R1 1v8 underdog close", calculate_series_points("First Round", 1, 8, 8, True, False, games_diff=1), 162)
-    # 1v8 underdog correct, games wrong -> 125
-    check("R1 1v8 underdog only",  calculate_series_points("First Round", 1, 8, 8, True, False), 125)
-    # 1v8 favourite correct + games -> 50x1x1 + 50x1x1 = 100
-    check("R1 1v8 fav+games",      calculate_series_points("First Round", 1, 8, 1, True, True),  100)
-    # 1v8 favourite correct, close call -> 50 + 15 = 65
-    check("R1 1v8 fav close call", calculate_series_points("First Round", 1, 8, 1, True, False, games_diff=1), 65)
-    # 2v7 underdog+games -> (50+50)x1x2.0 = 200
-    check("R1 2v7 underdog+games", calculate_series_points("First Round", 2, 7, 7, True, True),  200)
-    # 3v6 underdog+games -> (50+50)x1x1.5 = 150
-    check("R1 3v6 underdog+games", calculate_series_points("First Round", 3, 6, 6, True, True),  150)
-    # 4v5 underdog+games -> (50+50)x1x1.0 = 100
-    check("R1 4v5 underdog+games", calculate_series_points("First Round", 4, 5, 5, True, True),  100)
-    # Wrong winner -> 0
-    check("R1 wrong winner",       calculate_series_points("First Round", 1, 8, 8, False, False), 0)
+    print("\n-- Series: First Round (×1.0) ----------------------")
+    # 1v8 underdog correct + games  ->50×1×2.0 + 30×1×2.0 = 100+60 = 160
+    check("R1 1v8 underdog+games",   calculate_series_points("First Round", 1, 8, 8, True, True),  160)
+    # 1v8 underdog correct only     ->100
+    check("R1 1v8 underdog only",    calculate_series_points("First Round", 1, 8, 8, True, False), 100)
+    # 1v8 favourite + games         ->50×1×1 + 30×1×1 = 80
+    check("R1 1v8 fav+games",        calculate_series_points("First Round", 1, 8, 1, True, True),   80)
+    # 2v7 underdog+games            ->(50+30)×1.5 = 120
+    check("R1 2v7 underdog+games",   calculate_series_points("First Round", 2, 7, 7, True, True),  120)
+    # 3v6 underdog+games            ->(50+30)×1.2 = 96
+    check("R1 3v6 underdog+games",   calculate_series_points("First Round", 3, 6, 6, True, True),   96)
+    # 4v5 underdog+games            ->(50+30)×1.0 = 80
+    check("R1 4v5 underdog+games",   calculate_series_points("First Round", 4, 5, 5, True, True),   80)
+    # wrong winner ->0
+    check("R1 wrong winner",         calculate_series_points("First Round", 1, 8, 8, False, False),  0)
 
-    print("\n-- Series: Conference Semifinals (x1.5) -------------")
-    # Semis underdog correct+games -> int(50x1.5x1.5)+int(50x1.5x1.5) = 112+112 = 224
-    check("Semis underdog+games",  calculate_series_points("Conference Semifinals", 3, 6, 6, True, True),  224)
-    # Semis favourite correct only -> 50x1.5x1.0 = 75
-    check("Semis fav only",        calculate_series_points("Conference Semifinals", 3, 6, 3, True, False),  75)
-    # Semis favourite close call -> 50x1.5 + 15x1.5 = 75+22 = 97
-    check("Semis fav close call",  calculate_series_points("Conference Semifinals", 3, 6, 3, True, False, games_diff=1), 97)
+    print("\n-- Series: Conference Semifinals (×1.0) -------------")
+    # Semis fav + games ->50×1×1 + 30×1×1 = 80
+    check("Semis fav+games",         calculate_series_points("Conference Semifinals", 3, 6, 3, True, True),   80)
+    # Semis underdog+games ->int(50×1×1.5)+int(30×1×1.5) = 75+45 = 120
+    check("Semis underdog+games",    calculate_series_points("Conference Semifinals", 3, 6, 6, True, True),  120)
 
-    print("\n-- Series: Conference Finals (x2.0) -----------------")
-    # CF underdog+games -> (50+50)x2.0x1.5 = 300
-    check("CF underdog+games",     calculate_series_points("Conference Finals", 4, 6, 6, True, True),  300)
+    print("\n-- Series: Conference Finals (×1.5) -----------------")
+    # CF fav+games ->50×1.5 + 30×1.5 = 75+45 = 120
+    check("CF fav+games",            calculate_series_points("Conference Finals", 3, 6, 3, True, True),  120)
+    # CF underdog+games ->int(50×1.5×1.5)+int(30×1.5×1.5) = 112+67 = 179
+    check("CF underdog+games",       calculate_series_points("Conference Finals", 3, 6, 6, True, True),  179)
 
-    print("\n-- Series: NBA Finals (x3.0) ------------------------")
-    # Finals fav+games -> (50+50)x3.0x1.0 = 300
-    check("Finals fav+games",      calculate_series_points("NBA Finals", 2, 5, 2, True, True),  300)
-    # Finals underdog+games -> (50+50)x3.0x1.5 = 450
-    check("Finals underdog+games", calculate_series_points("NBA Finals", 2, 5, 5, True, True),  450)
+    print("\n-- Series: NBA Finals (winner×2.5, games×2.0) -------")
+    # Finals fav+games ->50×2.5 + 30×2.0 = 125+60 = 185
+    check("Finals fav+games",        calculate_series_points("NBA Finals", 2, 5, 2, True, True),  185)
+    # Finals fav only   ->125
+    check("Finals fav only",         calculate_series_points("NBA Finals", 2, 5, 2, True, False), 125)
+    # Finals underdog+games ->int(50×2.5×1.5)+int(30×2.0×1.5) = 187+90 = 277
+    check("Finals underdog+games",   calculate_series_points("NBA Finals", 2, 5, 5, True, True),  277)
 
-    print("\n-- Series: unknown seeds -----------------------------")
-    # Unknown seeds → no underdog bonus → (50+50)x1.5x1.0 = 150
-    check("Semis unknown seeds",   calculate_series_points("Conference Semifinals", None, None, None, True, True), 150)
+    print("\n-- Series Leaders ------------------------------------")
+    check("all 3 correct -> 30 pts",
+          calculate_series_leader_points(
+              {"scorer": "LeBron James", "rebounder": "Anthony Davis", "assister": "Draymond Green"},
+              {"scorer": "lebron james", "rebounder": "Anthony Davis", "assister": "draymond green"}
+          ), 30)
+    check("1 of 3 correct -> 10 pts",
+          calculate_series_leader_points(
+              {"scorer": "LeBron James", "rebounder": "Wrong Guy", "assister": None},
+              {"scorer": "LeBron James", "rebounder": "Anthony Davis", "assister": None}
+          ), 10)
+    check("result not set -> 0 pts",
+          calculate_series_leader_points({"scorer": "LeBron"}, {"scorer": None}), 0)
 
     print("\n-- Futures -------------------------------------------")
-    preds   = {"champion": 1, "west_champ": 2, "east_champ": 3, "finals_mvp": "Shai", "west_finals_mvp": None, "east_finals_mvp": None}
-    actuals = {"champion": 1, "west_champ": 9, "east_champ": 3, "finals_mvp": "shai gilgeous-alexander", "west_finals_mvp": None, "east_finals_mvp": None}
-    odds    = {"champion": 1.5, "west_champ": 1.0, "east_champ": 1.0, "finals_mvp": 1.0, "west_finals_mvp": 1.0, "east_finals_mvp": 1.0}
-    pts, correct = calculate_futures_points(preds, actuals, odds)
-    check("futures champion correct (x1.5)",  correct["champion"],  1)
-    check("futures west_champ wrong",         correct["west_champ"], 0)
-    check("futures east_champ correct",       correct["east_champ"], 1)
-    check("futures finals_mvp wrong (partial name)", correct["finals_mvp"], 0)
-    check("futures total pts",                pts, int(200*1.5) + 100)  # champion 300 + east_champ 100 = 400
+    preds   = {"champion": 1, "west_champ": 2, "east_champ": 3,
+               "finals_mvp": "Shai", "west_finals_mvp": None, "east_finals_mvp": None}
+    actuals = {"champion": 1, "west_champ": 9, "east_champ": 3,
+               "finals_mvp": "shai gilgeous-alexander", "west_finals_mvp": None, "east_finals_mvp": None}
+    odds    = {"champion": 1.5, "west_champ": 1.0, "east_champ": 1.0,
+               "finals_mvp": 1.0, "west_finals_mvp": 1.0, "east_finals_mvp": 1.0}
+    pts_f, correct_f = calculate_futures_points(preds, actuals, odds)
+    check("champion correct (x1.5) -> 150",  correct_f["champion"],  1)
+    check("west_champ wrong ->0",           correct_f["west_champ"], 0)
+    check("east_champ correct ->40",        correct_f["east_champ"], 1)
+    check("finals_mvp partial name wrong",  correct_f["finals_mvp"], 0)
+    check("futures total pts",              pts_f, int(100*1.5) + 40)  # 150+40=190
 
-    print("\n-- Futures: result not yet set -----------------------")
-    pts2, c2 = calculate_futures_points({"champion": 1}, {"champion": None}, {})
-    check("futures result unknown -> None", c2["champion"], None)
-    check("futures result unknown -> 0 pts", pts2, 0)
-
-    print("\n-- Leaders / Playoff Highs — exact matches ------------")
+    print("\n-- Leaders/Highs — exact matches ----------------------")
     lp, lc = calculate_leaders_points(
         {"scorer": 550, "assists": 200, "rebounds": 300, "threes": 55, "steals": 35, "blocks": 40},
         {"scorer": 550, "assists": 200, "rebounds": 300, "threes": 55, "steals": 35, "blocks": 40},
     )
-    check("leaders scorer exact -> bullseye (2)",   lc["scorer"],   2)
-    check("leaders assists exact -> bullseye (2)",  lc["assists"],  2)
-    check("leaders rebounds exact -> bullseye (2)", lc["rebounds"], 2)
-    check("leaders threes exact -> bullseye (2)",   lc["threes"],   2)
-    check("leaders steals exact -> bullseye (2)",   lc["steals"],   2)
-    check("leaders blocks exact -> bullseye (2)",   lc["blocks"],   2)
-    check("leaders total pts all exact (350+300+300+250+200+200)", lp, 1600)
+    check("scorer exact ->2",   lc["scorer"],   2)
+    check("assists exact ->2",  lc["assists"],  2)
+    check("rebounds exact ->2", lc["rebounds"], 2)
+    check("threes exact ->2",   lc["threes"],   2)
+    check("steals exact ->2",   lc["steals"],   2)
+    check("blocks exact ->2",   lc["blocks"],   2)
+    check("all exact total (80+80+50+50+35+35=330)", lp, 330)
 
-    print("\n-- Leaders — proximity tiers --------------------------")
-    # scorer off by 2 -> 100 pts, close (1)
-    lp2a, lc2a = calculate_leaders_points({"scorer": 548}, {"scorer": 550})
-    check("scorer off 2 -> 100 pts",   lp2a, 100)
-    check("scorer off 2 -> close (1)", lc2a["scorer"], 1)
-
-    # scorer off by 4 -> 40 pts
-    lp2b, lc2b = calculate_leaders_points({"scorer": 554}, {"scorer": 550})
-    check("scorer off 4 -> 40 pts",    lp2b, 40)
-    check("scorer off 4 -> close (1)", lc2b["scorer"], 1)
-
-    # scorer off by 5 -> 0 pts
-    lp2c, lc2c = calculate_leaders_points({"scorer": 545}, {"scorer": 550})
-    check("scorer off 5 -> 0 pts",     lp2c, 0)
-    check("scorer off 5 -> miss (0)",  lc2c["scorer"], 0)
-
-    # assists off by 1 -> 80 pts
-    lp3a, lc3a = calculate_leaders_points({"assists": 201}, {"assists": 200})
-    check("assists off 1 -> 80 pts",   lp3a, 80)
-
-    # assists off by 2 -> 30 pts
-    lp3b, lc3b = calculate_leaders_points({"assists": 198}, {"assists": 200})
-    check("assists off 2 -> 30 pts",   lp3b, 30)
-
-    # assists off by 3 -> 0 pts
-    lp3c, lc3c = calculate_leaders_points({"assists": 203}, {"assists": 200})
-    check("assists off 3 -> 0 pts",    lp3c, 0)
-
-    # threes off by 1 -> 50 pts
-    lp4a, _ = calculate_leaders_points({"threes": 56}, {"threes": 55})
-    check("threes off 1 -> 50 pts",    lp4a, 50)
-
-    # threes off by 2 -> 0 pts (exact/off-1 only for threes)
-    lp4b, _ = calculate_leaders_points({"threes": 57}, {"threes": 55})
-    check("threes off 2 -> 0 pts",     lp4b, 0)
-
-    # steals off by 1 -> 0 pts (exact only)
-    lp5, lc5 = calculate_leaders_points({"steals": 36}, {"steals": 35})
-    check("steals off 1 -> 0 pts (exact only)", lp5, 0)
-    check("steals off 1 -> miss (0)",           lc5["steals"], 0)
-
-    # blocks off by 1 -> 0 pts (exact only)
-    lp6, lc6 = calculate_leaders_points({"blocks": 39}, {"blocks": 40})
-    check("blocks off 1 -> 0 pts (exact only)", lp6, 0)
-
-    print("\n-- Leaders — mixed result -------------------------")
-    lpm, lcm = calculate_leaders_points(
-        {"scorer": 550, "assists": 201, "rebounds": 303, "threes": None, "steals": 80, "blocks": None},
-        {"scorer": 550, "assists": 200, "rebounds": 300, "threes": 55,   "steals": 80, "blocks": None},
-    )
-    check("mixed scorer exact (2)",     lcm["scorer"],   2)
-    check("mixed assists off 1 (1)",    lcm["assists"],  1)
-    check("mixed rebounds off 3 (0)",   lcm["rebounds"], 0)
-    check("mixed threes not picked (0)",lcm["threes"],   0)
-    check("mixed steals exact (2)",     lcm["steals"],   2)
-    check("mixed blocks not set (None)",lcm["blocks"],   None)
-    check("mixed total pts 350+80+200", lpm, 630)
-
-    print("\n-- Leaders: string-int coercion -----------------------")
-    lps, lcs = calculate_leaders_points(
-        {"scorer": "550", "assists": "201"},
-        {"scorer": 550,   "assists": 200},
-    )
-    check("str pred exact match -> 2", lcs["scorer"],  2)
-    check("str pred off 1 -> 1",       lcs["assists"], 1)
-
-    print("\n-- Leaders: zero / missing actual -> None -------------")
-    _, lc3 = calculate_leaders_points({"scorer": 550}, {"scorer": 0})
-    check("leaders actual=0 -> None", lc3["scorer"], None)
-    _, lc4 = calculate_leaders_points({"scorer": 550}, {"scorer": None})
-    check("leaders actual=None -> None", lc4["scorer"], None)
+    print("\n-- Leaders — proximity tiers -------------------------")
+    lp2, lc2 = calculate_leaders_points({"scorer": 549}, {"scorer": 550})
+    check("scorer off 1 ->40",          lp2, 40)
+    lp3, lc3 = calculate_leaders_points({"scorer": 548}, {"scorer": 550})
+    check("scorer off 2 ->20",          lp3, 20)
+    lp4, lc4 = calculate_leaders_points({"scorer": 546}, {"scorer": 550})
+    check("scorer off 4 ->0",           lp4, 0)
+    lp5, lc5 = calculate_leaders_points({"rebounds": 299}, {"rebounds": 300})
+    check("rebounds off 1 ->25",        lp5, 25)
+    lp6, lc6 = calculate_leaders_points({"rebounds": 298}, {"rebounds": 300})
+    check("rebounds off 2 ->0",         lp6, 0)
+    lp7, _   = calculate_leaders_points({"steals": 36}, {"steals": 35})
+    check("steals off 1 ->0",           lp7, 0)
 
     print()
     if errors:
@@ -548,4 +472,4 @@ if __name__ == "__main__":
             print(e)
         raise SystemExit(f"\n{len(errors)} test(s) failed")
     else:
-        print(f"All tests passed")
+        print("All tests passed")

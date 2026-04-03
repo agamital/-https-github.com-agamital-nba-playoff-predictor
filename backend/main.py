@@ -16,10 +16,12 @@ import psycopg2.extras
 from scoring import (
     calculate_play_in_points,
     calculate_series_points,
+    calculate_series_leader_points,
     calculate_futures_points,
     calculate_leaders_points,
     FUTURES_BASE_POINTS,
     LEADERS_POINTS,
+    SERIES_LEADER_BONUS,
 )
 
 _standings_cache = {"data": None, "expires": None, "fetched_at": None}
@@ -281,6 +283,15 @@ def init_db():
     except Exception as e:
         print(f"init_db: series.actual_games migration: {e}")
         c.execute('ROLLBACK TO SAVEPOINT sp_series_games')
+    # Add actual series-leader columns for scoring
+    for _col in ('actual_leading_scorer', 'actual_leading_rebounder', 'actual_leading_assister'):
+        c.execute(f'SAVEPOINT sp_{_col}')
+        try:
+            c.execute(f'ALTER TABLE series ADD COLUMN IF NOT EXISTS {_col} TEXT')
+            c.execute(f'RELEASE SAVEPOINT sp_{_col}')
+        except Exception as e:
+            print(f"init_db: series.{_col} migration: {e}")
+            c.execute(f'ROLLBACK TO SAVEPOINT sp_{_col}')
 
     c.execute('''CREATE TABLE IF NOT EXISTS playin_games (
         id SERIAL PRIMARY KEY,
@@ -4048,7 +4059,15 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
 
 
 @app.post("/api/admin/series/{series_id}/result")
-async def set_series_result(series_id: int, winner_team_id: int, actual_games: int, manual_override: bool = False):
+async def set_series_result(
+    series_id: int,
+    winner_team_id: int,
+    actual_games: int,
+    manual_override: bool = False,
+    actual_leading_scorer: str | None = None,
+    actual_leading_rebounder: str | None = None,
+    actual_leading_assister: str | None = None,
+):
     conn = get_db_conn()
     c = conn.cursor()
 
@@ -4068,20 +4087,26 @@ async def set_series_result(series_id: int, winner_team_id: int, actual_games: i
     if current_status == 'completed':
         c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (series_id,))
 
-    # Mark series completed with manual_override flag
+    # Mark series completed with manual_override flag and actual leaders
     c.execute('''UPDATE series SET winner_team_id = %s, actual_games = %s, status = %s,
-                 manual_override = %s WHERE id = %s''',
-              (winner_team_id, actual_games, 'completed', manual_override, series_id))
+                 manual_override = %s,
+                 actual_leading_scorer = %s,
+                 actual_leading_rebounder = %s,
+                 actual_leading_assister = %s
+                 WHERE id = %s''',
+              (winner_team_id, actual_games, 'completed', manual_override,
+               actual_leading_scorer, actual_leading_rebounder, actual_leading_assister,
+               series_id))
 
     # Score each prediction individually so underdog multipliers apply per pick
-    c.execute('SELECT id, predicted_winner_id, predicted_games FROM predictions WHERE series_id = %s',
-              (series_id,))
-    for pred_id, pred_winner_id, pred_games in c.fetchall():
+    c.execute('''SELECT id, predicted_winner_id, predicted_games,
+                        leading_scorer, leading_rebounder, leading_assister
+                 FROM predictions WHERE series_id = %s''', (series_id,))
+    for pred_id, pred_winner_id, pred_games, pred_scorer, pred_rebounder, pred_assister in c.fetchall():
         winner_correct = (pred_winner_id == winner_team_id)
         games_correct  = (pred_games == actual_games)
         games_diff     = abs(pred_games - actual_games) if pred_games is not None else None
 
-        # Determine which seed the user predicted
         if pred_winner_id == home_team_id:
             pred_seed = home_seed
         elif pred_winner_id == away_team_id:
@@ -4093,6 +4118,11 @@ async def set_series_result(series_id: int, winner_team_id: int, actual_games: i
             round_name, home_seed, away_seed, pred_seed,
             winner_correct=winner_correct, games_correct=games_correct,
             games_diff=games_diff,
+        )
+        # Add series leader bonus
+        pts += calculate_series_leader_points(
+            {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
+            {"scorer": actual_leading_scorer, "rebounder": actual_leading_rebounder, "assister": actual_leading_assister},
         )
         is_correct = 1 if winner_correct else 0
         c.execute('UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s',
@@ -4123,6 +4153,8 @@ async def reset_series_result(series_id: int):
 
     # Reset series to active
     c.execute('''UPDATE series SET winner_team_id = NULL, actual_games = NULL,
+                 actual_leading_scorer = NULL, actual_leading_rebounder = NULL,
+                 actual_leading_assister = NULL,
                  status = 'active', manual_override = FALSE WHERE id = %s''', (series_id,))
 
     _recalculate_all_points(c)
