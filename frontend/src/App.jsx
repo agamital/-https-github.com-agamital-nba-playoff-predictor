@@ -55,78 +55,6 @@ const GoogleIcon = () => (
   </svg>
 );
 
-// ── PWA Install Banner ────────────────────────────────────────────────────────
-const InstallBanner = ({ onNavigate }) => {
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [dismissed, setDismissed]           = useState(() => localStorage.getItem('pwa-banner-dismissed') === '1');
-  const [showIOSTip, setShowIOSTip]         = useState(false);
-  const [installed, setInstalled]           = useState(false);
-
-  useEffect(() => {
-    const handler = (e) => { e.preventDefault(); setDeferredPrompt(e); };
-    window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => setInstalled(true));
-    return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, []);
-
-  if (dismissed || installed) return null;
-
-  // iOS detection (no beforeinstallprompt support)
-  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone;
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-  if (isStandalone) return null;
-
-  const handleInstall = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === 'accepted') setInstalled(true);
-      setDeferredPrompt(null);
-    } else if (isIOS) {
-      setShowIOSTip(v => !v);
-    }
-  };
-
-  const handleDismiss = () => {
-    localStorage.setItem('pwa-banner-dismissed', '1');
-    setDismissed(true);
-  };
-
-  return (
-    <div className="relative bg-gradient-to-r from-orange-500/15 to-red-500/15 border border-orange-500/25 rounded-2xl p-4 mb-6 overflow-hidden">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center shrink-0 shadow-lg">
-          <Download className="w-5 h-5 text-white" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-black text-white leading-tight">Add to Home Screen</p>
-          <p className="text-[11px] text-slate-400 mt-0.5">Install for a faster, full-screen experience</p>
-          {showIOSTip && (
-            <p className="text-[11px] text-orange-300 mt-1.5 leading-relaxed">
-              Tap <Share className="w-3 h-3 inline-block" /> <strong>Share</strong> at the bottom of Safari, then <strong>"Add to Home Screen"</strong>.
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={handleInstall}
-            className="px-3 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-black transition-colors active:scale-95"
-          >
-            {isIOS ? 'How?' : 'Install'}
-          </button>
-          <button
-            onClick={handleDismiss}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
-            aria-label="Dismiss"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const HomePage = ({ currentUser, onNavigate, onLogin }) => {
   const [mode, setMode] = useState('login'); // 'login' | 'reset'
   const [formData, setFormData] = useState({ username: '', password: '', newPassword: '' });
@@ -246,9 +174,6 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
 
     return (
       <div className="max-w-2xl mx-auto px-4 py-8 md:py-10">
-        {/* PWA install banner */}
-        <InstallBanner onNavigate={onNavigate} />
-
         {/* Hero */}
         <div className="text-center mb-6">
           <div className="inline-flex items-center px-3 py-1.5 rounded-full bg-orange-500/20 border border-orange-500/30 mb-4">
@@ -445,9 +370,6 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
 
   return (
     <div className="min-h-[calc(100dvh-7rem)] flex flex-col items-center justify-center px-4 py-8">
-      <div className="w-full max-w-sm mb-2">
-        <InstallBanner />
-      </div>
       {/* ── Brand header ── */}
       <div className="text-center mb-8">
         <div className="w-16 h-16 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-orange-500/30">
