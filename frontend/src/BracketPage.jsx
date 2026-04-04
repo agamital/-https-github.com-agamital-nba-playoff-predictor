@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
-import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS } from './scoringConstants';
+import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS, PLAYIN_UNDERDOG_PTS } from './scoringConstants';
 import CommunityInsights from './components/CommunityInsights';
 
 // Strip diacritics/accents for dedup — matches backend _normalize_name().
@@ -221,23 +221,31 @@ const PlayInCard = ({ game, pick, onTeamClick }) => {
   const { team1, team2 } = game;
   const p1 = pick?.teamId === team1?.id;
   const p2 = pick?.teamId === team2?.id;
+  const underdogId = (team1?.seed ?? 0) > (team2?.seed ?? 0) ? team1?.id : team2?.id;
 
-  const teamRow = (team, picked, onClick) => (
-    <button onClick={onClick}
-      className={`flex-1 flex items-center gap-2 px-3 w-full transition-all ${picked ? 'bg-orange-500/25' : 'hover:bg-slate-800/70'}`}>
-      <span className="text-[11px] text-slate-500 w-4 shrink-0 font-bold">{team?.seed}</span>
-      <img src={team?.logo_url} alt="" className="w-7 h-7 shrink-0" onError={e => e.target.style.display = 'none'} />
-      <span className={`text-xs font-bold truncate ${picked ? 'text-orange-400' : 'text-white'}`}>{team?.abbreviation}</span>
-      {picked && <ChevronRight className="ml-auto w-3 h-3 text-orange-400 shrink-0" />}
-    </button>
-  );
+  const teamRow = (team, picked, onClick) => {
+    const isUnderdog = team?.id === underdogId;
+    const pts = isUnderdog ? PLAYIN_UNDERDOG_PTS : PLAYIN_PTS;
+    return (
+      <button onClick={onClick}
+        className={`flex-1 flex items-center gap-2 px-2 w-full transition-all ${
+          picked && isUnderdog ? 'bg-amber-500/20' : picked ? 'bg-orange-500/25' : 'hover:bg-slate-800/70'
+        }`}>
+        <span className="text-[11px] text-slate-500 w-4 shrink-0 font-bold">{team?.seed}</span>
+        <img src={team?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
+        <span className={`text-xs font-bold truncate flex-1 ${picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-white'}`}>{team?.abbreviation}</span>
+        <span className={`text-[9px] font-black px-1 py-0.5 rounded shrink-0 ${
+          isUnderdog ? 'text-amber-400 bg-amber-500/15' : 'text-slate-500 bg-slate-800'
+        }`}>+{pts}</span>
+      </button>
+    );
+  };
 
   return (
     <div style={{ height: CH }}
-      className={`w-40 border-2 rounded-xl flex flex-col overflow-hidden transition-all cursor-pointer bg-slate-900/80 relative ${
+      className={`w-40 border-2 rounded-xl flex flex-col overflow-hidden transition-all cursor-pointer bg-slate-900/80 ${
         (p1 || p2) ? 'border-orange-500/40 shadow-md shadow-orange-500/10' : 'border-slate-700/60 hover:border-slate-600'
       }`}>
-      <span className="absolute top-1 right-1.5 text-[9px] font-black text-cyan-400/70 z-10">+{PLAYIN_PTS}pts</span>
       {teamRow(team1, p1, () => onTeamClick(game, team1?.id))}
       <div className="h-px bg-slate-800" />
       {teamRow(team2, p2, () => onTeamClick(game, team2?.id))}
@@ -256,9 +264,13 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
                    : pickedTeamId === series?.away_team?.id ? awaySeed
                    : null;
   const { winnerPts, gamesPts, totalPts } = calcSeriesPts(roundName, homeSeed, awaySeed, pickedSeed);
-  const roundMult  = getRoundMult(roundName);
+  const roundMult    = getRoundMult(roundName);
   const underdogMult = getUnderdogMult(roundName, homeSeed, awaySeed, pickedSeed);
-  const isUnderdog = underdogMult > 1.0;
+  const isUnderdog   = underdogMult > 1.0;
+  // Compute bonus above favourite's max pts for the bonus-pop label
+  const favSeed      = pickedSeed === homeSeed ? awaySeed : homeSeed;
+  const { totalPts: favTotalPts } = calcSeriesPts(roundName, homeSeed, awaySeed, favSeed);
+  const bonusAboveFav = totalPts - favTotalPts;
 
   const { data: seriesPlayers = [] } = useQuery({
     queryKey: ['seriesPlayers', seriesId],
@@ -282,17 +294,24 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
         }`}>
           {isUnderdog ? '🔥 RISKY' : '🛡️ SAFE'}
         </span>
-        {roundMult > 1 && (
-          <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">
-            ×{roundMult}
-          </span>
-        )}
+        <div className="flex items-center gap-1">
+          {isUnderdog && (
+            <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5">
+              ×{underdogMult}ud
+            </span>
+          )}
+          {roundMult > 1 && (
+            <span className="text-[9px] font-black text-slate-500 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">
+              ×{roundMult}rd
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Bonus pop for underdog */}
       {isUnderdog && (
         <p key={pickedSeed} className="bonus-pop text-[9px] font-black text-amber-400 text-center bg-amber-500/10 rounded py-0.5">
-          +{totalPts - Math.floor(20 * roundMult) - Math.floor(40 * roundMult)} bonus pts vs fav
+          +{bonusAboveFav} bonus vs fav pick
         </p>
       )}
 
@@ -337,19 +356,36 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
   );
 };
 
-const PlayInPicker = ({ gameId, pick, onSave, saved }) => (
-  <div className="w-40 bg-slate-950/80 border border-orange-500/20 rounded-xl px-2 py-2 space-y-1.5 shadow-lg">
-    <p className="text-[9px] text-cyan-400/80 font-black text-center">+{PLAYIN_PTS} pts if correct</p>
-    <button onClick={() => onSave(gameId)} disabled={!pick?.teamId}
-      className={`w-full py-1.5 rounded-lg text-xs font-black tracking-wide transition-all ${
-        saved ? 'bg-green-500/20 border border-green-500/40 text-green-400' :
-        !pick?.teamId ? 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed' :
-        'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-500/30'
-      }`}>
-      {saved ? '✓ Saved!' : 'Save Pick'}
-    </button>
-  </div>
-);
+const PlayInPicker = ({ game, pick, onSave, saved }) => {
+  const underdogId = (game?.team1?.seed ?? 0) > (game?.team2?.seed ?? 0) ? game?.team1?.id : game?.team2?.id;
+  const isUnderdogPick = pick?.teamId != null && pick.teamId === underdogId;
+  const pts = isUnderdogPick ? PLAYIN_UNDERDOG_PTS : PLAYIN_PTS;
+  return (
+    <div className={`w-40 rounded-xl px-2 py-2 space-y-1.5 shadow-lg ${
+      isUnderdogPick
+        ? 'bg-slate-950/90 border border-amber-500/30 shadow-amber-500/10'
+        : 'bg-slate-950/80 border border-orange-500/20'
+    }`}>
+      {isUnderdogPick ? (
+        <div className="text-center">
+          <p className="text-[9px] font-black text-amber-400">🔥 Underdog Bonus!</p>
+          <p className="text-[8px] text-amber-400/60 font-bold">+{pts} pts if correct</p>
+        </div>
+      ) : (
+        <p className="text-[9px] text-cyan-400/80 font-black text-center">+{pts} pts if correct</p>
+      )}
+      <button onClick={() => onSave(game?.id)} disabled={!pick?.teamId}
+        className={`w-full py-1.5 rounded-lg text-xs font-black tracking-wide transition-all ${
+          saved ? 'bg-green-500/20 border border-green-500/40 text-green-400' :
+          !pick?.teamId ? 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed' :
+          isUnderdogPick ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md shadow-amber-500/30' :
+          'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-500/30'
+        }`}>
+        {saved ? '✓ Saved!' : `Save Pick • +${pts} pts`}
+      </button>
+    </div>
+  );
+};
 
 // ── Desktop columns ───────────────────────────────────────────────────────────
 
@@ -390,7 +426,7 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
                 <PlayInCard game={game} pick={pick} onTeamClick={onTeamClick} />
                 {game && pick?.teamId && (
                   <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
-                    <PlayInPicker gameId={game.id} pick={pick} onSave={onSave} saved={saved[game.id]} />
+                    <PlayInPicker game={game} pick={pick} onSave={onSave} saved={saved[game.id]} />
                   </div>
                 )}
               </div>
@@ -491,24 +527,37 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
   const { team1, team2 } = game;
   const p1 = pick?.teamId === team1?.id;
   const p2 = pick?.teamId === team2?.id;
+  const underdogId = (team1?.seed ?? 0) > (team2?.seed ?? 0) ? team1?.id : team2?.id;
+  const pickedIsUnderdog = (p1 && team1?.id === underdogId) || (p2 && team2?.id === underdogId);
+  const pickedPts = pickedIsUnderdog ? PLAYIN_UNDERDOG_PTS : PLAYIN_PTS;
 
-  const teamBtn = (team, picked, onClick) => (
-    <button onClick={onClick}
-      className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all w-full ${
-        picked ? 'border-orange-500 bg-orange-500/15' : 'border-slate-700 bg-slate-900/60 hover:border-slate-600'
-      }`}>
-      <span className={`text-xs font-black w-5 ${picked ? 'text-orange-400' : 'text-slate-500'}`}>{team?.seed}</span>
-      <img src={team?.logo_url} alt="" className="w-9 h-9 shrink-0" onError={e => e.target.style.display = 'none'} />
-      <p className={`font-black text-sm flex-1 text-left ${picked ? 'text-orange-400' : 'text-white'}`}>{team?.name}</p>
-      {picked && <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center shrink-0"><span className="text-white text-[10px] font-black">✓</span></div>}
-    </button>
-  );
+  const teamBtn = (team, picked, onClick) => {
+    const isUnderdog = team?.id === underdogId;
+    const pts = isUnderdog ? PLAYIN_UNDERDOG_PTS : PLAYIN_PTS;
+    return (
+      <button onClick={onClick}
+        className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all w-full ${
+          picked && isUnderdog ? 'border-amber-500 bg-amber-500/15' :
+          picked ? 'border-orange-500 bg-orange-500/15' :
+          isUnderdog ? 'border-amber-500/25 bg-amber-500/5 hover:border-amber-400/50' :
+          'border-slate-700 bg-slate-900/60 hover:border-slate-600'
+        }`}>
+        <span className={`text-xs font-black w-5 ${picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-slate-500'}`}>{team?.seed}</span>
+        <img src={team?.logo_url} alt="" className="w-9 h-9 shrink-0" onError={e => e.target.style.display = 'none'} />
+        <p className={`font-black text-sm flex-1 text-left ${picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-white'}`}>{team?.name}</p>
+        <span className={`text-[10px] font-black px-2 py-0.5 rounded border shrink-0 ${
+          isUnderdog ? 'text-amber-400 bg-amber-500/10 border-amber-500/25' : 'text-slate-500 bg-slate-800 border-slate-700'
+        }`}>+{pts}</span>
+        {picked && <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${isUnderdog ? 'bg-amber-500' : 'bg-orange-500'}`}><span className="text-white text-[10px] font-black">✓</span></div>}
+      </button>
+    );
+  };
 
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-2">
       <div className="flex items-center justify-between mb-1">
         <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Play-In</span>
-        <span className="text-[10px] font-black text-cyan-400/80">+{PLAYIN_PTS} pts if correct</span>
+        <span className="text-[10px] font-bold text-slate-500">Fav <span className="text-slate-400 font-black">+{PLAYIN_PTS}</span> · Underdog <span className="text-amber-400 font-black">+{PLAYIN_UNDERDOG_PTS}</span></span>
       </div>
       {teamBtn(team1, p1, () => onTeamClick(game, team1?.id))}
       <div className="text-center text-xs text-slate-600 font-bold">VS</div>
@@ -516,9 +565,11 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
       {(p1 || p2) && (
         <button onClick={() => onSave(game.id)}
           className={`w-full py-3 rounded-xl font-black text-sm transition-all mt-1 ${
-            saved ? 'bg-green-500 text-white' : 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+            saved ? 'bg-green-500 text-white' :
+            pickedIsUnderdog ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/25' :
+            'bg-gradient-to-r from-orange-500 to-red-500 text-white'
           }`}>
-          {saved ? '✓ Saved!' : 'Save Pick'}
+          {saved ? '✓ Saved!' : `Save Pick • +${pickedPts} pts`}
         </button>
       )}
       <CommunityInsights
@@ -564,11 +615,14 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
         <p className={`font-black text-base leading-tight truncate ${isWon ? 'text-green-400' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>{team.name}</p>
         <p className="text-xs text-slate-500">{isWon && series.actual_games ? `Won in ${series.actual_games}` : isTeamUnderdog && !isCompleted ? '🔥 Underdog — higher reward' : `Seed #${team.seed}`}</p>
       </div>
-      {!isCompleted && !isLocked && !isPicked && (
-        <span className={`text-[8px] font-black shrink-0 px-1.5 py-0.5 rounded border ${
-          isTeamUnderdog ? 'text-amber-400 bg-amber-500/10 border-amber-500/25' : 'text-slate-500 bg-slate-800 border-slate-700'
-        }`}>{isTeamUnderdog ? 'RISKY' : 'SAFE'}</span>
-      )}
+      {!isCompleted && !isLocked && !isPicked && (() => {
+        const previewPts = team.id === h.id ? hMaxPts : aMaxPts;
+        return (
+          <span className={`text-[9px] font-black shrink-0 px-1.5 py-0.5 rounded border ${
+            isTeamUnderdog ? 'text-amber-400 bg-amber-500/10 border-amber-500/25' : 'text-slate-500 bg-slate-800 border-slate-700'
+          }`}>{previewPts != null ? `+${previewPts}` : isTeamUnderdog ? 'RISKY' : 'SAFE'}</span>
+        );
+      })()}
       {isWon && <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shrink-0"><span className="text-white text-xs font-black">✓</span></div>}
       {isPicked && !isCompleted && !isWon && <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isTeamUnderdog ? 'bg-amber-500' : 'bg-orange-500'}`}><span className="text-white text-xs font-black">✓</span></div>}
     </button>
@@ -580,6 +634,11 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
   const { winnerPts, gamesPts, totalPts } = calcSeriesPts(series.round, homeSeed, awaySeed, pickedSeed);
   const isHUnderdog = hp && getUnderdogMult(series.round, homeSeed, awaySeed, homeSeed) > 1.0;
   const isAUnderdog = ap && getUnderdogMult(series.round, homeSeed, awaySeed, awaySeed) > 1.0;
+  // Pre-compute per-team max pts for pts preview badges
+  const hMaxPts = homeSeed != null ? calcSeriesPts(series.round, homeSeed, awaySeed, homeSeed).totalPts : null;
+  const aMaxPts = awaySeed != null ? calcSeriesPts(series.round, homeSeed, awaySeed, awaySeed).totalPts : null;
+  const hIsUnderdogTeam = hIsUnderdog2;
+  const aIsUnderdogTeam = aIsUnderdog2;
 
   const { data: seriesPlayers = [] } = useQuery({
     queryKey: ['seriesPlayers', series.id],
@@ -593,11 +652,22 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
       <div className="flex items-center justify-between">
         <div>
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{series.round}</span>
-          {series.status === 'active' && (
-            <span className="ml-2 text-[10px] font-black text-slate-500">
-              Round {roundMult}x | Up to <span className="text-green-400">{calcSeriesPts(series.round, homeSeed, awaySeed, null).totalPts}+ pts</span>
-            </span>
-          )}
+          {series.status === 'active' && (() => {
+            const favPts   = Math.min(hMaxPts ?? 999, aMaxPts ?? 999);
+            const udPts    = Math.max(hMaxPts ?? 0,   aMaxPts ?? 0);
+            const showRange = udPts > favPts && favPts > 0;
+            return (
+              <span className="ml-2 text-[10px] font-black text-slate-500">
+                {roundMult > 1 && <span>×{roundMult} · </span>}
+                Up to{' '}
+                {showRange ? (
+                  <><span className="text-green-400">{favPts}</span>–<span className="text-amber-400">{udPts} pts</span></>
+                ) : (
+                  <span className="text-green-400">{favPts} pts</span>
+                )}
+              </span>
+            );
+          })()}
         </div>
         {series.status === 'completed' && <span className="text-xs font-bold text-green-400 flex items-center gap-1">✓ Complete</span>}
         {series.status === 'locked' && <span className="text-xs font-bold text-yellow-400 flex items-center gap-1">🔒 Locked</span>}
@@ -610,9 +680,12 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
       </div>
       {/* Underdog bonus callout */}
       {(isHUnderdog || isAUnderdog) && !isCompleted && !isLocked && (
-        <div className="bonus-pop flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
-          <span className="text-amber-400 text-xs font-black">🔥 Bold pick!</span>
-          <span className="text-amber-400/70 text-xs font-bold">{totalPts} pts max · higher risk = higher reward</span>
+        <div className="bonus-pop flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
+          <div className="flex items-center gap-1.5">
+            <span className="text-amber-400 text-xs font-black">🔥 Underdog Bonus</span>
+            <span className="text-[10px] font-black text-amber-400 bg-amber-500/20 border border-amber-500/30 rounded px-1.5 py-0.5">×{underdogMult}</span>
+          </div>
+          <span className="text-amber-400 text-xs font-black">{totalPts} pts max</span>
         </div>
       )}
       {picked && !isCompleted && !isLocked && confirmed && (
