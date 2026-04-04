@@ -208,7 +208,16 @@ const MatchCard = ({ series, pick, onTeamClick }) => {
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
       } bg-slate-900/80`}>
       {teamRow(h, hp, hWon, hIsUnderdog, () => onTeamClick(series, h.id))}
-      <div className="h-px bg-slate-800" />
+      {/* Series score divider — shows live score when games have been played */}
+      <div className="relative h-px bg-slate-800">
+        {!isCompleted && (series.home_wins > 0 || series.away_wins > 0) && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-[9px] font-black tabular-nums px-1.5 rounded bg-slate-900 border border-blue-500/30 text-blue-400 leading-4">
+              {series.home_wins}–{series.away_wins}
+            </span>
+          </div>
+        )}
+      </div>
       {teamRow(a, ap, aWon, aIsUnderdog, () => onTeamClick(series, a.id))}
     </div>
   );
@@ -295,6 +304,12 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
           {isUnderdog ? '🔥 RISKY' : '🛡️ SAFE'}
         </span>
         <div className="flex items-center gap-1">
+          {/* Live series score */}
+          {(series?.home_wins > 0 || series?.away_wins > 0) && (
+            <span className="text-[9px] font-black text-blue-400 bg-blue-500/10 border border-blue-500/25 rounded px-1.5 py-0.5 tabular-nums">
+              {series.home_wins}–{series.away_wins}
+            </span>
+          )}
           {isUnderdog && (
             <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5">
               ×{underdogMult}ud
@@ -342,6 +357,25 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
           onChange={v => onLeaderSelect(seriesId, 'assister', v)}
           players={seriesPlayers} statKey="apg" />
       </div>
+
+      {/* Provisional series leaders */}
+      {(series?.leading_scorer || series?.leading_rebounder || series?.leading_assister) && (
+        <div className="border-t border-slate-800/60 pt-1.5 space-y-0.5">
+          <p className="text-[8px] text-cyan-400/50 font-black uppercase tracking-widest mb-0.5">
+            {series?.status === 'active' ? '📊 Provisional Leaders' : '📊 Series Leaders'}
+          </p>
+          {[
+            { abbr: 'PTS', val: series?.leading_scorer },
+            { abbr: 'REB', val: series?.leading_rebounder },
+            { abbr: 'AST', val: series?.leading_assister },
+          ].filter(l => l.val).map(l => (
+            <p key={l.abbr} className="text-[8px] text-slate-500 truncate leading-tight">
+              <span className="text-slate-600 font-black">{l.abbr}:</span>{' '}
+              <span className="text-slate-400">{l.val.split(' ').slice(-1)[0]}</span>
+            </p>
+          ))}
+        </div>
+      )}
 
       <button onClick={() => onSave(seriesId)} disabled={!pick?.games}
         className={`w-full py-1.5 rounded-lg text-[10px] font-black tracking-wide transition-all ${
@@ -653,19 +687,27 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
         <div>
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{series.round}</span>
           {series.status === 'active' && (() => {
-            const favPts   = Math.min(hMaxPts ?? 999, aMaxPts ?? 999);
-            const udPts    = Math.max(hMaxPts ?? 0,   aMaxPts ?? 0);
+            const favPts    = Math.min(hMaxPts ?? 999, aMaxPts ?? 999);
+            const udPts     = Math.max(hMaxPts ?? 0,   aMaxPts ?? 0);
             const showRange = udPts > favPts && favPts > 0;
+            const hasScore  = (series.home_wins > 0 || series.away_wins > 0);
             return (
-              <span className="ml-2 text-[10px] font-black text-slate-500">
-                {roundMult > 1 && <span>×{roundMult} · </span>}
-                Up to{' '}
-                {showRange ? (
-                  <><span className="text-green-400">{favPts}</span>–<span className="text-amber-400">{udPts} pts</span></>
-                ) : (
-                  <span className="text-green-400">{favPts} pts</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {hasScore && (
+                  <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/25 text-blue-400 text-[10px] font-black tabular-nums">
+                    {series.home_wins}–{series.away_wins}
+                  </span>
                 )}
-              </span>
+                <span className="text-[10px] font-black text-slate-500">
+                  {roundMult > 1 && <span>×{roundMult} · </span>}
+                  Up to{' '}
+                  {showRange ? (
+                    <><span className="text-green-400">{favPts}</span>–<span className="text-amber-400">{udPts} pts</span></>
+                  ) : (
+                    <span className="text-green-400">{favPts} pts</span>
+                  )}
+                </span>
+              </div>
             );
           })()}
         </div>
@@ -686,6 +728,32 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
             <span className="text-[10px] font-black text-amber-400 bg-amber-500/20 border border-amber-500/30 rounded px-1.5 py-0.5">×{underdogMult}</span>
           </div>
           <span className="text-amber-400 text-xs font-black">{totalPts} pts max</span>
+        </div>
+      )}
+      {/* Provisional / final series leaders */}
+      {(series.leading_scorer || series.leading_rebounder || series.leading_assister) && (
+        <div className={`px-3 py-2 rounded-xl border text-xs ${
+          series.status === 'active'
+            ? 'bg-cyan-500/5 border-cyan-500/15'
+            : 'bg-slate-800/40 border-slate-700/30'
+        }`}>
+          <p className={`text-[9px] font-black uppercase tracking-widest mb-1.5 ${
+            series.status === 'active' ? 'text-cyan-400/60' : 'text-slate-500'
+          }`}>
+            {series.status === 'active' ? '📊 Provisional Leaders' : '📊 Series Leaders'}
+          </p>
+          <div className="grid grid-cols-3 gap-1">
+            {[
+              { label: 'PTS', val: series.leading_scorer },
+              { label: 'REB', val: series.leading_rebounder },
+              { label: 'AST', val: series.leading_assister },
+            ].map(l => l.val && (
+              <div key={l.label} className="text-center">
+                <p className="text-[8px] text-slate-600 font-bold">{l.label}</p>
+                <p className="text-[10px] text-slate-300 font-bold truncate">{l.val.split(' ').slice(-1)[0]}</p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {picked && !isCompleted && !isLocked && confirmed && (

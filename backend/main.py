@@ -2871,14 +2871,25 @@ async def startup():
             print(f"[Daily Auto-Sync] Step 4/5 ERROR: {type(e).__name__}: {e}")
 
         # Step 5 — Sync finished Playoff results
-        print("[Daily Auto-Sync] Step 5/5 — sync_playoff_results_from_api")
+        print("[Daily Auto-Sync] Step 5/6 — sync_playoff_results_from_api")
         try:
             po = sync_playoff_results_from_api('2026')
-            print(f"[Daily Auto-Sync] Step 5/5 done — "
+            print(f"[Daily Auto-Sync] Step 5/6 done — "
                   f"updated={po.get('updated',0)} completed={po.get('completed',0)} "
                   f"errors={len(po.get('errors',[]))}")
         except Exception as e:
-            print(f"[Daily Auto-Sync] Step 5/5 ERROR: {type(e).__name__}: {e}")
+            print(f"[Daily Auto-Sync] Step 5/6 ERROR: {type(e).__name__}: {e}")
+
+        # Step 6 — Provisional / final series statistical leaders
+        print("[Daily Auto-Sync] Step 6/6 — sync_series_provisional_leaders")
+        try:
+            from game_processor import sync_series_provisional_leaders
+            pl = sync_series_provisional_leaders('2026')
+            print(f"[Daily Auto-Sync] Step 6/6 done — "
+                  f"updated={pl.get('series_updated',0)} "
+                  f"checked={pl.get('series_checked',0)}")
+        except Exception as e:
+            print(f"[Daily Auto-Sync] Step 6/6 ERROR: {type(e).__name__}: {e}")
 
         print(f"[Daily Auto-Sync] ── Complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
 
@@ -3026,6 +3037,13 @@ async def refresh_today_games(date: str | None = None):
     def _run():
         sync_daily_boxscores(date_str=target_date, season='2026',
                              force=False, triggered_by='user_refresh')
+        # Also refresh game results + provisional leaders in the same background pass
+        try:
+            from game_processor import sync_playoff_results_from_api, sync_series_provisional_leaders
+            sync_playoff_results_from_api('2026')
+            sync_series_provisional_leaders('2026')
+        except Exception as _gp_err:
+            print(f"[Boxscore] [user_refresh] game_processor sync error: {_gp_err}")
 
     threading.Thread(target=_run, daemon=True).start()
     print(f"[Boxscore] [user_refresh] Background sync triggered for {target_date}")
@@ -3565,7 +3583,9 @@ async def api_series(season: str = "2026"):
                  s.away_team_id, s.away_seed, s.away_wins,
                  s.winner_team_id, s.status, s.actual_games,
                  ht.name, ht.abbreviation, ht.logo_url,
-                 at.name, at.abbreviation, at.logo_url
+                 at.name, at.abbreviation, at.logo_url,
+                 s.actual_leading_scorer, s.actual_leading_rebounder,
+                 s.actual_leading_assister
                  FROM series s
                  JOIN teams ht ON s.home_team_id = ht.id
                  JOIN teams at ON s.away_team_id = at.id
@@ -3597,6 +3617,10 @@ async def api_series(season: str = "2026"):
             'winner_team_id': row[10],
             'status': row[11],
             'actual_games': row[12],
+            # Provisional during active series, final once completed
+            'leading_scorer':    row[19],
+            'leading_rebounder': row[20],
+            'leading_assister':  row[21],
         })
 
     conn.close()

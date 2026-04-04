@@ -1195,3 +1195,115 @@ def _promote_from_playoff(winner_id: int, current_stage: str, season: str) -> di
         if conn:
             try: conn.close()
             except Exception: pass
+
+
+# ---------------------------------------------------------------------------
+# sync_series_provisional_leaders
+# ---------------------------------------------------------------------------
+
+def sync_series_provisional_leaders(season: str = "2026") -> dict:
+    """
+    Compute provisional statistical leaders for every playoff series that has
+    at least one completed game.
+
+    For active series the results are *provisional* (more games may change
+    the leader).  For completed series without leaders already set, this
+    fills in the final values.
+
+    Method:
+      1. For each target series, look up the ESPN event IDs that have been
+         processed and recorded in series_processed_events (one row per
+         completed game in that series).
+      2. Aggregate points / rebounds / assists per player from player_game_stats
+         using those exact event IDs.
+      3. Write the leader name into series.actual_leading_scorer /
+         actual_leading_rebounder / actual_leading_assister.
+
+    Returns:
+      {"series_checked": int, "series_updated": int, "errors": list}
+    """
+    result = {"series_checked": 0, "series_updated": 0, "errors": []}
+    conn = None
+    try:
+        conn = _get_db()
+        c = conn.cursor()
+
+        # Target: active series + completed series still missing leaders
+        c.execute("""
+            SELECT s.id, ht.abbreviation, at.abbreviation, s.status
+            FROM series s
+            JOIN teams ht ON s.home_team_id = ht.id
+            JOIN teams at ON s.away_team_id = at.id
+            WHERE s.season = %s
+              AND (
+                  s.status = 'active'
+                  OR (s.status = 'completed'
+                      AND s.actual_leading_scorer IS NULL)
+              )
+        """, (season,))
+        target_series = c.fetchall()
+        result["series_checked"] = len(target_series)
+
+        for series_id, home_abbr, away_abbr, series_status in target_series:
+            abbrs = [home_abbr.upper(), away_abbr.upper()]
+
+            # Get ESPN event IDs for completed games in this series
+            c.execute("""
+                SELECT event_id
+                FROM series_processed_events
+                WHERE series_id = %s AND event_type = 'playoff'
+            """, (series_id,))
+            event_ids = [r[0] for r in c.fetchall()]
+
+            if not event_ids:
+                # No completed games recorded yet — nothing to compute
+                continue
+
+            leaders: dict[str, str | None] = {}
+            for cat, col in (
+                ("scorer",    "points"),
+                ("rebounder", "rebounds"),
+                ("assister",  "assists"),
+            ):
+                c.execute(f"""
+                    SELECT player_name, SUM({col}) AS total
+                    FROM player_game_stats
+                    WHERE espn_game_id = ANY(%s)
+                      AND UPPER(team_abbr) = ANY(%s)
+                    GROUP BY player_name
+                    ORDER BY total DESC NULLS LAST
+                    LIMIT 1
+                """, (event_ids, abbrs))
+                row = c.fetchone()
+                leaders[cat] = row[0] if row else None
+
+            if not any(leaders.values()):
+                continue
+
+            c.execute("""
+                UPDATE series
+                SET actual_leading_scorer    = %s,
+                    actual_leading_rebounder = %s,
+                    actual_leading_assister  = %s
+                WHERE id = %s
+            """, (leaders["scorer"], leaders["rebounder"],
+                  leaders["assister"], series_id))
+            result["series_updated"] += 1
+
+        conn.commit()
+        _log(f"sync_series_provisional_leaders: "
+             f"checked={result['series_checked']} updated={result['series_updated']}")
+
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        _log(f"sync_series_provisional_leaders error: {err}")
+        result["errors"].append(err)
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+    return result

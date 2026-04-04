@@ -89,11 +89,16 @@ def run():
 
         # Step 4 — Play-in + playoff results (import lazily to avoid circular issues)
         try:
-            from game_processor import sync_playin_results_from_api, sync_playoff_results_from_api
+            from game_processor import (
+                sync_playin_results_from_api, sync_playoff_results_from_api,
+                sync_series_provisional_leaders,
+            )
             pi = sync_playin_results_from_api('2026')
             print(f"[Daily Auto-Sync] Playin results — processed={pi.get('processed',0)}")
             po = sync_playoff_results_from_api('2026')
             print(f"[Daily Auto-Sync] Playoff results — updated={po.get('updated',0)}")
+            pl = sync_series_provisional_leaders('2026')
+            print(f"[Daily Auto-Sync] Provisional leaders — updated={pl.get('series_updated',0)}")
         except Exception as e:
             print(f"[Daily Auto-Sync] Results sync ERROR: {e}")
 
