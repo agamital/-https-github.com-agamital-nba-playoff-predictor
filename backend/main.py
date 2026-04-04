@@ -2956,7 +2956,7 @@ async def admin_standings_sync():
 @app.post("/api/admin/player-stats/sync")
 async def admin_player_stats_sync():
     """
-    Force-sync player stats from NBA API (nba_api LeagueLeaders).
+    Force-sync player stats from NBA API (LeagueDashPlayerStats — all players).
     Bypasses the regular-season cutoff so admins can always refresh.
     """
     if not NBA_API_AVAILABLE:
@@ -2966,19 +2966,17 @@ async def admin_player_stats_sync():
 
     def _force_sync():
         try:
-            from nba_api.stats.endpoints import leagueleaders
-            ll = leagueleaders.LeagueLeaders(
-                league_id='00',
-                per_mode48='PerGame',
-                scope='S',
+            from nba_api.stats.endpoints import leaguedashplayerstats
+            lp = leaguedashplayerstats.LeagueDashPlayerStats(
                 season='2025-26',
-                season_type='Regular Season',
-                stat_category='PTS',
+                season_type_all_star='Regular Season',
+                per_mode_simple='PerGame',
+                league_id_nullable='00',
                 headers=_NBA_HEADERS,
                 timeout=_NBA_TIMEOUT,
             )
-            raw = ll.get_dict()
-            result_set  = raw.get('resultSet') or raw.get('resultSets', [{}])[0]
+            raw = lp.get_dict()
+            result_set  = raw.get('resultSets', [{}])[0]
             col_headers = result_set['headers']
             rows        = result_set['rowSet']
 
@@ -2992,10 +2990,10 @@ async def admin_player_stats_sync():
             c         = conn.cursor()
             synced_at = datetime.utcnow()
             count     = 0
-            for row in rows[:150]:
+            for row in rows:  # ALL players — no limit
                 pid  = col(row, 'PLAYER_ID')
-                name = col(row, 'PLAYER', '')
-                team = col(row, 'TEAM', '')
+                name = col(row, 'PLAYER_NAME', '')
+                team = col(row, 'TEAM_ABBREVIATION', '')
                 gp   = int(col(row, 'GP') or 0)
                 pts  = float(col(row, 'PTS') or 0)
                 ast  = float(col(row, 'AST') or 0)

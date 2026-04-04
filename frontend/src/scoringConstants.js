@@ -19,9 +19,9 @@ export const PLAYIN_UNDERDOG_BONUS   = 3;    // bonus over favourite
 // NBA Finals winner uses FINALS_CHAMPION_MULT; all others use ROUND_MULTIPLIERS.
 export const ROUND_MULTIPLIERS = {
   'First Round':            1.0,
-  'Conference Semifinals':  1.0,
-  'Conference Finals':      1.5,
-  'NBA Finals':             2.0,   // used for exact-games pts in Finals
+  'Conference Semifinals':  1.5,
+  'Conference Finals':      2.0,
+  'NBA Finals':             2.5,   // used for exact-games pts in Finals
 };
 export const FINALS_CHAMPION_MULT = 2.5;  // applied to winner pts in NBA Finals
 

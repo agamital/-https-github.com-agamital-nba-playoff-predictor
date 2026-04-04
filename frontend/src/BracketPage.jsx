@@ -420,7 +420,7 @@ const SeedWaitingCard = ({ team }) => (
 // slot index → which seed team "owns" that slot (no series yet)
 const SEED_SLOT = { 0: 1, 3: 2 }; // slot 0 = 1-seed, slot 3 = 2-seed
 
-const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, seedTeams }) => (
+const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, seedTeams, confirmed, onEdit }) => (
   <div style={{ flexShrink: 0 }}>
     <p className="text-xs text-slate-500 uppercase font-bold mb-3 text-center tracking-wider">{label}</p>
     <div style={{ height: BH + 28, display: 'flex', flexDirection: 'column' }}>
@@ -433,7 +433,16 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
                 <MatchCard series={s} pick={picks[s.id]} onTeamClick={onTeamClick} />
                 {picks[s.id]?.teamId && s.status === 'active' && (
                   <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
-                    <InlinePicker seriesId={s.id} series={s} pick={picks[s.id]} onGamesSelect={onGamesSelect} onLeaderSelect={onLeaderSelect} onSave={onSave} saved={saved[s.id]} />
+                    {confirmed[s.id] ? (
+                      <button
+                        onClick={() => onEdit(s.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:border-orange-500/50 hover:text-orange-400 text-[10px] font-bold transition-all whitespace-nowrap"
+                      >
+                        ✏ Edit pick
+                      </button>
+                    ) : (
+                      <InlinePicker seriesId={s.id} series={s} pick={picks[s.id]} onGamesSelect={onGamesSelect} onLeaderSelect={onLeaderSelect} onSave={onSave} saved={saved[s.id]} />
+                    )}
                   </div>
                 )}
               </div>
@@ -517,7 +526,7 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
   );
 };
 
-const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, communityStats }) => {
+const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, communityStats, confirmed, onEdit }) => {
   const { home_team: h, away_team: a } = series;
   const hp = pick?.teamId === h.id;
   const ap = pick?.teamId === a.id;
@@ -600,7 +609,15 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
           <span className="text-amber-400/70 text-xs font-bold">{totalPts} pts max · higher risk = higher reward</span>
         </div>
       )}
-      {picked && !isCompleted && !isLocked && (
+      {picked && !isCompleted && !isLocked && confirmed && (
+        <button
+          onClick={onEdit}
+          className="w-full py-2.5 rounded-xl font-bold text-sm border border-slate-700 bg-slate-800/60 text-slate-300 hover:border-orange-500/50 hover:text-orange-400 transition-all flex items-center justify-center gap-2"
+        >
+          ✏ Edit prediction
+        </button>
+      )}
+      {picked && !isCompleted && !isLocked && !confirmed && (
         <div className="pt-2 border-t border-slate-800 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Series Length</p>
@@ -657,6 +674,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const qc = useQueryClient();
   const [picks, setPicks]             = useState({});
   const [saved, setSaved]             = useState({});
+  const [confirmed, setConfirmed]     = useState({});
   const [piPicks, setPiPicks]         = useState({});
   const [piSaved, setPiSaved]         = useState({});
   const [showFull, setShowFull]       = useState(() => {
@@ -761,6 +779,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
         currentUser.user_id, seriesId, pick.teamId, pick.games,
         { scorer: pick.scorer, rebounder: pick.rebounder, assister: pick.assister }
       );
+      setConfirmed(p => ({ ...p, [seriesId]: true }));
       setTimeout(() => setSaved(p => ({ ...p, [seriesId]: false })), 2000);
       // Invalidate notification badge so it reflects this new pick
       qc.invalidateQueries({ queryKey: ['notifications', currentUser.user_id] });
@@ -769,6 +788,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
       setSaveError(err.response?.data?.detail || 'Failed to save prediction. Try again.');
     }
   };
+  const handleEdit = (seriesId) => setConfirmed(p => ({ ...p, [seriesId]: false }));
 
   // Play-In handlers
   const handlePITeamClick = (game, teamId) => {
@@ -919,7 +939,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
             <HLine width={20} />
 
             {/* WEST R1 */}
-            <R1Col label="Round 1" slots={westSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={westSeedTeams} />
+            <R1Col label="Round 1" slots={westSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={westSeedTeams} confirmed={confirmed} onEdit={handleEdit} />
 
             {/* WEST Semis → Finals (only if showFull) */}
             {showFull && (
@@ -939,7 +959,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
             )}
 
             {/* EAST R1 */}
-            <R1Col label="Round 1" slots={eastSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={eastSeedTeams} />
+            <R1Col label="Round 1" slots={eastSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={eastSeedTeams} confirmed={confirmed} onEdit={handleEdit} />
 
             {/* EAST Play-In */}
             <HLine width={20} />
@@ -1007,7 +1027,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {westSeries.length > 0 ? westSeries.map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
@@ -1054,7 +1074,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {eastSeries.length > 0 ? eastSeries.map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}

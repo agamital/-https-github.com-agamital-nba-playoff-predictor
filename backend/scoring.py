@@ -106,9 +106,9 @@ BASE_GAMES_PTS: int  = 30   # exact series length bonus
 # Round multipliers — applied to both winner and games pts, except Finals winner.
 ROUND_MULTIPLIERS: dict[str, float] = {
     "First Round":            1.0,
-    "Conference Semifinals":  1.0,
-    "Conference Finals":      1.5,
-    "NBA Finals":             2.0,   # used for games pts in Finals
+    "Conference Semifinals":  1.5,
+    "Conference Finals":      2.0,
+    "NBA Finals":             2.5,   # used for games pts in Finals
 }
 
 # The NBA Finals winner earns the "Correct Champion" multiplier (higher than 2.0×).
@@ -391,25 +391,25 @@ if __name__ == "__main__":
     # wrong winner ->0
     check("R1 wrong winner",         calculate_series_points("First Round", 1, 8, 8, False, False),  0)
 
-    print("\n-- Series: Conference Semifinals (×1.0) -------------")
-    # Semis fav + games ->50×1×1 + 30×1×1 = 80
-    check("Semis fav+games",         calculate_series_points("Conference Semifinals", 3, 6, 3, True, True),   80)
-    # Semis underdog+games ->int(50×1×1.5)+int(30×1×1.5) = 75+45 = 120
-    check("Semis underdog+games",    calculate_series_points("Conference Semifinals", 3, 6, 6, True, True),  120)
+    print("\n-- Series: Conference Semifinals (x1.5) -------------")
+    # Semis fav + games ->50×1.5×1 + 30×1.5×1 = 75+45 = 120
+    check("Semis fav+games",         calculate_series_points("Conference Semifinals", 3, 6, 3, True, True),  120)
+    # Semis underdog+games ->int(50×1.5×1.5)+int(30×1.5×1.5) = 112+67 = 179
+    check("Semis underdog+games",    calculate_series_points("Conference Semifinals", 3, 6, 6, True, True),  179)
 
-    print("\n-- Series: Conference Finals (×1.5) -----------------")
-    # CF fav+games ->50×1.5 + 30×1.5 = 75+45 = 120
-    check("CF fav+games",            calculate_series_points("Conference Finals", 3, 6, 3, True, True),  120)
-    # CF underdog+games ->int(50×1.5×1.5)+int(30×1.5×1.5) = 112+67 = 179
-    check("CF underdog+games",       calculate_series_points("Conference Finals", 3, 6, 6, True, True),  179)
+    print("\n-- Series: Conference Finals (x2.0) -----------------")
+    # CF fav+games ->50×2.0 + 30×2.0 = 100+60 = 160
+    check("CF fav+games",            calculate_series_points("Conference Finals", 3, 6, 3, True, True),  160)
+    # CF underdog+games ->int(50×2.0×1.5)+int(30×2.0×1.5) = 150+90 = 240
+    check("CF underdog+games",       calculate_series_points("Conference Finals", 3, 6, 6, True, True),  240)
 
-    print("\n-- Series: NBA Finals (winner×2.5, games×2.0) -------")
-    # Finals fav+games ->50×2.5 + 30×2.0 = 125+60 = 185
-    check("Finals fav+games",        calculate_series_points("NBA Finals", 2, 5, 2, True, True),  185)
+    print("\n-- Series: NBA Finals (winner×2.5, games×2.5) -------")
+    # Finals fav+games ->50×2.5 + 30×2.5 = 125+75 = 200
+    check("Finals fav+games",        calculate_series_points("NBA Finals", 2, 5, 2, True, True),  200)
     # Finals fav only   ->125
     check("Finals fav only",         calculate_series_points("NBA Finals", 2, 5, 2, True, False), 125)
-    # Finals underdog+games ->int(50×2.5×1.5)+int(30×2.0×1.5) = 187+90 = 277
-    check("Finals underdog+games",   calculate_series_points("NBA Finals", 2, 5, 5, True, True),  277)
+    # Finals underdog+games ->int(50×2.5×1.5)+int(30×2.5×1.5) = 187+112 = 299
+    check("Finals underdog+games",   calculate_series_points("NBA Finals", 2, 5, 5, True, True),  299)
 
     print("\n-- Series Leaders ------------------------------------")
     check("all 3 correct -> 30 pts",
