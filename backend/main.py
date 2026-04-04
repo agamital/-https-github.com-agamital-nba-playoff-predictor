@@ -445,7 +445,7 @@ def sync_teams():
     eastern = ['ATL','BOS','BKN','CHA','CHI','CLE','DET','IND','MIA','MIL','NYK','ORL','PHI','TOR','WAS']
 
     for team in teams:
-        conf = 'Eastern' if team['abbreviation'] in eastern else 'Western'
+        conf = 'East' if team['abbreviation'] in eastern else 'West'
         c.execute('''INSERT INTO teams (id, name, abbreviation, city, conference, division, logo_url)
                      VALUES (%s, %s, %s, %s, %s, %s, %s)
                      ON CONFLICT (id) DO UPDATE SET
@@ -5565,9 +5565,11 @@ async def search_players(q: str = "", conference: str = "All",
     params: list = [season, f"%{q}%"]
     if conference and conference not in ("All", ""):
         conf_filter = """AND UPPER(ps.team_abbreviation) IN (
-            SELECT UPPER(abbreviation) FROM teams WHERE conference = %s
+            SELECT UPPER(abbreviation) FROM teams
+            WHERE UPPER(conference) = UPPER(%s)
+               OR UPPER(conference) LIKE UPPER(%s) || '%%'
         )"""
-        params.append(conference)
+        params.extend([conference, conference])
 
     c.execute(f'''
         SELECT DISTINCT ON (LOWER(ps.player_name))
