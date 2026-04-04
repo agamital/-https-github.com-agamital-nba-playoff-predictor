@@ -5,6 +5,11 @@ import * as api from './services/api';
 import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS } from './scoringConstants';
 import CommunityInsights from './components/CommunityInsights';
 
+// Strip diacritics/accents for dedup — matches backend _normalize_name().
+// 'Luka Dončić' → 'luka doncic'
+const normalizeName = (n) =>
+  (n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
 // ── Layout constants ──────────────────────────────────────────────────────────
 const BH = 640;   // bracket total height
 const CH = 104;   // card height
@@ -60,13 +65,13 @@ const PlayerDropdown = ({ label, value, onChange, players, disabled, statKey = '
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Dedup by both player_id AND normalised name (handles cross-source ID splits),
-  // then sort by the relevant stat descending.
+  // Dedup by both player_id AND accent-normalized name (handles "Doncic" ↔ "Dončić"
+  // cross-source splits), then sort by the relevant stat descending.
   const sorted = React.useMemo(() => {
     const seenIds   = new Set();
     const seenNames = new Set();
     const unique = players.filter(p => {
-      const normName = p.name?.trim().toLowerCase();
+      const normName = normalizeName(p.name);
       if (seenIds.has(p.player_id) || seenNames.has(normName)) return false;
       seenIds.add(p.player_id);
       seenNames.add(normName);
@@ -76,7 +81,7 @@ const PlayerDropdown = ({ label, value, onChange, players, disabled, statKey = '
   }, [players, statKey]);
 
   const filtered = query.length >= 2
-    ? sorted.filter(p => p.name.toLowerCase().includes(query.toLowerCase())).slice(0, 8)
+    ? sorted.filter(p => normalizeName(p.name).includes(normalizeName(query))).slice(0, 8)
     : sorted.slice(0, 8);
 
   const statLabel = STAT_LABELS[statKey] || statKey.toUpperCase();

@@ -30,6 +30,21 @@ _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 # After this the app enters Static Mode: DB snapshot is served forever, no API calls.
 _STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 21, 0, 0, 0)   # exclusive — stops ON April 21
 
+# ── Player name normalization (accent / diacritic stripping) ─────────────────
+import unicodedata as _ud
+
+def _normalize_name(name: str) -> str:
+    """
+    Strip diacritics and lowercase a player name for dedup comparisons.
+    'Luka Dončić' → 'luka doncic', 'Matisse Thybulle' → 'matisse thybulle'.
+    Used in both backend search dedup and boxscore sync name-matching.
+    """
+    return ''.join(
+        c for c in _ud.normalize('NFD', name or '')
+        if _ud.category(c) != 'Mn'
+    ).lower().strip()
+
+
 # ── On-demand freshness TTLs (minutes) ────────────────────────────────────────
 # Prevents redundant API calls when a user repeatedly triggers a refresh.
 STANDINGS_TTL_MINUTES: int = 360   # 6 h — standings don't change mid-day
@@ -2169,6 +2184,18 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
     conn = get_db_conn()
     c    = conn.cursor()
 
+    # Build accent-normalized name → player_id lookup so step-4a can match
+    # "Luka Doncic" (ESPN) to "Luka Dončić" (nba_api) without creating duplicates.
+    _norm_name_to_pid: dict = {}
+    try:
+        c.execute("SELECT player_id, player_name FROM player_stats WHERE season = %s", (season,))
+        for _pid_r, _pname_r in c.fetchall():
+            _key = _normalize_name(_pname_r)
+            if _key and _key not in _norm_name_to_pid:
+                _norm_name_to_pid[_key] = _pid_r
+    except Exception as _norm_err:
+        print(f"[Boxscore] Warn: could not build norm-name lookup: {_norm_err}")
+
     for ev in completed_events:
         event_id = str(ev.get("id", ""))
         if not event_id:
@@ -2331,15 +2358,21 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
                 try:
                     espn_pid_int = int(espn_pid)
 
-                    # 4a: try to update by name (existing NBA-API row)
-                    c.execute('''
-                        UPDATE player_stats
-                        SET espn_player_id = %s
-                        WHERE LOWER(player_name) = LOWER(%s)
-                          AND (espn_player_id IS NULL
-                               OR espn_player_id != %s)
-                    ''', (espn_pid_int, pname, espn_pid_int))
-                    name_matched = c.rowcount
+                    # 4a: match by accent-normalized name (handles "Doncic" ↔ "Dončić")
+                    _pname_norm = _normalize_name(pname)
+                    existing_pid = _norm_name_to_pid.get(_pname_norm)
+                    if existing_pid is not None:
+                        c.execute('''
+                            UPDATE player_stats
+                            SET espn_player_id = %s
+                            WHERE player_id = %s
+                              AND (espn_player_id IS NULL OR espn_player_id != %s)
+                        ''', (espn_pid_int, existing_pid, espn_pid_int))
+                        name_matched = c.rowcount
+                        if name_matched == 0:
+                            name_matched = 1  # row exists, just espn_id already set
+                    else:
+                        name_matched = 0
 
                     # 4b: also try to update by existing espn_player_id (rename)
                     if name_matched == 0:
@@ -2722,6 +2755,15 @@ async def startup():
     # Apply player stats schema migration (create player_stats table)
     _apply_player_stats_migration()
 
+    # Supabase Storage diagnostic — log key presence so upload failures are easy to diagnose
+    if _SUPABASE_SERVICE_ROLE_KEY:
+        print(f"[Supabase] Service role key configured ({len(_SUPABASE_SERVICE_ROLE_KEY)} chars) "
+              f"— avatar uploads enabled (bucket: avatars at {_SUPABASE_URL})")
+    else:
+        print("[Supabase] WARNING: SUPABASE_SERVICE_ROLE_KEY is not set "
+              "— avatar uploads will return 503. "
+              "Add it in Railway → Settings → Variables.")
+
     # Apply series schema migration (manual_override column)
     _apply_series_migration()
 
@@ -3070,6 +3112,61 @@ async def admin_player_stats_sync():
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         result = await loop.run_in_executor(pool, _force_sync)
     return result
+
+
+@app.post("/api/admin/cleanup-duplicate-players")
+async def cleanup_duplicate_players(season: str = "2026"):
+    """
+    One-time cleanup: merge player_stats rows that are duplicates by accent-
+    normalized name (e.g. 'Luka Dončić' and 'Luka Doncic').
+    For each duplicate group, keeps the row with the most games_played and
+    deletes the rest.  Returns a list of merged player names.
+    """
+    conn = get_db_conn()
+    c    = conn.cursor()
+    c.execute("SELECT player_id, player_name, games_played FROM player_stats WHERE season = %s",
+              (season,))
+    rows = c.fetchall()
+
+    # Group by normalized name
+    groups: dict[str, list] = {}
+    for pid, pname, gp in rows:
+        key = _normalize_name(pname)
+        groups.setdefault(key, []).append((pid, pname, gp or 0))
+
+    merged = []
+    deleted_total = 0
+    for norm_key, group in groups.items():
+        if len(group) < 2:
+            continue
+        # Keep the row with the most games_played (best stats source)
+        group.sort(key=lambda x: -x[2])
+        keep_pid   = group[0][0]
+        keep_name  = group[0][1]
+        delete_pids = [g[0] for g in group[1:]]
+        try:
+            c.execute(
+                "DELETE FROM player_stats WHERE player_id = ANY(%s) AND season = %s",
+                (delete_pids, season)
+            )
+            deleted_total += c.rowcount
+            merged.append({
+                "kept":    f"{keep_name} (pid={keep_pid})",
+                "removed": [f"{g[1]} (pid={g[0]})" for g in group[1:]],
+            })
+            print(f"[Cleanup] Merged duplicate '{keep_name}': kept pid={keep_pid}, "
+                  f"removed {delete_pids}")
+        except Exception as e:
+            print(f"[Cleanup] Error merging '{norm_key}': {e}")
+
+    conn.commit()
+    conn.close()
+    return {
+        "season":        season,
+        "groups_merged": len(merged),
+        "rows_deleted":  deleted_total,
+        "details":       merged,
+    }
 
 
 @app.post("/api/admin/standings/push")
@@ -5359,14 +5456,20 @@ async def get_series_players(series_id: int, season: str = "2026"):
             WHERE ps.season = %s AND UPPER(ps.team_abbreviation) = ANY(%s)
             ORDER BY LOWER(ps.player_name), ps.pts_per_game DESC NULLS LAST
         """, (season, abbrevs))
-        return [
-            {'player_id': r[0], 'name': r[1], 'team': r[2],
-             'ppg': round(float(r[3] or 0), 1),
-             'rpg': round(float(r[4] or 0), 1),
-             'apg': round(float(r[5] or 0), 1),
-             'logo_url': r[6]}
-            for r in c.fetchall()
-        ]
+        # Extra Python-level dedup by accent-normalized name
+        seen: set = set()
+        result = []
+        for r in c.fetchall():
+            norm = _normalize_name(r[1])
+            if norm in seen:
+                continue
+            seen.add(norm)
+            result.append({'player_id': r[0], 'name': r[1], 'team': r[2],
+                           'ppg': round(float(r[3] or 0), 1),
+                           'rpg': round(float(r[4] or 0), 1),
+                           'apg': round(float(r[5] or 0), 1),
+                           'logo_url': r[6]})
+        return result
     except Exception as e:
         print(f"get_series_players error: {e}")
         return []
@@ -5455,10 +5558,15 @@ async def search_players(q: str = "", conference: str = "All",
     conn = get_db_conn()
     c    = conn.cursor()
 
+    # Conference filter: use subquery so it doesn't break when the LEFT JOIN
+    # finds no matching team row (LEFT JOIN + WHERE on nullable col silently
+    # drops every player whose abbreviation isn't in the teams table).
     conf_filter = ""
     params: list = [season, f"%{q}%"]
     if conference and conference not in ("All", ""):
-        conf_filter = "AND t.conference = %s"
+        conf_filter = """AND UPPER(ps.team_abbreviation) IN (
+            SELECT UPPER(abbreviation) FROM teams WHERE conference = %s
+        )"""
         params.append(conference)
 
     c.execute(f'''
@@ -5473,24 +5581,30 @@ async def search_players(q: str = "", conference: str = "All",
           {conf_filter}
         ORDER BY LOWER(ps.player_name), ps.pts_per_game DESC NULLS LAST
         LIMIT %s
-    ''', params + [limit])
-    rows = c.fetchall()
-    conn.close()
+    ''', params + [limit * 3])   # fetch extra so accent-dedup still yields limit rows
 
-    return {
-        "players": [
-            {
-                "player_id":  r[0],
-                "name":       r[1],
-                "team":       r[2],
-                "ppg":        round(float(r[3]), 1),
-                "logo_url":   r[4],
-                "conference": r[5],
-            }
-            for r in rows
-        ],
-        "total": len(rows),
-    }
+    # Post-dedup by accent-normalized name (catches "Doncic" ↔ "Dončić" pairs
+    # that DISTINCT ON LOWER() can't collapse).
+    seen_norm: set = set()
+    players = []
+    for r in c.fetchall():
+        norm = _normalize_name(r[1])
+        if norm in seen_norm:
+            continue
+        seen_norm.add(norm)
+        players.append({
+            "player_id":  r[0],
+            "name":       r[1],
+            "team":       r[2],
+            "ppg":        round(float(r[3]), 1),
+            "logo_url":   r[4],
+            "conference": r[5],
+        })
+        if len(players) >= limit:
+            break
+
+    conn.close()
+    return {"players": players, "total": len(players)}
 
 
 @app.get("/api/players/{player_id}/stats")
@@ -5664,17 +5778,31 @@ async def upload_avatar(user_id: int, file: UploadFile = File(...)):
     upload_url  = f"{_SUPABASE_URL}/storage/v1/object/avatars/{object_path}"
 
     import requests as _http
+    _auth_header = {"Authorization": f"Bearer {_SUPABASE_SERVICE_ROLE_KEY}"}
+
+    # Verify the avatars bucket exists before attempting upload
+    bucket_resp = _http.get(
+        f"{_SUPABASE_URL}/storage/v1/bucket/avatars",
+        headers=_auth_header,
+        timeout=8,
+    )
+    if bucket_resp.status_code == 404:
+        print(f"[Supabase] ERROR: 'avatars' bucket not found at {_SUPABASE_URL}")
+        raise HTTPException(503,
+            "Avatar storage bucket 'avatars' does not exist. "
+            "Create it in Supabase Dashboard → Storage → New bucket (name: avatars, public: true)."
+        )
+    if bucket_resp.status_code not in (200, 201):
+        print(f"[Supabase] Bucket check failed ({bucket_resp.status_code}): {bucket_resp.text[:120]}")
+
     resp = _http.put(
         upload_url,
         data=content,
-        headers={
-            "Authorization": f"Bearer {_SUPABASE_SERVICE_ROLE_KEY}",
-            "Content-Type":  file.content_type,
-            "x-upsert":      "true",
-        },
+        headers={**_auth_header, "Content-Type": file.content_type, "x-upsert": "true"},
         timeout=20,
     )
     if resp.status_code not in (200, 201):
+        print(f"[Supabase] Upload failed ({resp.status_code}): {resp.text[:200]}")
         raise HTTPException(502, f"Storage upload failed ({resp.status_code}): {resp.text[:200]}")
 
     public_url = f"{_SUPABASE_URL}/storage/v1/object/public/avatars/{object_path}"
