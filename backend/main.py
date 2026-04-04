@@ -3494,7 +3494,8 @@ async def leaderboard(season: str = "2026"):
                         CASE WHEN lp.is_correct_steals   = 2 THEN 1 ELSE 0 END +
                         CASE WHEN lp.is_correct_blocks   = 2 THEN 1 ELSE 0 END
                     ) FROM leaders_predictions lp WHERE lp.user_id = u.id
-                ), 0)                                                    AS bullseyes_count
+                ), 0)                                                    AS bullseyes_count,
+                u.avatar_url
             FROM users u LEFT JOIN predictions p ON u.id = p.user_id
             GROUP BY u.id
             ORDER BY u.points DESC, bullseyes_count DESC
@@ -3506,7 +3507,7 @@ async def leaderboard(season: str = "2026"):
             board.append({'rank': idx, 'user_id': row[0], 'username': row[1], 'points': row[2],
                          'total_predictions': total, 'correct_predictions': correct,
                          'accuracy': round((correct/total*100) if total > 0 else 0, 1),
-                         'bullseyes_count': bullseyes})
+                         'bullseyes_count': bullseyes, 'avatar_url': row[6] or ''})
         return board
     except Exception as e:
         print(f"leaderboard error: {e}")
@@ -3634,7 +3635,7 @@ async def series_picks(series_id: int):
         raise HTTPException(status_code=404, detail="Series not found")
     home_id, away_id = row[0], row[1]
 
-    c.execute("""SELECT u.username, p.predicted_winner_id, p.predicted_games,
+    c.execute("""SELECT u.username, u.avatar_url, p.predicted_winner_id, p.predicted_games,
                         t.abbreviation, t.logo_url
                  FROM predictions p
                  JOIN users u ON p.user_id = u.id
@@ -3645,10 +3646,10 @@ async def series_picks(series_id: int):
     picks = []
     home_votes = away_votes = 0
     for r in c.fetchall():
-        picks.append({'username': r[0], 'team_id': r[1], 'predicted_games': r[2],
-                      'team_abbreviation': r[3], 'team_logo_url': r[4]})
-        if r[1] == home_id:   home_votes += 1
-        elif r[1] == away_id: away_votes += 1
+        picks.append({'username': r[0], 'avatar_url': r[1] or '', 'team_id': r[2], 'predicted_games': r[3],
+                      'team_abbreviation': r[4], 'team_logo_url': r[5]})
+        if r[2] == home_id:   home_votes += 1
+        elif r[2] == away_id: away_votes += 1
 
     total = len(picks)
     conn.close()
@@ -3675,7 +3676,7 @@ async def playin_picks(game_id: int):
         raise HTTPException(status_code=404, detail="Game not found")
     team1_id, team2_id = row
 
-    c.execute("""SELECT u.username, pp.predicted_winner_id, t.abbreviation, t.logo_url
+    c.execute("""SELECT u.username, u.avatar_url, pp.predicted_winner_id, t.abbreviation, t.logo_url
                  FROM playin_predictions pp
                  JOIN users u ON pp.user_id = u.id
                  JOIN teams t ON pp.predicted_winner_id = t.id
@@ -3685,10 +3686,10 @@ async def playin_picks(game_id: int):
     picks = []
     t1_votes = t2_votes = 0
     for r in c.fetchall():
-        picks.append({'username': r[0], 'team_id': r[1],
-                      'team_abbreviation': r[2], 'team_logo_url': r[3]})
-        if r[1] == team1_id:   t1_votes += 1
-        elif r[1] == team2_id: t2_votes += 1
+        picks.append({'username': r[0], 'avatar_url': r[1] or '', 'team_id': r[2],
+                      'team_abbreviation': r[3], 'team_logo_url': r[4]})
+        if r[2] == team1_id:   t1_votes += 1
+        elif r[2] == team2_id: t2_votes += 1
 
     total = len(picks)
     conn.close()

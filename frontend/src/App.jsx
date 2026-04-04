@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronRight, Share, Bell } from 'lucide-react';
+import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronRight, Share, Bell, Lock } from 'lucide-react';
 import OneSignal from 'react-onesignal';
 import * as api from './services/api';
 import { supabase } from './lib/supabase';
@@ -787,44 +787,51 @@ const SeriesVoteBar = ({ s, currentUser }) => {
           </div>
         </div>
 
-        {/* Vote bar / lock placeholder */}
-        {picksRevealed() ? (
-          <>
-            <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
-              <div
-                className="h-full bg-blue-500/80 transition-all duration-700"
-                style={{ width: noVotes ? '50%' : `${homePct}%` }}
-              />
-              <div className="h-full bg-orange-500/70 flex-1" />
-              <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
-                <span className="text-xs font-black text-white drop-shadow-md">
-                  {noVotes ? '—' : `${homePct}%`}
-                </span>
-                <span className="text-xs font-black text-white drop-shadow-md">
-                  {noVotes ? '—' : `${awayPct}%`}
-                </span>
-              </div>
-            </div>
+        {/* Vote bar — always visible */}
+        <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
+          <div
+            className="h-full bg-blue-500/80 transition-all duration-700"
+            style={{ width: noVotes ? '50%' : `${homePct}%` }}
+          />
+          <div className="h-full bg-orange-500/70 flex-1" />
+          <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
+            <span className="text-xs font-black text-white drop-shadow-md">
+              {noVotes ? '—' : `${homePct}%`}
+            </span>
+            <span className="text-xs font-black text-white drop-shadow-md">
+              {noVotes ? '—' : `${awayPct}%`}
+            </span>
+          </div>
+        </div>
+        {/* Toggle row — individual picks only visible once series is no longer 'active' */}
+        {(() => {
+          const picksVisible = s.status !== 'active';
+          return (
             <div className="flex items-center justify-between mt-2 px-1">
               <span className="text-[10px] text-blue-400 font-black">{s.home_team.abbreviation}</span>
-              <button
-                onClick={handleToggle}
-                className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors"
-              >
-                <Users className="w-3 h-3" />
-                {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
-                <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-              </button>
+              {picksVisible ? (
+                <button
+                  onClick={handleToggle}
+                  className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors"
+                >
+                  <Users className="w-3 h-3" />
+                  {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
+                  <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                </button>
+              ) : (
+                <span className="flex items-center gap-1 text-[10px] text-slate-600 font-bold">
+                  <Lock className="w-3 h-3" />
+                  {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
+                </span>
+              )}
               <span className="text-[10px] text-orange-400 font-black">{s.away_team.abbreviation}</span>
             </div>
-          </>
-        ) : (
-          <PicksLockedPlaceholder />
-        )}
+          );
+        })()}
       </div>
 
-      {/* Expandable per-user picks (only after reveal) */}
-      {picksRevealed() && expanded && (
+      {/* Expandable per-user picks — only once series is no longer 'active' */}
+      {s.status !== 'active' && expanded && (
         <div className="border-t border-slate-800/80 bg-slate-950/40">
           {loadingPicks ? (
             <div className="flex justify-center py-5">
@@ -836,6 +843,20 @@ const SeriesVoteBar = ({ s, currentUser }) => {
                 const isMe = currentUser && p.username === currentUser.username;
                 return (
                   <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-orange-500/10' : ''}`}>
+                    {/* User avatar */}
+                    {p.avatar_url ? (
+                      <img
+                        src={p.avatar_url} alt=""
+                        className="w-6 h-6 rounded-full object-cover shrink-0"
+                        onError={e => { e.target.style.display = 'none'; }}
+                      />
+                    ) : (
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-orange-500/30' : 'bg-slate-700'}`}>
+                        <span className={`text-[8px] font-black ${isMe ? 'text-orange-400' : 'text-slate-400'}`}>
+                          {(p.username || '?')[0].toUpperCase()}
+                        </span>
+                      </div>
+                    )}
                     {isMe && (
                       <span className="text-[8px] font-black text-orange-400 bg-orange-500/20 border border-orange-500/30 px-1.5 py-0.5 rounded-full shrink-0">
                         YOU
@@ -960,8 +981,8 @@ const GlobalStatsTab = ({ currentUser }) => {
         </div>
       </div>
 
-      {/* ── Series votes by round / lock gate ── */}
-      {picksRevealed() ? sortedRounds.map(round => (
+      {/* ── Series votes by round — aggregate bars always visible ── */}
+      {sortedRounds.map(round => (
         <div key={round}>
           <div className="flex items-center gap-2 mb-3">
             <div className="h-px flex-1 bg-slate-800" />
@@ -974,22 +995,10 @@ const GlobalStatsTab = ({ currentUser }) => {
             ))}
           </div>
         </div>
-      )) : (
-        <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 flex flex-col items-center gap-3 text-center">
-          <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center">
-            <Download className="w-5 h-5 text-slate-500 opacity-60" />
-          </div>
-          <div>
-            <p className="text-sm font-black text-white">Picks Hidden Until Tournament Starts</p>
-            <p className="text-xs text-slate-500 mt-1">
-              Community predictions unlock on {PICKS_REVEAL_DATE.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} when Play-In tips off.
-            </p>
-          </div>
-        </div>
-      )}
+      ))}
 
-      {/* ── Futures top picks ── */}
-      {picksRevealed() && hasFutures && (
+      {/* ── Futures top picks — aggregate counts, always visible ── */}
+      {hasFutures && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <div className="h-px flex-1 bg-slate-800" />
@@ -1122,14 +1131,31 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                   className="p-4 flex items-center gap-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
                   onClick={() => setExpanded(isExpanded ? null : user.rank)}
                 >
-                  {/* Rank */}
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm shrink-0 ${
-                    user.rank === 1 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' :
-                    user.rank === 2 ? 'bg-slate-400/20 text-slate-300 border border-slate-400/40' :
-                    user.rank === 3 ? 'bg-orange-700/20 text-orange-400 border border-orange-700/40' :
-                    'bg-slate-800 text-slate-400'
-                  }`}>
-                    {user.rank <= 3 ? medals[user.rank - 1] : user.rank}
+                  {/* Rank / Avatar */}
+                  <div className="relative shrink-0">
+                    {user.avatar_url ? (
+                      <img
+                        src={user.avatar_url} alt={user.username}
+                        className={`w-10 h-10 rounded-full object-cover border-2 ${
+                          user.rank === 1 ? 'border-amber-500/60' :
+                          user.rank === 2 ? 'border-slate-400/60' :
+                          user.rank === 3 ? 'border-orange-600/60' :
+                          'border-slate-700'
+                        }`}
+                        onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                      />
+                    ) : null}
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm ${user.avatar_url ? 'hidden' : ''} ${
+                      user.rank === 1 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' :
+                      user.rank === 2 ? 'bg-slate-400/20 text-slate-300 border border-slate-400/40' :
+                      user.rank === 3 ? 'bg-orange-700/20 text-orange-400 border border-orange-700/40' :
+                      'bg-slate-800 text-slate-400'
+                    }`}>
+                      {user.rank <= 3 ? medals[user.rank - 1] : user.rank}
+                    </div>
+                    {user.rank <= 3 && user.avatar_url && (
+                      <span className="absolute -bottom-1 -right-1 text-sm leading-none">{medals[user.rank - 1]}</span>
+                    )}
                   </div>
 
                   {/* Name + stats */}

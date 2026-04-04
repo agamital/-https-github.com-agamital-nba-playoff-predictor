@@ -12,31 +12,28 @@ import { picksRevealed } from '../scoringConstants';
  *   homeTeam      – { abbreviation, logo_url }  (team1 for play-in)
  *   awayTeam      – { abbreviation, logo_url }  (team2 for play-in)
  *   initialStats  – pre-fetched { total_votes, home_pct, away_pct } or null
- *                   When null the section shows a "See picks" button; clicking it fetches.
+ *                   When null the section lazy-loads on first expand.
+ *   status        – series/game status string: 'active' | 'locked' | 'completed'
+ *                   Individual picks are hidden while status === 'active'.
+ *                   Falls back to global picksRevealed() when not provided.
  */
-const CommunityInsights = ({ seriesId, gameId, homeTeam, awayTeam, initialStats = null }) => {
+const CommunityInsights = ({ seriesId, gameId, homeTeam, awayTeam, initialStats = null, status }) => {
   const [open, setOpen]       = useState(false);
   const [picks, setPicks]     = useState(null);
   const [loading, setLoading] = useState(false);
   const [stats, setStats]     = useState(initialStats);
 
-  // Before the tournament starts: show locked placeholder instead of picks.
-  if (!picksRevealed()) {
-    return (
-      <div className="pt-2 border-t border-slate-800/60 mt-1">
-        <div className="flex items-center gap-2 py-1.5 text-slate-600">
-          <Lock className="w-3 h-3 shrink-0" />
-          <span className="text-[10px] font-bold">Predictions revealed when the tournament starts</span>
-        </div>
-      </div>
-    );
-  }
+  // Determine whether individual pick names are revealed:
+  // • If status prop provided: revealed once the series/game is no longer 'active'
+  // • If status not provided: fall back to global PICKS_REVEAL_DATE gate
+  const picksVisible = status != null ? status !== 'active' : picksRevealed();
 
-  // With pre-fetched stats: hide if nobody voted yet.
-  // Without pre-fetched stats: always render (shows a lazy-load button).
+  // With pre-fetched stats: hide component if nobody voted yet.
+  // Without pre-fetched stats: always render (lazy-load button).
   if (initialStats !== null && (!stats || stats.total_votes === 0)) return null;
 
   const handleToggle = async () => {
+    if (!picksVisible) return; // locked — ignore clicks
     const next = !open;
     setOpen(next);
     if (next && !picks) {
@@ -65,15 +62,16 @@ const CommunityInsights = ({ seriesId, gameId, homeTeam, awayTeam, initialStats 
 
   return (
     <div className="pt-2 border-t border-slate-800/60 mt-1">
-      {/* Toggle row */}
+      {/* Toggle row — always rendered; expand is gated by picksVisible */}
       <button
         onClick={handleToggle}
-        className="w-full flex items-center gap-2 py-1 group"
+        disabled={!picksVisible}
+        className={`w-full flex items-center gap-2 py-1 ${picksVisible ? 'group' : 'cursor-default'}`}
       >
         <Users className="w-3 h-3 text-slate-500 shrink-0" />
 
         {stats ? (
-          /* Vote bar */
+          /* Vote bar — always visible when stats are available */
           <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden flex mx-0.5">
             <div
               className="h-full bg-blue-500/70 transition-all duration-500"
@@ -83,17 +81,20 @@ const CommunityInsights = ({ seriesId, gameId, homeTeam, awayTeam, initialStats 
           </div>
         ) : (
           <span className="flex-1 text-[10px] text-slate-500 font-bold text-left">
-            See community picks
+            {picksVisible ? 'See community picks' : 'Community picks'}
           </span>
         )}
 
-        <span className="text-[10px] text-slate-500 font-bold group-hover:text-slate-300 transition-colors shrink-0 flex items-center gap-0.5">
+        <span className="text-[10px] text-slate-500 font-bold shrink-0 flex items-center gap-0.5">
           {totalVotes > 0 ? `${totalVotes} ${totalVotes === 1 ? 'pick' : 'picks'}` : ''}
-          <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+          {picksVisible
+            ? <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+            : <Lock className="w-3 h-3 opacity-60" />
+          }
         </span>
       </button>
 
-      {/* Pct labels */}
+      {/* Pct labels — always visible when stats present */}
       {stats && totalVotes > 0 && (
         <div className="flex items-center justify-between px-5">
           <span className="text-[9px] font-black text-blue-400">
@@ -105,8 +106,15 @@ const CommunityInsights = ({ seriesId, gameId, homeTeam, awayTeam, initialStats 
         </div>
       )}
 
-      {/* Expanded picks list */}
-      {open && (
+      {/* Lock hint when picks not yet revealed */}
+      {!picksVisible && (
+        <p className="text-[9px] text-slate-700 font-bold text-center mt-0.5">
+          Names revealed when this game tips off
+        </p>
+      )}
+
+      {/* Expanded picks list — only when picksVisible */}
+      {open && picksVisible && (
         <div className="mt-2 max-h-48 overflow-y-auto rounded-xl bg-slate-900/60 border border-slate-800/80">
           {loading ? (
             <div className="flex items-center justify-center py-4">
@@ -116,6 +124,21 @@ const CommunityInsights = ({ seriesId, gameId, homeTeam, awayTeam, initialStats 
             <div className="divide-y divide-slate-800/60">
               {picks.map((p, i) => (
                 <div key={i} className="flex items-center gap-2 px-3 py-2">
+                  {/* User avatar */}
+                  {p.avatar_url ? (
+                    <img
+                      src={p.avatar_url}
+                      alt=""
+                      className="w-5 h-5 rounded-full object-cover shrink-0"
+                      onError={e => { e.target.style.display = 'none'; }}
+                    />
+                  ) : (
+                    <div className="w-5 h-5 rounded-full bg-slate-700 flex items-center justify-center shrink-0">
+                      <span className="text-[7px] font-black text-slate-400">
+                        {(p.username || '?')[0].toUpperCase()}
+                      </span>
+                    </div>
+                  )}
                   <span className="text-xs font-bold text-slate-300 flex-1 truncate">
                     {p.username}
                   </span>

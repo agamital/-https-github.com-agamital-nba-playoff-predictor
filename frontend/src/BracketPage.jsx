@@ -521,6 +521,7 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
         homeTeam={team1}
         awayTeam={team2}
         initialStats={communityStats ?? null}
+        status={game.status}
       />
     </div>
   );
@@ -663,6 +664,7 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
         homeTeam={h}
         awayTeam={a}
         initialStats={communityStats ?? null}
+        status={series.status}
       />
     </div>
   );

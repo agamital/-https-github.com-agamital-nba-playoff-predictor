@@ -132,6 +132,7 @@ const PlayInPage = ({ currentUser }) => {
           homeTeam={game.team1}
           awayTeam={game.team2}
           initialStats={null}
+          status={game.status}
         />
       </Card>
     );
