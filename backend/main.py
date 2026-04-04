@@ -2416,6 +2416,40 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
               f"scoreboard: {scoreboard_source})")
         summary['games_processed'] += 1
 
+    # ── Step 5: Recompute per-game averages from player_game_stats ──────────
+    # This ensures pts_per_game (and other stats) in player_stats are always
+    # correct even when _sync_player_stats_job() (NBA API) hasn't run.
+    try:
+        c.execute(f'''
+            UPDATE player_stats ps
+            SET pts_per_game  = sub.avg_pts,
+                ast_per_game  = sub.avg_ast,
+                reb_per_game  = sub.avg_reb,
+                stl_per_game  = sub.avg_stl,
+                blk_per_game  = sub.avg_blk,
+                fg3m_per_game = sub.avg_fg3m,
+                games_played  = sub.gp
+            FROM (
+                SELECT espn_player_id,
+                       COUNT(*)                               AS gp,
+                       ROUND(AVG(points)::numeric,  1)        AS avg_pts,
+                       ROUND(AVG(assists)::numeric, 1)        AS avg_ast,
+                       ROUND(AVG(rebounds)::numeric,1)        AS avg_reb,
+                       ROUND(AVG(steals)::numeric,  1)        AS avg_stl,
+                       ROUND(AVG(blocks)::numeric,  1)        AS avg_blk,
+                       ROUND(AVG(fg3m)::numeric,    1)        AS avg_fg3m
+                FROM player_game_stats
+                WHERE season = %s
+                GROUP BY espn_player_id
+            ) sub
+            WHERE ps.espn_player_id = sub.espn_player_id
+              AND ps.season = %s
+        ''', (season, season))
+        updated_rows = c.rowcount
+        print(f"[Boxscore] ✓ Recomputed per-game averages for {updated_rows} players")
+    except Exception as _avg_err:
+        print(f"[Boxscore] ⚠ Average recompute failed: {_avg_err}")
+
     conn.commit()
     conn.close()
     # Record successful sync timestamp so TTL gate can skip redundant calls
@@ -3167,6 +3201,46 @@ async def cleanup_duplicate_players(season: str = "2026"):
         "rows_deleted":  deleted_total,
         "details":       merged,
     }
+
+
+@app.post("/api/admin/backfill-player-ppg")
+async def backfill_player_ppg(season: str = "2026"):
+    """
+    Recompute pts_per_game (and other per-game averages) for all players
+    in player_stats using actual game data from player_game_stats.
+    Run once after deploying the PPG fix.
+    """
+    conn = get_db_conn()
+    c    = conn.cursor()
+    c.execute('''
+        UPDATE player_stats ps
+        SET pts_per_game  = sub.avg_pts,
+            ast_per_game  = sub.avg_ast,
+            reb_per_game  = sub.avg_reb,
+            stl_per_game  = sub.avg_stl,
+            blk_per_game  = sub.avg_blk,
+            fg3m_per_game = sub.avg_fg3m,
+            games_played  = sub.gp
+        FROM (
+            SELECT espn_player_id,
+                   COUNT(*)                               AS gp,
+                   ROUND(AVG(points)::numeric,  1)        AS avg_pts,
+                   ROUND(AVG(assists)::numeric, 1)        AS avg_ast,
+                   ROUND(AVG(rebounds)::numeric,1)        AS avg_reb,
+                   ROUND(AVG(steals)::numeric,  1)        AS avg_stl,
+                   ROUND(AVG(blocks)::numeric,  1)        AS avg_blk,
+                   ROUND(AVG(fg3m)::numeric,    1)        AS avg_fg3m
+            FROM player_game_stats
+            WHERE season = %s
+            GROUP BY espn_player_id
+        ) sub
+        WHERE ps.espn_player_id = sub.espn_player_id
+          AND ps.season = %s
+    ''', (season, season))
+    updated = c.rowcount
+    conn.commit()
+    conn.close()
+    return {"players_updated": updated, "season": season}
 
 
 @app.post("/api/admin/standings/push")
@@ -5572,17 +5646,21 @@ async def search_players(q: str = "", conference: str = "All",
         params.extend([conference, conference])
 
     c.execute(f'''
-        SELECT DISTINCT ON (LOWER(ps.player_name))
-               ps.player_id, ps.player_name, ps.team_abbreviation,
-               COALESCE(ps.pts_per_game, 0) AS ppg,
-               t.logo_url, t.conference
-        FROM player_stats ps
-        LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
-        WHERE ps.season = %s
-          AND ps.player_name ILIKE %s
-          {conf_filter}
-        ORDER BY LOWER(ps.player_name), ps.pts_per_game DESC NULLS LAST
-        LIMIT %s
+        SELECT player_id, player_name, team_abbreviation, ppg, logo_url, conference
+        FROM (
+            SELECT DISTINCT ON (LOWER(ps.player_name))
+                   ps.player_id, ps.player_name, ps.team_abbreviation,
+                   COALESCE(ps.pts_per_game, 0) AS ppg,
+                   t.logo_url, t.conference
+            FROM player_stats ps
+            LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
+            WHERE ps.season = %s
+              AND ps.player_name ILIKE %s
+              {conf_filter}
+            ORDER BY LOWER(ps.player_name), ps.pts_per_game DESC NULLS LAST
+            LIMIT %s
+        ) deduped
+        ORDER BY ppg DESC NULLS LAST
     ''', params + [limit * 3])   # fetch extra so accent-dedup still yields limit rows
 
     # Post-dedup by accent-normalized name (catches "Doncic" ↔ "Dončić" pairs
