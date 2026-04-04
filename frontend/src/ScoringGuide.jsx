@@ -4,7 +4,7 @@ import {
   BASE_WINNER_PTS, BASE_GAMES_PTS,
   PLAYIN_PTS, PLAYIN_UNDERDOG_PTS,
   FUTURES_BASE_POINTS, LEADERS_TIERS,
-  SERIES_LEADER_BONUS, FINALS_CHAMPION_MULT,
+  SERIES_LEADER_BONUS, FINALS_CHAMPION_MULT, ROUND_MULTIPLIERS,
 } from './scoringConstants';
 
 // ── Shared primitives ──────────────────────────────────────────────────────────
@@ -38,10 +38,10 @@ const TierPill = ({ icon, label, variant }) => {
 // ── Pre-computed table data ────────────────────────────────────────────────────
 
 const ROUND_ROWS = [
-  { label: 'First Round',           abbr: 'R1',     winMult: 1.0,                  gmMult: 1.0 },
-  { label: 'Conference Semifinals', abbr: 'Semis',  winMult: 1.0,                  gmMult: 1.0 },
-  { label: 'Conference Finals',     abbr: 'CF',     winMult: 1.5,                  gmMult: 1.5 },
-  { label: 'NBA Finals',            abbr: 'Finals', winMult: FINALS_CHAMPION_MULT, gmMult: 2.0 },
+  { label: 'First Round',           abbr: 'R1',     winMult: ROUND_MULTIPLIERS['First Round'],           gmMult: ROUND_MULTIPLIERS['First Round']           },
+  { label: 'Conference Semifinals', abbr: 'Semis',  winMult: ROUND_MULTIPLIERS['Conference Semifinals'], gmMult: ROUND_MULTIPLIERS['Conference Semifinals'] },
+  { label: 'Conference Finals',     abbr: 'CF',     winMult: ROUND_MULTIPLIERS['Conference Finals'],     gmMult: ROUND_MULTIPLIERS['Conference Finals']     },
+  { label: 'NBA Finals',            abbr: 'Finals', winMult: FINALS_CHAMPION_MULT,                       gmMult: ROUND_MULTIPLIERS['NBA Finals']            },
 ].map(r => ({
   ...r,
   winner: Math.floor(BASE_WINNER_PTS * r.winMult),
@@ -175,9 +175,9 @@ export default function ScoringGuide() {
             { label: 'R1 1v8 — underdog winner only',             pts: 100 },
             { label: 'R1 1v8 — underdog winner + exact games',    pts: 160,  green: true },
             { label: 'R1 2v7 — underdog winner + exact games',    pts: 120,  green: true },
-            { label: 'Conf Finals — favourite, winner + games',   pts: 120 },
-            { label: 'Conf Finals — underdog, winner + games',    pts: 179,  green: true },
-            { label: 'NBA Finals — correct champion + games',     pts: 185,  gold: true  },
+            { label: 'Conf Finals — favourite, winner + games',   pts: 160 },
+            { label: 'Conf Finals — underdog, winner + games',    pts: 240,  green: true },
+            { label: 'NBA Finals — correct champion + games',     pts: 200,  gold: true  },
           ].map(ex => (
             <div key={ex.label} className="flex items-center justify-between gap-2 bg-slate-800/50 rounded-lg px-3 py-2">
               <span className="text-xs text-slate-400 flex-1">{ex.label}</span>
