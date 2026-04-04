@@ -4,55 +4,101 @@ sync_worker.py — Railway background-worker alternative to APScheduler.
 Use this when deploying as a Railway "Worker" service (no web port needed).
 Set the start command to:  python sync_worker.py
 
-The script runs _standings_sync_job() immediately on start, then sleeps 6 hours
-and repeats.  It stops automatically after _STANDINGS_SYNC_CUTOFF (April 20 2026).
+The script sleeps until 04:00 UTC, runs the full sync chain once, then sleeps
+until the next 04:00 UTC.  It stops automatically after _STANDINGS_SYNC_CUTOFF
+(April 20 2026).
 """
 
 import time
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ---------------------------------------------------------------------------
 # Cutoff: stop syncing after end-of-day April 20 2026.
 # Keep in sync with main.py:_STANDINGS_SYNC_CUTOFF.
 # ---------------------------------------------------------------------------
-_CUTOFF = datetime(2026, 4, 21, 0, 0, 0)   # exclusive — stops ON April 21
-_INTERVAL_SECONDS = 12 * 60 * 60           # 12 hours (2x/day to conserve RapidAPI quota)
+_CUTOFF          = datetime(2026, 4, 21, 0, 0, 0)   # exclusive — stops ON April 21
+_DAILY_SYNC_HOUR = 4                                  # 04:00 UTC
 
 # Ensure the backend package is importable when run directly
 sys.path.insert(0, os.path.dirname(__file__))
 
-from main import _standings_sync_job, NBA_API_AVAILABLE  # noqa: E402
+from main import (  # noqa: E402
+    _standings_sync_job, sync_daily_boxscores, refresh_playin_matchups,
+    NBA_API_AVAILABLE,
+)
+
+
+def _seconds_until_next_04utc() -> float:
+    """Return seconds until the next 04:00 UTC wall-clock time."""
+    now  = datetime.utcnow()
+    next_run = now.replace(hour=_DAILY_SYNC_HOUR, minute=0, second=0, microsecond=0)
+    if next_run <= now:
+        next_run += timedelta(days=1)
+    return (next_run - now).total_seconds()
 
 
 def run():
-    print(f"[Worker] Standings sync worker started — runs every {_INTERVAL_SECONDS // 3600}h (2x/day) until {_CUTOFF.date()}")
-
-    if not NBA_API_AVAILABLE:
-        print("[Worker] nba_api not installed — worker cannot fetch standings. Exiting.")
-        sys.exit(1)
+    print(f"[Worker] Daily Auto-Sync worker started — fires at 04:00 UTC until {_CUTOFF.date()}")
 
     while True:
         now = datetime.utcnow()
         if now >= _CUTOFF:
-            print(f"[Worker] Regular season ended ({_CUTOFF.date()}). Entering static mode — worker exiting.")
+            print(f"[Worker] Regular season ended ({_CUTOFF.date()}). Static mode — worker exiting.")
             sys.exit(0)
 
-        print(f"[Worker] Running sync at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        # ── Sleep until 04:00 UTC ────────────────────────────────────────
+        sleep_sec = _seconds_until_next_04utc()
+        print(f"[Worker] Next Daily Auto-Sync in {sleep_sec / 3600:.1f}h "
+              f"(at ~04:00 UTC) — sleeping…")
+        time.sleep(sleep_sec)
+
+        # ── Full sync chain ──────────────────────────────────────────────
+        run_at = datetime.utcnow()
+        print(f"[Daily Auto-Sync] ── Worker: starting daily full-chain sync "
+              f"({run_at.strftime('%Y-%m-%d %H:%M')} UTC) ──")
+
+        # Step 1 — Boxscores: yesterday + today
+        for _bx_date in (None, run_at.strftime('%Y-%m-%d')):
+            _label = "yesterday" if _bx_date is None else "today"
+            try:
+                bx = sync_daily_boxscores(date_str=_bx_date, season='2026',
+                                          force=True, triggered_by='daily_auto')
+                print(f"[Daily Auto-Sync] Boxscore ({_label}) — "
+                      f"games={bx.get('games_processed',0)} "
+                      f"players={bx.get('players_upserted',0)} "
+                      f"errors={len(bx.get('errors',[]))}")
+            except Exception as e:
+                print(f"[Daily Auto-Sync] Boxscore ({_label}) ERROR: {type(e).__name__}: {e}")
+
+        # Step 2 — Standings + player stats
         try:
             ok = _standings_sync_job()
-            print(f"[Worker] Sync {'succeeded' if ok else 'finished (no update)'}")
+            print(f"[Daily Auto-Sync] Standings sync {'succeeded' if ok else 'finished (no update)'}")
         except Exception as e:
-            print(f"[Worker] Sync error: {e}")
+            print(f"[Daily Auto-Sync] Standings sync ERROR: {e}")
 
-        next_run = datetime.utcnow()
-        sleep_until = now.replace(second=0, microsecond=0)
-        # Sleep exactly _INTERVAL_SECONDS from the start of this run
-        elapsed = (datetime.utcnow() - now).total_seconds()
-        sleep_for = max(0, _INTERVAL_SECONDS - elapsed)
-        print(f"[Worker] Next sync in {sleep_for / 3600:.1f}h — sleeping…")
-        time.sleep(sleep_for)
+        # Step 3 — Play-in matchups
+        try:
+            pim = refresh_playin_matchups('2026')
+            print(f"[Daily Auto-Sync] Playin matchups — "
+                  f"updated={len(pim.get('updated',[]))} skipped={len(pim.get('skipped',[]))}")
+        except Exception as e:
+            print(f"[Daily Auto-Sync] Playin matchups ERROR: {e}")
+
+        # Step 4 — Play-in + playoff results (import lazily to avoid circular issues)
+        try:
+            from game_processor import sync_playin_results_from_api, sync_playoff_results_from_api
+            pi = sync_playin_results_from_api('2026')
+            print(f"[Daily Auto-Sync] Playin results — processed={pi.get('processed',0)}")
+            po = sync_playoff_results_from_api('2026')
+            print(f"[Daily Auto-Sync] Playoff results — updated={po.get('updated',0)}")
+        except Exception as e:
+            print(f"[Daily Auto-Sync] Results sync ERROR: {e}")
+
+        print(f"[Daily Auto-Sync] ── Worker: complete "
+              f"({datetime.utcnow().strftime('%H:%M')} UTC) ──")
 
 
 if __name__ == "__main__":

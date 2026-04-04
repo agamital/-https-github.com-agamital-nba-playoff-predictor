@@ -26,9 +26,18 @@ from scoring import (
 
 _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 
-# Sync runs every 6 h until end-of-day April 20 2026 (last regular-season day).
+# Sync runs once daily (04:00 UTC) until end-of-day April 20 2026 (last regular-season day).
 # After this the app enters Static Mode: DB snapshot is served forever, no API calls.
 _STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 21, 0, 0, 0)   # exclusive — stops ON April 21
+
+# ── On-demand freshness TTLs (minutes) ────────────────────────────────────────
+# Prevents redundant API calls when a user repeatedly triggers a refresh.
+STANDINGS_TTL_MINUTES: int = 360   # 6 h — standings don't change mid-day
+BOXSCORE_TTL_MINUTES:  int = 20    # 20 min — enough for live game windows
+
+# Per-date boxscore sync timestamps (in-memory; resets on restart).
+# Keyed by ISO date string ('YYYY-MM-DD') → last successful sync datetime (UTC).
+_boxscore_last_sync: dict = {}
 
 # Tracks sync health across requests — readable by /api/standings and admin endpoints
 _sync_status = {
@@ -1974,7 +1983,8 @@ def _initial_standings_sync():
     time.sleep(delay)
     _standings_sync_job()
 
-def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> dict:
+def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
+                         force: bool = False, triggered_by: str = 'auto') -> dict:
     """
     Fetch completed NBA games for a given date, pull full player boxscores
     from the ESPN public summary API, and upsert into player_game_stats.
@@ -1982,11 +1992,14 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
     Also back-fills espn_player_id on existing player_stats rows via name match.
 
     Args:
-        date_str: 'YYYY-MM-DD' or 'YYYYMMDD'.  Defaults to yesterday UTC.
-        season:   Season tag stored on every row (default '2026').
+        date_str:     'YYYY-MM-DD' or 'YYYYMMDD'.  Defaults to yesterday UTC.
+        season:       Season tag stored on every row (default '2026').
+        force:        If True, bypass the freshness TTL gate (used by admin/daily-sync).
+        triggered_by: Label used in logs — 'daily_auto', 'user_refresh', 'admin', etc.
 
     Returns a summary dict:
-      { date, games_found, games_processed, players_upserted, espn_id_updates, errors }
+      { date, games_found, games_processed, players_upserted, espn_id_updates,
+        errors, skipped, skip_reason }
     """
     import requests as _http
     from datetime import date as _date, timedelta as _td
@@ -2046,7 +2059,22 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
     summary = {
         'date': date_iso, 'games_found': 0, 'games_processed': 0,
         'players_upserted': 0, 'espn_id_updates': 0, 'errors': [],
+        'skipped': False, 'skip_reason': None, 'triggered_by': triggered_by,
     }
+
+    # ── Freshness gate — skip if recently synced for this date ────────────────
+    if not force:
+        _last = _boxscore_last_sync.get(date_iso)
+        if _last is not None:
+            age_min = (datetime.utcnow() - _last).total_seconds() / 60
+            if age_min < BOXSCORE_TTL_MINUTES:
+                summary['skipped']     = True
+                summary['skip_reason'] = f"fresh_cache ({age_min:.1f}m < {BOXSCORE_TTL_MINUTES}m TTL)"
+                print(f"[Boxscore] [{triggered_by}] Skipping {date_iso} — "
+                      f"synced {age_min:.1f}m ago (TTL={BOXSCORE_TTL_MINUTES}m)")
+                return summary
+
+    print(f"[Boxscore] [{triggered_by}] Starting sync for {date_iso}")
 
     if not _RAPIDAPI_KEY:
         summary['errors'].append("RAPIDAPI_KEY not set")
@@ -2357,7 +2385,10 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026') -> d
 
     conn.commit()
     conn.close()
-    print(f"[Boxscore] ✓ {date_iso} — {summary['games_processed']} games, "
+    # Record successful sync timestamp so TTL gate can skip redundant calls
+    _boxscore_last_sync[date_iso] = datetime.utcnow()
+    print(f"[Boxscore] [{triggered_by}] ✓ {date_iso} — "
+          f"{summary['games_processed']} games, "
           f"{summary['players_upserted']} players, "
           f"{summary['espn_id_updates']} ESPN ID updates")
     return summary
@@ -2712,121 +2743,75 @@ async def startup():
     global _scheduler
     _scheduler = BackgroundScheduler(timezone='UTC', daemon=True)
 
-    # ── 1) Full data sync chain ──────────────────────────────────────────
-    # Hourly job; full chain (standings + players) fires only at 06:00 & 18:00 UTC
-    # (09:00 & 21:00 IST) = 2 API calls/day. Boxscore runs every hour.
-    # Chain: standings → refresh_playin_matchups → playin results → playoff results
-    def _auto_sync_chain():
+    # ── 1) Daily full-chain sync — 04:00 UTC (1x/day) ───────────────────────
+    # Replaces the old hourly + 15-min jobs.  Runs the complete sequence once
+    # per day when API traffic is lowest: standings → boxscores → play-in →
+    # playoff results → player stats.  Bypass TTL so fresh data is always written.
+    def _daily_auto_sync():
         from game_processor import sync_playin_results_from_api, sync_playoff_results_from_api
 
-        utc_now  = datetime.utcnow()
-        utc_hour = utc_now.hour
-        # Full chain (standings + player stats) runs only at 06:00 and 18:00 UTC
-        # (= 09:00 and 21:00 IST) to limit RapidAPI usage to 2 calls/day.
-        # All other hours: boxscore-only (lightweight).
-        is_chain_run = utc_hour in (6, 18)
-        mode         = "Full-Chain" if is_chain_run else "BoxOnly"
+        utc_now = datetime.utcnow()
+        print(f"[Daily Auto-Sync] ── Starting daily full-chain sync "
+              f"({utc_now.strftime('%Y-%m-%d %H:%M')} UTC) ──")
 
-        print(f"[Auto-Sync] ── Starting scheduled sync (Mode: {mode}, "
-              f"{utc_now.strftime('%Y-%m-%d %H:%M')} UTC) ──")
-
-        # ── Boxscore sync runs on EVERY call (day + night) ──────────────
-        # Fetches both yesterday and today so recently-finished and
-        # still-live games are captured regardless of time of day.
-        for _bx_date in (None, datetime.utcnow().strftime('%Y-%m-%d')):
+        # Step 1 — Boxscores: yesterday + today (force=True bypasses TTL)
+        for _bx_date in (None, utc_now.strftime('%Y-%m-%d')):
             _label = "yesterday" if _bx_date is None else "today"
             try:
-                bx = sync_daily_boxscores(date_str=_bx_date, season='2026')
-                print(f"[Auto-Sync] Boxscore ({_label}) — "
+                bx = sync_daily_boxscores(date_str=_bx_date, season='2026',
+                                          force=True, triggered_by='daily_auto')
+                print(f"[Daily Auto-Sync] Boxscore ({_label}) — "
                       f"games={bx.get('games_processed',0)} "
                       f"players={bx.get('players_upserted',0)} "
                       f"errors={len(bx.get('errors',[]))}")
             except Exception as e:
-                print(f"[Auto-Sync] Boxscore ({_label}) ERROR: {type(e).__name__}: {e}")
+                print(f"[Daily Auto-Sync] Boxscore ({_label}) ERROR: {type(e).__name__}: {e}")
 
-        if not is_chain_run:
-            print(f"[Auto-Sync] ── {mode} — boxscore-only run complete "
-                  f"({datetime.utcnow().strftime('%H:%M')} UTC) ──")
-            return
-
-        # ── Full chain — only at 06:00 and 18:00 UTC (2x/day) ───────────
-
-        # Step 1 — Standings + player stats
-        print("[Auto-Sync] Step 1/5 — Standings sync")
+        # Step 2 — Standings + player stats
+        print("[Daily Auto-Sync] Step 2/5 — Standings sync")
         try:
             standings_ok = _standings_sync_job()
-            print(f"[Auto-Sync] Step 1/5 done — standings_ok={standings_ok}")
+            print(f"[Daily Auto-Sync] Step 2/5 done — standings_ok={standings_ok}")
         except Exception as e:
-            print(f"[Auto-Sync] Step 1/5 ERROR: {type(e).__name__}: {e}")
-            standings_ok = False
+            print(f"[Daily Auto-Sync] Step 2/5 ERROR: {type(e).__name__}: {e}")
 
-        # Step 2 — Refresh play-in matchups from latest seeds
-        print("[Auto-Sync] Step 2/5 — refresh_playin_matchups")
+        # Step 3 — Refresh play-in matchups from latest seeds
+        print("[Daily Auto-Sync] Step 3/5 — refresh_playin_matchups")
         try:
             pim = refresh_playin_matchups('2026')
-            print(f"[Auto-Sync] Step 2/5 done — "
+            print(f"[Daily Auto-Sync] Step 3/5 done — "
                   f"updated={len(pim.get('updated',[]))} skipped={len(pim.get('skipped',[]))}")
         except Exception as e:
-            print(f"[Auto-Sync] Step 2/5 ERROR: {type(e).__name__}: {e}")
+            print(f"[Daily Auto-Sync] Step 3/5 ERROR: {type(e).__name__}: {e}")
 
-        # Step 3 — Sync finished Play-In games from RapidAPI scoreboard
-        print("[Auto-Sync] Step 3/5 — sync_playin_results_from_api")
+        # Step 4 — Sync finished Play-In results
+        print("[Daily Auto-Sync] Step 4/5 — sync_playin_results_from_api")
         try:
             pi = sync_playin_results_from_api('2026')
-            print(f"[Auto-Sync] Step 3/5 done — "
+            print(f"[Daily Auto-Sync] Step 4/5 done — "
                   f"processed={pi.get('processed',0)} promoted={pi.get('promoted',0)} "
                   f"errors={len(pi.get('errors',[]))}")
         except Exception as e:
-            print(f"[Auto-Sync] Step 3/5 ERROR: {type(e).__name__}: {e}")
+            print(f"[Daily Auto-Sync] Step 4/5 ERROR: {type(e).__name__}: {e}")
 
-        # Step 4 — Sync finished Playoff games from RapidAPI scoreboard
-        print("[Auto-Sync] Step 4/5 — sync_playoff_results_from_api")
+        # Step 5 — Sync finished Playoff results
+        print("[Daily Auto-Sync] Step 5/5 — sync_playoff_results_from_api")
         try:
             po = sync_playoff_results_from_api('2026')
-            print(f"[Auto-Sync] Step 4/5 done — "
+            print(f"[Daily Auto-Sync] Step 5/5 done — "
                   f"updated={po.get('updated',0)} completed={po.get('completed',0)} "
                   f"errors={len(po.get('errors',[]))}")
         except Exception as e:
-            print(f"[Auto-Sync] Step 4/5 ERROR: {type(e).__name__}: {e}")
+            print(f"[Daily Auto-Sync] Step 5/5 ERROR: {type(e).__name__}: {e}")
 
-        print(f"[Auto-Sync] ── Full chain complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
-
-    _scheduler.add_job(
-        _auto_sync_chain,
-        # Fires every hour.  The function itself only runs the full standings+player
-        # chain at 06:00 and 18:00 UTC (09:00 and 21:00 IST) to conserve RapidAPI
-        # quota (2 full syncs/day).  All other hours: boxscore-only.
-        CronTrigger.from_crontab('0 * * * *'),
-        id='auto_sync_chain',
-        replace_existing=True,
-        misfire_grace_time=300,
-        max_instances=1,
-    )
-
-    # ── 2) Game-hours boxscore — every 15 min during 20:00–04:00 UTC ────────
-    # NBA tip-offs cluster 20:00–03:00 UTC (3pm–10pm ET).
-    # Fires at :00, :15, :30, :45 of hours 20–23 and 0–4 UTC.
-    def _game_hours_boxscore():
-        utc_hour = datetime.utcnow().hour
-        # Gate: 20:00–04:59 UTC only (avoids wasted calls mid-afternoon)
-        if not (utc_hour >= 20 or utc_hour < 5):
-            return
-        for _bx_date in (None, datetime.utcnow().strftime('%Y-%m-%d')):
-            _label = "yesterday" if _bx_date is None else "today"
-            try:
-                bx = sync_daily_boxscores(date_str=_bx_date, season='2026')
-                print(f"[GameHours-Sync] Boxscore ({_label}) — "
-                      f"games={bx.get('games_processed',0)} "
-                      f"players={bx.get('players_upserted',0)}")
-            except Exception as e:
-                print(f"[GameHours-Sync] Boxscore ({_label}) ERROR: {type(e).__name__}: {e}")
+        print(f"[Daily Auto-Sync] ── Complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
 
     _scheduler.add_job(
-        _game_hours_boxscore,
-        CronTrigger.from_crontab('*/15 * * * *'),
-        id='game_hours_boxscore',
+        _daily_auto_sync,
+        CronTrigger.from_crontab('0 4 * * *'),   # 04:00 UTC daily — low-traffic window
+        id='daily_auto_sync',
         replace_existing=True,
-        misfire_grace_time=120,
+        misfire_grace_time=600,   # 10-min grace — still runs if server lagged at 04:00
         max_instances=1,
     )
 
@@ -2852,10 +2837,10 @@ async def startup():
 
     _scheduler.start()
     print("[Scheduler] APScheduler started"
-          " — auto_sync_chain: 0 * * * * (full-chain 2x/day at 06:00 & 18:00 UTC; boxscore every hour)"
-          " — game_hours_boxscore: */15 * * * * (15-min boxscore during 20:00–04:59 UTC)"
+          " — daily_auto_sync: 0 4 * * * UTC (04:00 UTC, 1x/day; full chain)"
           " — missing-picks: 0 6 * * * UTC (09:00 IL) + 0 18 * * * UTC (21:00 IL)"
-          f" — active until {_STANDINGS_SYNC_CUTOFF.date()}")
+          f" — active until {_STANDINGS_SYNC_CUTOFF.date()}"
+          f" — boxscore TTL={BOXSCORE_TTL_MINUTES}m, standings TTL={STANDINGS_TTL_MINUTES}m")
 
     # Fire-and-forget initial sync so DB is populated shortly after boot
     threading.Thread(target=_initial_standings_sync, daemon=True).start()
@@ -2877,10 +2862,24 @@ async def root():
 @app.get("/api/standings")
 async def api_standings(force_refresh: bool = False):
     sync_triggered = False
+    skip_reason    = None
     if force_refresh:
-        # Non-blocking background refresh (user-facing) — returns immediately
-        threading.Thread(target=_standings_sync_job, daemon=True).start()
-        sync_triggered = True
+        # Only trigger if cache is stale — avoids hammering the API on rapid reloads
+        fetched_at = _standings_cache.get("fetched_at")
+        if fetched_at:
+            age_min = (datetime.utcnow() - fetched_at).total_seconds() / 60
+            if age_min < STANDINGS_TTL_MINUTES:
+                skip_reason = f"fresh_cache ({age_min:.1f}m < {STANDINGS_TTL_MINUTES}m TTL)"
+                print(f"[Standings] [user_refresh] Skipping — {skip_reason}")
+            else:
+                print(f"[Standings] [user_refresh] Cache is {age_min:.1f}m old — triggering sync")
+                threading.Thread(target=_standings_sync_job, daemon=True).start()
+                sync_triggered = True
+        else:
+            # No cache at all — always sync
+            print("[Standings] [user_refresh] No cache found — triggering sync")
+            threading.Thread(target=_standings_sync_job, daemon=True).start()
+            sync_triggered = True
 
     standings = get_standings()
     eastern = sorted([t for t in standings if t['conference'] == 'East'], key=lambda x: x['conf_rank'])
@@ -2914,11 +2913,50 @@ async def api_standings(force_refresh: bool = False):
         "cache_age_minutes": cache_age_minutes,
         "cache_expires":     _standings_cache["expires"].isoformat() if _standings_cache.get("expires") else None,
         "sync_triggered":    sync_triggered,
+        "sync_skipped":      skip_reason is not None,
+        "sync_skip_reason":  skip_reason,
         "sync_cutoff":       _STANDINGS_SYNC_CUTOFF.strftime('%Y-%m-%d'),
         "static_mode":       is_static_mode,
         "data_source":       _sync_status.get("source", "unknown"),
         "consecutive_failures": _sync_status.get("consecutive_failures", 0),
         "last_sync_error":   _sync_status.get("last_error"),
+    }
+
+
+@app.post("/api/games/refresh")
+async def refresh_today_games(date: str | None = None):
+    """
+    User-triggered on-demand boxscore refresh.
+    Checks the BOXSCORE_TTL_MINUTES freshness gate before hitting any API.
+    Returns immediately after spawning a background thread.
+
+    Query param:
+        date: 'YYYY-MM-DD' — defaults to yesterday UTC (most recent completed games).
+    """
+    target_date = date or (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # Freshness check — don't trigger if recently synced
+    _last = _boxscore_last_sync.get(target_date)
+    if _last is not None:
+        age_min = (datetime.utcnow() - _last).total_seconds() / 60
+        if age_min < BOXSCORE_TTL_MINUTES:
+            return {
+                "triggered": False,
+                "date": target_date,
+                "reason": f"fresh_cache ({age_min:.1f}m < {BOXSCORE_TTL_MINUTES}m TTL)",
+                "last_sync": _last.isoformat(),
+            }
+
+    def _run():
+        sync_daily_boxscores(date_str=target_date, season='2026',
+                             force=False, triggered_by='user_refresh')
+
+    threading.Thread(target=_run, daemon=True).start()
+    print(f"[Boxscore] [user_refresh] Background sync triggered for {target_date}")
+    return {
+        "triggered": True,
+        "date": target_date,
+        "message": f"Boxscore sync started for {target_date}. Refresh in ~30s to see updated results.",
     }
 
 
@@ -4466,14 +4504,16 @@ async def admin_sync_playoffs_from_api(season: str = "2026"):
 @app.post("/api/admin/boxscore/sync")
 async def admin_sync_boxscores(date: str | None = None, season: str = "2026"):
     """
-    Fetch and store per-game player boxscores for a given date.
+    Fetch and store per-game player boxscores for a given date (admin, force-bypass TTL).
     date: 'YYYY-MM-DD' or 'YYYYMMDD'.  Defaults to yesterday UTC.
     """
     import concurrent.futures
     loop = asyncio.get_event_loop()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         result = await loop.run_in_executor(
-            pool, sync_daily_boxscores, date, season
+            pool,
+            lambda: sync_daily_boxscores(date_str=date, season=season,
+                                         force=True, triggered_by='admin')
         )
     return result
 
