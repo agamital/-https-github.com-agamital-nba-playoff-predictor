@@ -2141,7 +2141,7 @@ def _sync_player_stats_job():
         lp = leaguedashplayerstats.LeagueDashPlayerStats(
             season='2025-26',
             season_type_all_star='Regular Season',
-            per_mode_simple='PerGame',
+            per_mode_detailed='PerGame',
             league_id_nullable='00',
             headers=_NBA_HEADERS,
             timeout=_NBA_TIMEOUT,
@@ -3387,7 +3387,7 @@ async def admin_player_stats_sync():
             lp = leaguedashplayerstats.LeagueDashPlayerStats(
                 season='2025-26',
                 season_type_all_star='Regular Season',
-                per_mode_simple='PerGame',
+                per_mode_detailed='PerGame',
                 league_id_nullable='00',
                 headers=_NBA_HEADERS,
                 timeout=_NBA_TIMEOUT,
