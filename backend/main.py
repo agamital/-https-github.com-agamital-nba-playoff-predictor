@@ -1477,31 +1477,56 @@ def _build_reminder_html(missing_labels: list[str]) -> str:
     )
 
 
-def _resend_send_email(to: str, subject: str, html: str) -> None:
+def _resend_send_email(to: str, subject: str, html: str) -> dict:
     """
-    Send a single transactional email via Resend REST API (stdlib only — no SDK
-    dependency at import time).  Raises on any HTTP / API error.
+    Send a single transactional email via Resend REST API (stdlib only).
+    Returns the parsed Resend response dict on success.
+    Raises RuntimeError with full Resend error body on any HTTP / API failure.
     """
-    import urllib.request as _req, json as _json
+    import urllib.request as _req
+    import urllib.error  as _uerr
+    import json as _json
+
+    print(f"[Resend] Sending to={to!r} from={_RESEND_FROM!r} "
+          f"key_prefix={_RESEND_API_KEY[:8] + '...' if _RESEND_API_KEY else 'NOT SET'!r}")
+
     payload = _json.dumps({
         "from":    _RESEND_FROM,
         "to":      [to],
         "subject": subject,
         "html":    html,
     }).encode("utf-8")
-    request = _req.Request(
+
+    req = _req.Request(
         "https://api.resend.com/emails",
         data=payload,
         headers={
             "Authorization": f"Bearer {_RESEND_API_KEY}",
-            "Content-Type":  "application/json",
+            "Content-Type":  "application/json; charset=utf-8",
         },
         method="POST",
     )
-    with _req.urlopen(request, timeout=15) as resp:
-        body = _json.loads(resp.read())
-        if not body.get("id"):
-            raise ValueError(f"Resend unexpected response: {body}")
+
+    try:
+        with _req.urlopen(req, timeout=15) as resp:
+            body = _json.loads(resp.read().decode("utf-8"))
+            if not body.get("id"):
+                raise RuntimeError(f"Resend returned no id: {body}")
+            print(f"[Resend] ✓ email id={body['id']} to={to!r}")
+            return body
+    except _uerr.HTTPError as exc:
+        # Read the full error body Resend sends back (e.g. "API key is invalid")
+        try:
+            err_body = exc.read().decode("utf-8")
+            err_json = _json.loads(err_body)
+            detail   = err_json.get("message") or err_json.get("name") or err_body
+        except Exception:
+            detail = str(exc)
+        print(f"[Resend] HTTP {exc.code} error: {detail}")
+        raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
+    except Exception as exc:
+        print(f"[Resend] Unexpected error: {type(exc).__name__}: {exc}")
+        raise
 
 
 def _send_daily_email_reminders() -> dict:
@@ -3535,11 +3560,15 @@ async def admin_trigger_reminder(request: Request):
 async def admin_send_test_email(to: str):
     """
     Send a single test reminder email to the given address.
-    Uses a placeholder matchup list so the template can be verified without
-    needing real missing-picks data.
+    Uses placeholder matchups so the Resend config can be verified end-to-end.
+    Full error details are logged to Railway stdout on failure.
     """
     if not _RESEND_API_KEY:
-        raise HTTPException(status_code=503, detail="RESEND_API_KEY not configured on server")
+        raise HTTPException(status_code=503,
+                            detail="RESEND_API_KEY not configured — add it to Railway env vars")
+    if not _RESEND_FROM:
+        raise HTTPException(status_code=503,
+                            detail="RESEND_FROM not configured — add it to Railway env vars")
     if not to or "@" not in to:
         raise HTTPException(status_code=400, detail="Invalid 'to' email address")
 
@@ -3547,12 +3576,20 @@ async def admin_send_test_email(to: str):
         "Oklahoma City Thunder vs Memphis Grizzlies (First Round)",
         "Boston Celtics vs Miami Heat (Conference Semifinals)",
     ]
-    subject = "[TEST] Don't leave points on the table! 🏀 Your NBA Playoff predictions are incomplete."
+    subject = "[TEST] Don't leave points on the table! \U0001f3c0 Your NBA Playoff predictions are incomplete."
+    print(f"[TestEmail] Triggered — to={to!r} from={_RESEND_FROM!r}")
     try:
-        _resend_send_email(to, subject, _build_reminder_html(sample_labels))
-        return {"sent": True, "to": to}
+        result = _resend_send_email(to, subject, _build_reminder_html(sample_labels))
+        return {"sent": True, "to": to, "resend_id": result.get("id")}
+    except RuntimeError as e:
+        # RuntimeError is raised by _resend_send_email with the full Resend detail
+        err_str = str(e)
+        print(f"[TestEmail] FAILED — {err_str}")
+        raise HTTPException(status_code=502, detail=err_str)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Resend error: {e}")
+        err_str = f"{type(e).__name__}: {e}"
+        print(f"[TestEmail] FAILED (unexpected) — {err_str}")
+        raise HTTPException(status_code=500, detail=err_str)
 
 
 @app.post("/api/admin/standings/push")
