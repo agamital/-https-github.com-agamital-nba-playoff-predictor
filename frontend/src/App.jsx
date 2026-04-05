@@ -101,25 +101,29 @@ function updateGlobalBadge(count) {
 }
 
 // Safe login/logout wrappers — wait for init, then guard on os().
-// osLogin uses OneSignal.User as a version-check gate: v16 CDN exposes
-// OneSignal.User before login() is callable; if it's absent the SDK is
-// either still initialising or too old — skip silently rather than throw.
-// All branches are wrapped in try/catch + .catch() so a 400 "login-user"
-// network error from OneSignal's backend can never propagate to React.
+//
+// IMPORTANT: osLogin() only calls sdk.login() when the user already has an
+// active push subscription (optedIn === true).  Calling login() before the
+// device is registered on OneSignal's servers (onesignalId still "local-…")
+// always produces a 400 "login-user" error.  The correct flow is:
+//   1. User opts in  →  device gets a real onesignalId on OS servers
+//   2. THEN call login(externalId) to associate the device with our user
+// osLogin() is therefore called from handleSubscribeToggle after optIn(),
+// not on every page mount / user-state change.
 const osLogin = (id) =>
   _osPromise
     .then(() => {
       const sdk = os();
       if (!sdk) return;
+      // Skip if the device is not yet subscribed — login() will 400.
+      const optedIn = sdk.User?.PushSubscription?.optedIn ?? false;
+      if (!optedIn) return;
       if (sdk.User) {
-        // v16 CDN path — User namespace present
         return Promise.resolve(sdk.login(String(id))).catch(() => {});
       }
-      // Older builds may expose setExternalUserId
       if (typeof sdk.setExternalUserId === 'function') {
         return Promise.resolve(sdk.setExternalUserId(String(id))).catch(() => {});
       }
-      // SDK is present but neither API is available — skip without error
     })
     .catch(() => {});
 
@@ -1573,9 +1577,9 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
       const after = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
       localStorage.setItem('os_push_opted_in', String(after));
       setSubscribed(after);
-      console.log(`[PushToggle] after=${after}`);
-      console.log('[FinalCheck] Toggle State:', after);
-      console.log('[FinalCheck] SW Controller:', navigator.serviceWorker?.controller?.scriptURL ?? 'none');
+      // Associate external user ID now that the device is registered on
+      // OneSignal's servers.  This is the only safe moment to call login().
+      if (after && userId) osLogin(userId);
     } catch (err) {
       console.warn('[PushToggle] error:', err);
       const actual = window.OneSignal?.User?.PushSubscription?.optedIn ?? false;
