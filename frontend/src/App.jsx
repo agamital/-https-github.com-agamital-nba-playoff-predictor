@@ -1795,6 +1795,18 @@ function App() {
   });
   const navBadgeCount = _navSummary?.total ?? 0;
 
+  // Sync app-icon badge on the home screen using the Web App Badging API.
+  // Works on Android Chrome PWA and iOS 16.4+ PWA (standalone mode).
+  // Falls back silently on browsers that don't support it.
+  useEffect(() => {
+    if (!('setAppBadge' in navigator)) return;
+    if (navBadgeCount > 0) {
+      navigator.setAppBadge(navBadgeCount).catch(() => {});
+    } else {
+      navigator.clearAppBadge().catch(() => {});
+    }
+  }, [navBadgeCount]);
+
   // Capture beforeinstallprompt once so any button in the tree can use it
   useEffect(() => {
     if (isStandalone) return;
