@@ -29,6 +29,33 @@ self.addEventListener('activate', event => {
   );
 });
 
+// ── App Badge API ────────────────────────────────────────────────────────────
+// The page posts { type:'SET_BADGE', count } whenever the missing-picks count
+// changes.  Setting the badge from the service worker context makes it persist
+// on the home-screen icon even when the app is closed / backgrounded.
+self.addEventListener('message', event => {
+  if (event.data?.type !== 'SET_BADGE') return;
+  const n = Number(event.data.count) || 0;
+  if (n > 0) {
+    navigator.setAppBadge?.(n).catch(() => {});
+  } else {
+    navigator.clearAppBadge?.().catch(() => {});
+  }
+});
+
+// Clear badge when the user taps any notification and opens the app.
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  navigator.clearAppBadge?.().catch(() => {});
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      const existing = list.find(c => c.url.startsWith(self.location.origin));
+      if (existing) return existing.focus();
+      return clients.openWindow('/');
+    })
+  );
+});
+
 // ── Fetch strategy ───────────────────────────────────────────────────────────
 self.addEventListener('fetch', event => {
   const { request } = event;

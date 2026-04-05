@@ -1795,16 +1795,25 @@ function App() {
   });
   const navBadgeCount = _navSummary?.total ?? 0;
 
-  // Sync app-icon badge on the home screen using the Web App Badging API.
-  // Works on Android Chrome PWA and iOS 16.4+ PWA (standalone mode).
-  // Falls back silently on browsers that don't support it.
+  // Sync app-icon badge on the home screen.
+  // 1. Call navigator.setAppBadge() directly from the page (works while app is open).
+  // 2. postMessage the count to the service worker so it can set the badge from
+  //    SW context — this is what makes the badge persist on the home-screen icon
+  //    when the app is closed or backgrounded (the only time you see the icon).
   useEffect(() => {
-    if (!('setAppBadge' in navigator)) return;
-    if (navBadgeCount > 0) {
-      navigator.setAppBadge(navBadgeCount).catch(() => {});
-    } else {
-      navigator.clearAppBadge().catch(() => {});
+    // Page context — immediate update while app is open
+    if ('setAppBadge' in navigator) {
+      if (navBadgeCount > 0) {
+        navigator.setAppBadge(navBadgeCount).catch(() => {});
+      } else {
+        navigator.clearAppBadge().catch(() => {});
+      }
     }
+    // Service worker context — persists badge after app is closed
+    navigator.serviceWorker?.controller?.postMessage({
+      type: 'SET_BADGE',
+      count: navBadgeCount,
+    });
   }, [navBadgeCount]);
 
   // Capture beforeinstallprompt once so any button in the tree can use it
