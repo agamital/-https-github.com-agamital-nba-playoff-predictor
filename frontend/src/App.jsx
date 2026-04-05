@@ -46,6 +46,11 @@ function initOneSignal() {
       } catch { /* init error — SDK calls will silently no-op via window.OneSignal guard */ }
       clearTimeout(timeout);
       resolve();
+      // Re-register our sw.js so its badge-handling code stays active even if
+      // OneSignal's own worker registered at the same scope and claimed priority.
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      }
     });
   });
 
@@ -1352,7 +1357,12 @@ const leadingEmoji      = (s, fallback) => {
 
 const BellButton = ({ userId, onNavigate, className = '' }) => {
   const [open,       setOpen]       = useState(false);
-  const [subscribed, setSubscribed] = useState(false);
+  // Seed toggle from localStorage so it shows the correct state immediately
+  // on mount, before _osPromise resolves. The real optedIn value from the SDK
+  // overwrites this once available (1-1.5 s after init).
+  const [subscribed, setSubscribed] = useState(
+    () => localStorage.getItem('os_push_opted_in') === 'true'
+  );
   const [subLoading, setSubLoading] = useState(false);
   // popPos: { top, left? right? } — computed from button rect on open
   const [popPos,    setPopPos]      = useState(null);
@@ -1378,6 +1388,8 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
       const opted = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
       const perm  = Notification?.permission ?? 'unknown';
       console.log(`[PushToggle] ${label} optedIn=${opted} permission=${perm}`);
+      // Persist so useState initialiser shows the right value on next mount
+      localStorage.setItem('os_push_opted_in', String(opted));
       setSubscribed(opted);
     };
 
@@ -1490,12 +1502,15 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
       // Re-read after a tick so the SDK has time to settle
       await new Promise(r => setTimeout(r, 300));
       const after = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
-      console.log(`[PushToggle] after=${after}`);
+      localStorage.setItem('os_push_opted_in', String(after));
       setSubscribed(after);
+      console.log(`[PushToggle] after=${after}`);
+      console.log('[FinalCheck] Toggle State:', after);
+      console.log('[FinalCheck] SW Controller:', navigator.serviceWorker?.controller?.scriptURL ?? 'none');
     } catch (err) {
       console.warn('[PushToggle] error:', err);
-      // Re-read so UI matches actual state even on error
       const actual = window.OneSignal?.User?.PushSubscription?.optedIn ?? false;
+      localStorage.setItem('os_push_opted_in', String(actual));
       setSubscribed(actual);
     } finally {
       setSubLoading(false);
@@ -1846,32 +1861,33 @@ function App() {
   // of ours) so sw.js can call self.registration.setAppBadge() which persists
   // after the app is closed/backgrounded.
   useEffect(() => {
-    const count = navBadgeCount;
-    console.log(`[Badge] navBadgeCount=${count} setAppBadge_supported=${'setAppBadge' in navigator}`);
+    // When the toggle is OFF, clear the badge immediately regardless of count.
+    // When ON, set the badge to the current missing-picks count.
+    const count = subscribed ? navBadgeCount : 0;
+    console.log(`[Badge] subscribed=${subscribed} navBadgeCount=${navBadgeCount} → sending count=${count}`);
+    console.log(`[Badge] setAppBadge_supported=${'setAppBadge' in navigator}`);
 
     // ── Page context (immediate) ─────────────────────────────────────────────
     if ('setAppBadge' in navigator) {
       if (count > 0) {
         navigator.setAppBadge(count)
           .then(() => console.log(`[Badge] setAppBadge(${count}) OK`))
-          .catch(() => {
-            // Some browsers only support the flag variant (no number)
-            navigator.setAppBadge().catch(() => {});
-          });
+          .catch(() => navigator.setAppBadge().catch(() => {})); // flag fallback
       } else {
         navigator.clearAppBadge().catch(() => {});
       }
     }
 
     // ── Service worker context (persists when app is closed) ─────────────────
-    // Use .ready instead of .controller: .ready resolves when our sw.js is
-    // active regardless of whether another SW (OneSignal) controls the page.
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.ready
-        .then(reg => reg.active?.postMessage({ type: 'SET_BADGE', count }))
+        .then(reg => {
+          console.log('[FinalCheck] SW Controller:', reg.active?.scriptURL ?? 'none');
+          reg.active?.postMessage({ type: 'SET_BADGE', count });
+        })
         .catch(() => {});
     }
-  }, [navBadgeCount]);
+  }, [navBadgeCount, subscribed]);
 
   // Capture beforeinstallprompt once so any button in the tree can use it
   useEffect(() => {
