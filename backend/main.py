@@ -1284,23 +1284,12 @@ def _send_onesignal_notification(title: str, body: str, url: str = "https://nba-
 
 def _send_email_reminders(user_rows: list) -> None:
     """
-    Send missing-picks email reminders via Gmail SMTP to a list of
-    (user_id, email) pairs.  Silently no-ops if SMTP credentials are absent.
+    Deprecated stub — email reminders are now handled exclusively by
+    _send_daily_email_reminders() which queries the DB for each user's
+    specific missing matchups and applies the 20-hour dedup.
+    Kept so call-sites don't break; intentionally does nothing.
     """
-    if not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN or not user_rows:
-        return
-    emails_sent = 0
-    subject = "Don't leave points on the table! \U0001f3c0 Your NBA Playoff predictions are incomplete."
-    sample_labels = ["Active series are waiting for your picks"]
-    for _uid, email in user_rows:
-        if not email:
-            continue
-        try:
-            _gmail_send_email(email, subject, _build_reminder_html(sample_labels))
-            emails_sent += 1
-        except Exception as e:
-            print(f"[Email] Failed to send to {email}: {e}")
-    print(f"[Email] Gmail API reminders sent: {emails_sent}/{len(user_rows)}")
+    pass
 
 
 def _send_missing_picks_alert() -> None:
@@ -1644,7 +1633,7 @@ def _send_daily_email_reminders() -> dict:
             conn.close()
             return {"sent": 0, "reason": "all deduped"}
 
-        print(f"[EmailReminder] Sending to {len(eligible_users)} user(s) via Resend")
+        print(f"[EmailReminder] Sending to {len(eligible_users)} user(s) via Gmail API")
 
         subject = "Don't leave points on the table! 🏀 Your NBA Playoff predictions are incomplete."
 
