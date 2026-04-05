@@ -3557,12 +3557,17 @@ async def admin_trigger_reminder(request: Request):
 
 
 @app.post("/api/admin/send-test-email")
-async def admin_send_test_email(to: str):
+async def admin_send_test_email(request: Request, to: str):
     """
     Send a single test reminder email to the given address.
     Uses placeholder matchups so the Resend config can be verified end-to-end.
     Full error details are logged to Railway stdout on failure.
     """
+    # Log the raw query string so any encoding/autofill artifact is visible
+    print(f"[TestEmail] Raw URL: {request.url}")
+
+    to = to.strip()   # defensive: remove any leading/trailing whitespace
+
     if not _RESEND_API_KEY:
         raise HTTPException(status_code=503,
                             detail="RESEND_API_KEY not configured — add it to Railway env vars")

@@ -1209,16 +1209,17 @@ const ReminderCard = ({ addToast }) => {
   };
 
   const sendTest = async () => {
-    if (!testEmail || !testEmail.includes('@')) {
+    const addr = testEmail.trim();
+    if (!addr || !addr.includes('@')) {
       addToast('Enter a valid email address first', 'error');
       return;
     }
     setTesting(true);
     setResult(null);
     try {
-      const res = await api.sendTestEmail(testEmail);
+      const res = await api.sendTestEmail(addr);
       setResult(res);
-      addToast(`Test email sent to ${testEmail} ✓`, 'success');
+      addToast(`Test email sent to ${addr} ✓`, 'success');
     } catch (e) {
       const msg = e.response?.data?.detail || e.message;
       setResult({ error: msg });
@@ -1250,7 +1251,8 @@ const ReminderCard = ({ addToast }) => {
       {/* Test email row */}
       <div className="mt-4 flex gap-2 items-center">
         <input
-          type="email"
+          type="text"
+          autoComplete="off"
           value={testEmail}
           onChange={e => setTestEmail(e.target.value)}
           placeholder="test@example.com"
