@@ -64,6 +64,33 @@ initOneSignal();
 // (a plain array means the script hasn't executed yet).
 const os = () => (window.OneSignal && !Array.isArray(window.OneSignal) ? window.OneSignal : null);
 
+// ── Persistent badging ────────────────────────────────────────────────────────
+// updateGlobalBadge(count) is the single source of truth for the home-screen
+// app icon badge.  It works in two layers:
+//   1. navigator.setAppBadge()  — page context, immediate while app is open.
+//   2. SYNC_BADGE postMessage → sw.js — SW context, persists after app closes
+//      and survives ColorOS/OPPO clearing the badge on notification dismissal
+//      by restoring from IndexedDB on every SW activate.
+function updateGlobalBadge(count) {
+  const n = Number(count) || 0;
+
+  // Layer 1: page context (works while the page is open)
+  if ('setAppBadge' in navigator) {
+    if (n > 0) {
+      navigator.setAppBadge(n).catch(() => navigator.setAppBadge().catch(() => {}));
+    } else {
+      navigator.clearAppBadge().catch(() => {});
+    }
+  }
+
+  // Layer 2: service worker context (persists + survives notification dismissal)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.ready
+      .then(reg => reg.active?.postMessage({ type: 'SYNC_BADGE', count: n }))
+      .catch(() => {});
+  }
+}
+
 // Safe login/logout wrappers — wait for init, then guard on os()
 const osLogin  = (id) => _osPromise.then(() => { try { os()?.login(String(id));  } catch {} });
 const osLogout = ()   => _osPromise.then(() => { try { os()?.logout();            } catch {} });
@@ -1854,39 +1881,13 @@ function App() {
   });
   const navBadgeCount = _navSummary?.total ?? 0;
 
-  // Sync the home-screen app icon badge.
-  // navigator.setAppBadge() from the page context sets the badge while the app
-  // is open.  We also post to the service worker via .ready (not .controller —
-  // .controller is null on first load and may point to OneSignal's SW instead
-  // of ours) so sw.js can call self.registration.setAppBadge() which persists
-  // after the app is closed/backgrounded.
+  // Sync the home-screen app icon badge whenever the count or subscription
+  // state changes.  All badge logic is centralised in updateGlobalBadge() so
+  // the same path handles both the open-app case and the SW-persist case.
   useEffect(() => {
-    // When the toggle is OFF, clear the badge immediately regardless of count.
-    // When ON, set the badge to the current missing-picks count.
+    // When push toggle is OFF, force count to 0 so the badge is always cleared.
     const count = subscribed ? navBadgeCount : 0;
-    console.log(`[Badge] subscribed=${subscribed} navBadgeCount=${navBadgeCount} → sending count=${count}`);
-    console.log(`[Badge] setAppBadge_supported=${'setAppBadge' in navigator}`);
-
-    // ── Page context (immediate) ─────────────────────────────────────────────
-    if ('setAppBadge' in navigator) {
-      if (count > 0) {
-        navigator.setAppBadge(count)
-          .then(() => console.log(`[Badge] setAppBadge(${count}) OK`))
-          .catch(() => navigator.setAppBadge().catch(() => {})); // flag fallback
-      } else {
-        navigator.clearAppBadge().catch(() => {});
-      }
-    }
-
-    // ── Service worker context (persists when app is closed) ─────────────────
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.ready
-        .then(reg => {
-          console.log('[FinalCheck] SW Controller:', reg.active?.scriptURL ?? 'none');
-          reg.active?.postMessage({ type: 'SET_BADGE', count });
-        })
-        .catch(() => {});
-    }
+    updateGlobalBadge(count);
   }, [navBadgeCount, subscribed]);
 
   // Capture beforeinstallprompt once so any button in the tree can use it
