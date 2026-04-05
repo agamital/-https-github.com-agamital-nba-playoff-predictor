@@ -481,6 +481,16 @@ export const syncPlayerStats = async () => {
   return response.data;
 };
 
+export const triggerReminderJob = async () => {
+  const response = await api.post('/api/admin/trigger-reminder');
+  return response.data;
+};
+
+export const sendTestEmail = async (to) => {
+  const response = await api.post('/api/admin/send-test-email', null, { params: { to } });
+  return response.data;
+};
+
 // Boxscore / player-game stats
 export const syncBoxscores = async (date = null, season = '2026') => {
   const params = { season };

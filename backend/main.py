@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -69,7 +69,13 @@ _ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY",  "")
 
 # Resend email credentials
 _RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-_RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Picks <noreply@nba-playoffs-2026.vercel.app>")
+# RESEND_FROM must be a domain verified in your Resend account.
+# Gmail addresses cannot be used as a Resend sender — verify a custom domain
+# (e.g. nba-playoffs-2026.vercel.app) then set this env var in Railway.
+_RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Playoff Predictor <noreply@nba-playoffs-2026.vercel.app>")
+# CRON_SECRET — shared secret between Vercel cron and this backend to prevent
+# unauthenticated calls to the trigger-reminder endpoint.
+_CRON_SECRET    = os.getenv("CRON_SECRET", "")
 
 # Supabase Storage — for user avatar uploads
 # URL is the same project used for Google OAuth (already public in the frontend).
@@ -252,6 +258,7 @@ def init_db():
     # Migrate existing tables that predate these columns
     c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT ''")
     c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder_last_sent_at TIMESTAMP")
 
     c.execute('''CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY,
@@ -1415,6 +1422,236 @@ def _send_missing_picks_alert() -> None:
 
     except Exception as e:
         print(f"[Alert] Missing-picks alert error: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _build_reminder_html(missing_labels: list[str]) -> str:
+    """Return the HTML body for a missing-picks reminder email."""
+    items_html = "".join(
+        f"<li style='padding:6px 0;color:#334155;font-size:14px;'>{lbl}</li>"
+        for lbl in missing_labels
+    )
+    return (
+        "<!DOCTYPE html>"
+        "<html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "</head><body style='margin:0;padding:0;background:#f1f5f9;'>"
+        "<div style='max-width:540px;margin:32px auto;background:#fff;"
+        "     border-radius:12px;overflow:hidden;font-family:sans-serif;"
+        "     box-shadow:0 4px 24px rgba(0,0,0,.08);'>"
+        # Header
+        "  <div style='background:#0f172a;padding:28px 32px;text-align:center;'>"
+        "    <p style='margin:0;color:#f97316;font-size:28px;font-weight:900;"
+        "       letter-spacing:-0.5px;'>🏀 NBA Playoff Predictor</p>"
+        "  </div>"
+        # Body
+        "  <div style='padding:28px 32px;'>"
+        "    <h2 style='margin:0 0 8px;color:#0f172a;font-size:20px;'>"
+        "      Don't leave points on the table!"
+        "    </h2>"
+        "    <p style='color:#475569;margin:0 0 16px;font-size:14px;'>"
+        "      You still have open matchups waiting for your picks — lock them in"
+        "      before the games tip off and you lose your chance to score!"
+        "    </p>"
+        f"   <ul style='margin:0 0 20px;padding-left:20px;'>{items_html}</ul>"
+        "    <a href='https://nba-playoffs-2026.vercel.app/playoffs'"
+        "       style='display:inline-block;padding:13px 32px;"
+        "              background:#f97316;color:#fff;border-radius:8px;"
+        "              text-decoration:none;font-weight:700;font-size:15px;'>"
+        "      Make My Picks &rarr;"
+        "    </a>"
+        "  </div>"
+        # Footer
+        "  <div style='background:#f8fafc;padding:16px 32px;border-top:1px solid #e2e8f0;'>"
+        "    <p style='margin:0;color:#94a3b8;font-size:11px;'>"
+        "      You're receiving this because you have an account on"
+        "      <a href='https://nba-playoffs-2026.vercel.app'"
+        "         style='color:#94a3b8;'>NBA Playoff Predictor 2026</a>."
+        "    </p>"
+        "  </div>"
+        "</div>"
+        "</body></html>"
+    )
+
+
+def _resend_send_email(to: str, subject: str, html: str) -> None:
+    """
+    Send a single transactional email via Resend REST API (stdlib only — no SDK
+    dependency at import time).  Raises on any HTTP / API error.
+    """
+    import urllib.request as _req, json as _json
+    payload = _json.dumps({
+        "from":    _RESEND_FROM,
+        "to":      [to],
+        "subject": subject,
+        "html":    html,
+    }).encode("utf-8")
+    request = _req.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {_RESEND_API_KEY}",
+            "Content-Type":  "application/json",
+        },
+        method="POST",
+    )
+    with _req.urlopen(request, timeout=15) as resp:
+        body = _json.loads(resp.read())
+        if not body.get("id"):
+            raise ValueError(f"Resend unexpected response: {body}")
+
+
+def _send_daily_email_reminders() -> dict:
+    """
+    Daily cron job (and admin-triggered): send per-user Resend email reminders
+    to users with incomplete predictions for matchups that haven't started yet.
+
+    • Only includes series with home_wins + away_wins = 0 (game not yet tipped off)
+    • Only includes play-in games with winner_id IS NULL
+    • Skips users alerted within the last 20 hours (reminder_last_sent_at dedup)
+    • Updates reminder_last_sent_at per user after a successful send
+    Returns a summary dict.
+    """
+    if datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF:
+        return {"skipped": "past cutoff"}
+
+    if not _RESEND_API_KEY:
+        print("[EmailReminder] RESEND_API_KEY not set — skipping")
+        return {"skipped": "no resend api key"}
+
+    conn = None
+    sent = 0
+    skipped_no_picks = 0
+    errors = []
+
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+
+        # ── 1. Open series (no games played yet in this series) ──────────
+        c.execute("""
+            SELECT id, home_team_name, away_team_name, round
+            FROM series
+            WHERE season = '2026'
+              AND status = 'active'
+              AND COALESCE(home_wins, 0) + COALESCE(away_wins, 0) = 0
+        """)
+        open_series = c.fetchall()   # (id, home_name, away_name, round)
+
+        # ── 2. Open play-in games (not yet decided) ───────────────────────
+        c.execute("""
+            SELECT pg.id, ht.name, at.name
+            FROM playin_games pg
+            JOIN teams ht ON ht.id = pg.team1_id
+            JOIN teams at ON at.id = pg.team2_id
+            WHERE pg.season = '2026'
+              AND pg.winner_id IS NULL
+        """)
+        open_playin = c.fetchall()   # (id, team1_name, team2_name)
+
+        if not open_series and not open_playin:
+            print("[EmailReminder] No open matchups — nothing to remind")
+            conn.close()
+            return {"sent": 0, "reason": "no open matchups"}
+
+        open_series_ids = [r[0] for r in open_series]
+        open_playin_ids = [r[0] for r in open_playin]
+        series_label    = {r[0]: f"{r[2]} vs {r[1]} ({r[3]})" for r in open_series}
+        playin_label    = {r[0]: f"{r[1]} vs {r[2]} (Play-In)" for r in open_playin}
+
+        # ── 3. Eligible users: missing picks + 20-hour dedup ─────────────
+        cutoff_20h = datetime.utcnow() - timedelta(hours=20)
+        c.execute("""
+            SELECT DISTINCT u.id, u.email
+            FROM users u
+            WHERE u.email IS NOT NULL
+              AND u.email != ''
+              AND (u.reminder_last_sent_at IS NULL OR u.reminder_last_sent_at < %s)
+              AND (
+                EXISTS (
+                    SELECT 1 FROM series s
+                    WHERE s.id = ANY(%s)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM predictions p
+                          WHERE p.user_id = u.id AND p.series_id = s.id
+                      )
+                )
+                OR EXISTS (
+                    SELECT 1 FROM playin_games pg
+                    WHERE pg.id = ANY(%s)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM playin_predictions pp
+                          WHERE pp.user_id = u.id AND pp.game_id = pg.id
+                      )
+                )
+              )
+        """, (cutoff_20h, open_series_ids or [0], open_playin_ids or [0]))
+        eligible_users = c.fetchall()
+
+        if not eligible_users:
+            print("[EmailReminder] All eligible users already reminded recently — skipping")
+            conn.close()
+            return {"sent": 0, "reason": "all deduped"}
+
+        print(f"[EmailReminder] Sending to {len(eligible_users)} user(s) via Resend")
+
+        subject = "Don't leave points on the table! 🏀 Your NBA Playoff predictions are incomplete."
+
+        for user_id, email in eligible_users:
+            # Per-user missing matchup lists
+            c.execute("""
+                SELECT id FROM series
+                WHERE id = ANY(%s)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM predictions p
+                      WHERE p.user_id = %s AND p.series_id = series.id
+                  )
+            """, (open_series_ids or [0], user_id))
+            missing_series_ids = [r[0] for r in c.fetchall()]
+
+            c.execute("""
+                SELECT id FROM playin_games
+                WHERE id = ANY(%s)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM playin_predictions pp
+                      WHERE pp.user_id = %s AND pp.game_id = playin_games.id
+                  )
+            """, (open_playin_ids or [0], user_id))
+            missing_playin_ids = [r[0] for r in c.fetchall()]
+
+            missing_labels = (
+                [series_label[sid] for sid in missing_series_ids if sid in series_label] +
+                [playin_label[pid] for pid in missing_playin_ids if pid in playin_label]
+            )
+
+            if not missing_labels:
+                skipped_no_picks += 1
+                continue
+
+            try:
+                _resend_send_email(email, subject, _build_reminder_html(missing_labels))
+                c.execute(
+                    "UPDATE users SET reminder_last_sent_at = %s WHERE id = %s",
+                    (datetime.utcnow(), user_id),
+                )
+                conn.commit()
+                sent += 1
+                print(f"[EmailReminder] ✓ user {user_id} → {email} "
+                      f"({len(missing_labels)} matchup(s))")
+            except Exception as e:
+                errors.append(f"user {user_id} ({email}): {e}")
+                print(f"[EmailReminder] ✗ user {user_id}: {e}")
+
+        print(f"[EmailReminder] Done — sent={sent} "
+              f"skipped_no_picks={skipped_no_picks} errors={len(errors)}")
+        return {"sent": sent, "skipped_no_picks": skipped_no_picks, "errors": errors}
+
+    except Exception as e:
+        print(f"[EmailReminder] Fatal error: {type(e).__name__}: {e}")
+        return {"sent": sent, "error": str(e)}
     finally:
         if conn:
             try: conn.close()
@@ -2902,7 +3139,7 @@ async def startup():
         max_instances=1,
     )
 
-    # ── 3) Missing-picks morning alert — 06:00 UTC = 09:00 Jerusalem (IDT) ──
+    # ── 3) Missing-picks push alert — 06:00 UTC = 09:00 Jerusalem (IDT) ──
     _scheduler.add_job(
         _send_missing_picks_alert,
         CronTrigger.from_crontab('0 6 * * *'),
@@ -2912,7 +3149,7 @@ async def startup():
         max_instances=1,
     )
 
-    # ── 3) Missing-picks evening alert — 18:00 UTC = 21:00 Jerusalem (IDT) ──
+    # ── 4) Missing-picks push alert — 18:00 UTC = 21:00 Jerusalem (IDT) ──
     _scheduler.add_job(
         _send_missing_picks_alert,
         CronTrigger.from_crontab('0 18 * * *'),
@@ -2922,10 +3159,21 @@ async def startup():
         max_instances=1,
     )
 
+    # ── 5) Daily email reminders — 10:00 UTC (one send per user per 20h) ──
+    _scheduler.add_job(
+        _send_daily_email_reminders,
+        CronTrigger.from_crontab('0 10 * * *'),
+        id='daily_email_reminders',
+        replace_existing=True,
+        misfire_grace_time=1800,
+        max_instances=1,
+    )
+
     _scheduler.start()
     print("[Scheduler] APScheduler started"
           " — daily_auto_sync: 0 4 * * * UTC (04:00 UTC, 1x/day; full chain)"
-          " — missing-picks: 0 6 * * * UTC (09:00 IL) + 0 18 * * * UTC (21:00 IL)"
+          " — missing-picks push: 0 6 & 0 18 UTC"
+          " — daily email reminders: 0 10 UTC (20h dedup)"
           f" — active until {_STANDINGS_SYNC_CUTOFF.date()}"
           f" — boxscore TTL={BOXSCORE_TTL_MINUTES}m, standings TTL={STANDINGS_TTL_MINUTES}m")
 
@@ -3259,6 +3507,52 @@ async def backfill_player_ppg(season: str = "2026"):
     conn.commit()
     conn.close()
     return {"players_updated": updated, "season": season}
+
+
+@app.post("/api/admin/trigger-reminder")
+async def admin_trigger_reminder(request: Request):
+    """
+    Trigger the daily email reminder job.  Accepts calls from:
+    • Vercel Cron  — Authorization: Bearer <CRON_SECRET>
+    • Admin UI     — authenticated admin session (no secret header needed)
+
+    Runs _send_daily_email_reminders() in a background thread so the HTTP
+    response returns immediately.
+    """
+    # Verify cron secret when the header is present (Vercel cron path)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer "):]
+        if _CRON_SECRET and token != _CRON_SECRET:
+            raise HTTPException(status_code=401, detail="Invalid cron secret")
+
+    import threading as _threading
+    _threading.Thread(target=_send_daily_email_reminders, daemon=True).start()
+    return {"status": "queued", "message": "Daily email reminder job started in background"}
+
+
+@app.post("/api/admin/send-test-email")
+async def admin_send_test_email(to: str):
+    """
+    Send a single test reminder email to the given address.
+    Uses a placeholder matchup list so the template can be verified without
+    needing real missing-picks data.
+    """
+    if not _RESEND_API_KEY:
+        raise HTTPException(status_code=503, detail="RESEND_API_KEY not configured on server")
+    if not to or "@" not in to:
+        raise HTTPException(status_code=400, detail="Invalid 'to' email address")
+
+    sample_labels = [
+        "Oklahoma City Thunder vs Memphis Grizzlies (First Round)",
+        "Boston Celtics vs Miami Heat (Conference Semifinals)",
+    ]
+    subject = "[TEST] Don't leave points on the table! 🏀 Your NBA Playoff predictions are incomplete."
+    try:
+        _resend_send_email(to, subject, _build_reminder_html(sample_labels))
+        return {"sent": True, "to": to}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Resend error: {e}")
 
 
 @app.post("/api/admin/standings/push")

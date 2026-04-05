@@ -1186,6 +1186,96 @@ const _NBA_BROWSER_HEADERS = {
   'x-nba-stats-token': 'true',
 };
 
+const ReminderCard = ({ addToast }) => {
+  const [running, setRunning]     = useState(false);
+  const [testing, setTesting]     = useState(false);
+  const [testEmail, setTestEmail] = useState('');
+  const [result, setResult]       = useState(null);
+
+  const trigger = async () => {
+    setRunning(true);
+    setResult(null);
+    try {
+      const res = await api.triggerReminderJob();
+      setResult(res);
+      addToast('Reminder job queued ✓', 'success');
+    } catch (e) {
+      const msg = e.response?.data?.detail || e.message;
+      setResult({ error: msg });
+      addToast('Reminder job error: ' + msg, 'error');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const sendTest = async () => {
+    if (!testEmail || !testEmail.includes('@')) {
+      addToast('Enter a valid email address first', 'error');
+      return;
+    }
+    setTesting(true);
+    setResult(null);
+    try {
+      const res = await api.sendTestEmail(testEmail);
+      setResult(res);
+      addToast(`Test email sent to ${testEmail} ✓`, 'success');
+    } catch (e) {
+      const msg = e.response?.data?.detail || e.message;
+      setResult({ error: msg });
+      addToast('Test email error: ' + msg, 'error');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 mb-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <h3 className="text-white font-bold text-base">Daily Email Reminders</h3>
+          <p className="text-slate-400 text-xs mt-0.5">
+            Sends Resend emails to users with missing picks for unstarted matchups.
+            20-hour dedup per user. Vercel Cron fires daily at 10:00 AM IDT (07:00 UTC).
+          </p>
+        </div>
+        <button
+          onClick={trigger}
+          disabled={running}
+          className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white transition-colors"
+        >
+          {running ? 'Running…' : 'Run Now'}
+        </button>
+      </div>
+
+      {/* Test email row */}
+      <div className="mt-4 flex gap-2 items-center">
+        <input
+          type="email"
+          value={testEmail}
+          onChange={e => setTestEmail(e.target.value)}
+          placeholder="test@example.com"
+          className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
+        />
+        <button
+          onClick={sendTest}
+          disabled={testing}
+          className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white transition-colors"
+        >
+          {testing ? 'Sending…' : 'Send Test Email'}
+        </button>
+      </div>
+
+      {result && (
+        <div className="mt-3 p-3 rounded-lg bg-slate-800 text-xs font-mono text-slate-300 break-all">
+          {result.error
+            ? <span className="text-red-400">{result.error}</span>
+            : <span className="text-green-400">{result.message || JSON.stringify(result)}</span>}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const StandingsSyncCard = ({ addToast, onPlayinRefreshed }) => {
   const [expanded, setExpanded]         = useState(false);
   const [syncing, setSyncing]           = useState(false);
@@ -1696,6 +1786,7 @@ const AdminPage = ({ currentUser }) => {
       </div>
 
       <UserManagementCard currentUser={currentUser} addToast={addToast} />
+      <ReminderCard addToast={addToast} />
       <StandingsSyncCard addToast={addToast} onPlayinRefreshed={setPlayin} />
       <FuturesLockCard />
       <TeamOddsCard addToast={addToast} />
