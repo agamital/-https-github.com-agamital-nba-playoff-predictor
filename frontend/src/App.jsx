@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronRight, Share, Bell, Lock } from 'lucide-react';
 import * as api from './services/api';
+import * as ns from './utils/notifications';
 
 // ── OneSignal v16 — fire-and-forget, isolated from app rendering ──────────────
 //
@@ -1449,18 +1450,17 @@ const leadingEmoji      = (s, fallback) => {
 };
 
 const BellButton = ({ userId, onNavigate, className = '' }) => {
-  const [open,       setOpen]       = useState(false);
-  // Seed toggle from localStorage so it shows the correct state immediately
-  // on mount, before _osPromise resolves. The real optedIn value from the SDK
-  // overwrites this once available (1-1.5 s after init).
-  const [subscribed, setSubscribed] = useState(
-    () => localStorage.getItem('os_push_opted_in') === 'true'
+  const [open,         setOpen]         = useState(false);
+  const [isSDKReady,   setIsSDKReady]   = useState(false);
+  // isSubscribed is seeded from localStorage for instant UI on mount.
+  // The SDK state overwrites it once isSDKReady becomes true.
+  const [isSubscribed, setIsSubscribed] = useState(
+    () => ns.getOptedIn()
   );
-  const [subLoading, setSubLoading] = useState(false);
-  // popPos: { top, left? right? } — computed from button rect on open
-  const [popPos,    setPopPos]      = useState(null);
-  const buttonRef  = useRef(null);
-  const panelRef   = useRef(null);
+  const [subLoading,   setSubLoading]   = useState(false);
+  const [popPos,       setPopPos]       = useState(null);
+  const buttonRef = useRef(null);
+  const panelRef  = useRef(null);
 
   // ── Cached notification summary ──────────────────────────────────────────
   const { data: summary } = useQuery({
@@ -1471,55 +1471,61 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
     refetchOnWindowFocus: true,
   });
 
-  // ── OneSignal subscription state ─────────────────────────────────────────
+  // ── SDK readiness + subscription state ───────────────────────────────────
+  // Poll for SDK readiness — resolves once the CDN script has loaded and
+  // OneSignal.init() has replaced window.OneSignal with the live object.
+  // If the SDK never loads (disabled, blocked, network error) isSDKReady
+  // stays false and the toggle shows a graceful "Unavailable" state.
   useEffect(() => {
     let alive = true;
+    let pollTimer = null;
     let retryTimer = null;
 
-    const readState = (label = '') => {
-      if (!alive || !window.OneSignal) return;
-      const opted = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
-      const perm  = Notification?.permission ?? 'unknown';
-      console.log(`[PushToggle] ${label} optedIn=${opted} permission=${perm}`);
-      // Persist so useState initialiser shows the right value on next mount
-      localStorage.setItem('os_push_opted_in', String(opted));
-      setSubscribed(opted);
-    };
-
-    // Stable reference so add/removeEventListener pair correctly
-    const onChange = (event) => {
-      const opted = event?.current?.optedIn ?? window.OneSignal?.User?.PushSubscription?.optedIn ?? false;
-      console.log('[PushToggle] change event → optedIn=', opted);
-      if (alive) setSubscribed(opted);
-    };
-
-    _osPromise.then(() => {
+    const syncState = () => {
       if (!alive) return;
+      try {
+        const opted = ns.getOptedIn();
+        setIsSubscribed(opted);
+        localStorage.setItem('os_push_opted_in', String(opted));
+      } catch { /* non-fatal */ }
+    };
 
-      // Register change listener first so we catch any server-push update
-      try { window.OneSignal?.User?.PushSubscription?.addEventListener('change', onChange); } catch {}
+    const onchange = (event) => {
+      if (!alive) return;
+      try {
+        const opted = event?.current?.optedIn ?? ns.getOptedIn();
+        setIsSubscribed(opted);
+        localStorage.setItem('os_push_opted_in', String(opted));
+      } catch { /* non-fatal */ }
+    };
 
-      // Read immediately — may be false if OneSignal hasn't fetched server
-      // subscription status yet (it's async after init)
-      readState('init');
+    const checkReady = () => {
+      if (!alive) return;
+      if (ns.getOneSignal()) {
+        setIsSDKReady(true);
+        syncState();
+        retryTimer = setTimeout(syncState, 1500); // re-read after server fetch
+        ns.onSubscriptionChange(onchange);        // returns cleanup fn — stored below
+      } else {
+        pollTimer = setTimeout(checkReady, 500);  // retry until SDK loads or 10 s
+      }
+    };
 
-      // Retry after 1.5 s: by then OneSignal has fetched the subscription from
-      // its servers and optedIn reflects the true persisted state
-      retryTimer = setTimeout(() => readState('retry-1500ms'), 1500);
-    });
+    // Start polling after a short delay so it doesn't block initial render
+    pollTimer = setTimeout(checkReady, 300);
 
-    // Re-sync whenever the user returns to the tab/app (e.g. after granting
-    // permission in the system settings and switching back)
     const onVisible = () => {
-      if (document.visibilityState === 'visible') readState('visibilitychange');
+      if (document.visibilityState === 'visible' && ns.getOneSignal()) syncState();
     };
     document.addEventListener('visibilitychange', onVisible);
 
     return () => {
       alive = false;
+      clearTimeout(pollTimer);
       clearTimeout(retryTimer);
       document.removeEventListener('visibilitychange', onVisible);
-      try { window.OneSignal?.User?.PushSubscription?.removeEventListener('change', onChange); } catch {}
+      // Remove subscription change listener via the wrapper
+      try { ns.onSubscriptionChange(onchange); } catch {}
     };
   }, [userId]);
 
@@ -1572,39 +1578,15 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
   const isMobile   = window.innerWidth < 768;
 
   const handleSubscribeToggle = async () => {
-    if (subLoading) return;  // prevent double-tap while SDK is processing
+    if (subLoading || !isSDKReady) return;
     setSubLoading(true);
     try {
-      await _osPromise;  // wait for SDK init (resolves in ≤10 s)
-
-      if (!window.OneSignal) {
-        console.warn('[PushToggle] window.OneSignal not available');
-        return;
-      }
-
-      const before = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
-      console.log(`[PushToggle] toggle clicked — before=${before}`);
-
-      if (subscribed) {
-        await window.OneSignal.User.PushSubscription.optOut();
-      } else {
-        // optIn() shows the native permission prompt if not yet granted
-        await window.OneSignal.User.PushSubscription.optIn();
-      }
-
-      // Re-read after a tick so the SDK has time to settle
-      await new Promise(r => setTimeout(r, 300));
-      const after = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
-      localStorage.setItem('os_push_opted_in', String(after));
-      setSubscribed(after);
-      // Attempt user linking now — device may have a permanent ID by this point.
-      // osLinkUser() guards on _hasPermId() so it's safe to call eagerly.
+      const after = isSubscribed ? await ns.optOut() : await ns.optIn();
+      setIsSubscribed(after);
       if (after && _pendingLinkId) osLinkUser(_pendingLinkId);
     } catch (err) {
-      console.warn('[PushToggle] error:', err);
-      const actual = window.OneSignal?.User?.PushSubscription?.optedIn ?? false;
-      localStorage.setItem('os_push_opted_in', String(actual));
-      setSubscribed(actual);
+      console.warn('[PushToggle] unexpected error (non-fatal):', err?.message ?? err);
+      setIsSubscribed(ns.getOptedIn());
     } finally {
       setSubLoading(false);
     }
@@ -1741,21 +1723,21 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
         <div className="min-w-0">
           <p className="text-xs font-bold text-white">Push notifications</p>
           <p className="text-[10px] text-slate-500 mt-0.5">
-            {subscribed ? 'Enabled — alerts are on' : 'Off — tap to enable alerts'}
+            {!isSDKReady ? 'Notifications unavailable' : isSubscribed ? 'Enabled — alerts are on' : 'Off — tap to enable alerts'}
           </p>
         </div>
         <button
           onClick={handleSubscribeToggle}
-          disabled={subLoading}
-          aria-pressed={subscribed}
-          title={subscribed ? 'Disable push notifications' : 'Enable push notifications'}
+          disabled={subLoading || !isSDKReady}
+          aria-pressed={isSubscribed}
+          title={!isSDKReady ? 'Push notifications unavailable' : isSubscribed ? 'Disable push notifications' : 'Enable push notifications'}
           className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:opacity-50 ${
-            subscribed ? 'bg-orange-500 shadow-md shadow-orange-500/40' : 'bg-slate-700'
+            isSubscribed && isSDKReady ? 'bg-orange-500 shadow-md shadow-orange-500/40' : 'bg-slate-700'
           }`}
         >
           <span
             className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${
-              subscribed ? 'translate-x-6' : 'translate-x-0'
+              isSubscribed && isSDKReady ? 'translate-x-6' : 'translate-x-0'
             }`}
           />
         </button>
@@ -1865,16 +1847,16 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                 <div>
                   <p className="text-xs font-bold text-white">Push notifications</p>
                   <p className="text-[10px] text-slate-500 mt-0.5">
-                    {subscribed ? 'Enabled — alerts are on' : 'Off — tap to enable alerts'}
+                    {!isSDKReady ? 'Notifications unavailable' : isSubscribed ? 'Enabled — alerts are on' : 'Off — tap to enable alerts'}
                   </p>
                 </div>
                 <button
                   onClick={handleSubscribeToggle}
-                  disabled={subLoading}
-                  aria-pressed={subscribed}
-                  className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 disabled:opacity-50 ${subscribed ? 'bg-orange-500 shadow-md shadow-orange-500/40' : 'bg-slate-700'}`}
+                  disabled={subLoading || !isSDKReady}
+                  aria-pressed={isSubscribed}
+                  className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 disabled:opacity-50 ${isSubscribed && isSDKReady ? 'bg-orange-500 shadow-md shadow-orange-500/40' : 'bg-slate-700'}`}
                 >
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${subscribed ? 'translate-x-6' : 'translate-x-0'}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${isSubscribed && isSDKReady ? 'translate-x-6' : 'translate-x-0'}`} />
                 </button>
               </div>
             </div>
@@ -1976,6 +1958,10 @@ function App() {
   };
 
   useEffect(() => {
+    // Clear any stale OneSignal operation-queue entries that could cause a
+    // 400-retry loop to restart on the next page load even with the SDK disabled.
+    ns.clearStaleOSOperations();
+
     const stored = localStorage.getItem('nba_user');
     if (stored) {
       const user = JSON.parse(stored);
