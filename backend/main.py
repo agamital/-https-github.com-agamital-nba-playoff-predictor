@@ -1554,7 +1554,7 @@ def _gmail_send_email(to: str, subject: str, html: str) -> None:
 
 def _send_daily_email_reminders() -> dict:
     """
-    Daily cron job (and admin-triggered): send per-user Resend email reminders
+    Daily cron job (and admin-triggered): send per-user Gmail API email reminders
     to users with incomplete predictions for matchups that haven't started yet.
 
     • Only includes series with home_wins + away_wins = 0 (game not yet tipped off)
