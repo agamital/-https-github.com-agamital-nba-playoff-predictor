@@ -1480,19 +1480,29 @@ def _gmail_send_email(to: str, subject: str, html: str) -> None:
           f"client_id_prefix={_GMAIL_CLIENT_ID[:12]}...")
 
     # ── Stage 1: build credentials + service ────────────────────────────────
+    from google.auth.exceptions import RefreshError, TransportError
     try:
         creds = Credentials(
-            token=None,                               # will be fetched via refresh
+            token=None,                               # fetched automatically via refresh
             refresh_token=_GMAIL_REFRESH_TOKEN,
             client_id=_GMAIL_CLIENT_ID,
             client_secret=_GMAIL_CLIENT_SECRET,
             token_uri="https://oauth2.googleapis.com/token",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
         )
         service = build("gmail", "v1", credentials=creds)
         print("[Gmail] Stage 1 OK — credentials + service built")
+    except RefreshError as exc:
+        raise RuntimeError(
+            f"[Gmail] Stage 1 FAILED — token refresh error. "
+            f"The refresh token may have been revoked; re-run "
+            f"tools/generate_gmail_token.py to generate a new one. "
+            f"Detail: {exc}"
+        ) from exc
     except Exception as exc:
         raise RuntimeError(
-            f"[Gmail] Stage 1 FAILED — could not build Gmail service: {exc}"
+            f"[Gmail] Stage 1 FAILED — could not build Gmail service: "
+            f"{type(exc).__name__}: {exc}"
         ) from exc
 
     # ── Stage 2: compose message ─────────────────────────────────────────────
@@ -1516,9 +1526,25 @@ def _gmail_send_email(to: str, subject: str, html: str) -> None:
         )
         print(f"[Gmail] ✓ email delivered — message id={result.get('id')} to={to!r}")
     except HttpError as exc:
+        status = exc.resp.status
+        # 429 = quota exceeded; 401/403 = auth/scope problem
+        if status == 429:
+            raise RuntimeError(
+                f"[Gmail] Stage 3 FAILED — Gmail API quota exceeded (HTTP 429). "
+                f"Wait a few minutes and retry. Detail: {exc.error_details}"
+            ) from exc
+        if status in (401, 403):
+            raise RuntimeError(
+                f"[Gmail] Stage 3 FAILED — authorization error (HTTP {status}). "
+                f"Ensure the Gmail API is enabled in Google Cloud Console and "
+                f"the OAuth scope includes 'gmail.send'. Detail: {exc.error_details}"
+            ) from exc
         raise RuntimeError(
-            f"[Gmail] Stage 3 FAILED — Gmail API returned HTTP {exc.resp.status}: "
-            f"{exc.error_details}"
+            f"[Gmail] Stage 3 FAILED — Gmail API HTTP {status}: {exc.error_details}"
+        ) from exc
+    except TransportError as exc:
+        raise RuntimeError(
+            f"[Gmail] Stage 3 FAILED — network error reaching Gmail API: {exc}"
         ) from exc
     except Exception as exc:
         raise RuntimeError(
