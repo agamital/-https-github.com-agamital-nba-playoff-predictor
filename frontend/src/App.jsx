@@ -5,9 +5,10 @@ import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Downl
 import * as api from './services/api';
 
 // ── OneSignal — CDN approach (OneSignalSDK.page.js loaded in index.html) ──────
-// window.OneSignal is set by the CDN script; we access it only after init.
-// _osPromise resolves when init() completes so every SDK call is race-free.
-// Called at module level (not inside useEffect) so the promise exists before
+// window.OneSignal is set by the CDN script; all calls must guard on it.
+// _osPromise resolves when init() completes (or times out after 10 s) so every
+// SDK call is race-free even if the CDN script loads slowly.
+// initOneSignal() is called at module level so _osPromise is non-null before
 // any child component's useEffect tries to read PushSubscription state.
 let _osInitDone = false;
 let _osPromise  = null;
@@ -16,33 +17,41 @@ const _osAppId  = import.meta.env.VITE_ONESIGNAL_APP_ID || 'c69b4c3e-79d1-48a4-8
 function initOneSignal() {
   if (_osInitDone) return _osPromise;
   _osInitDone = true;
-  // window.OneSignalDeferred is the v16 CDN queue — push a callback that runs
-  // once the script loads, init the SDK, then resolve our promise.
+
   _osPromise = new Promise((resolve) => {
+    // 10-second failsafe: resolve even if the CDN script never loads so that
+    // awaiting _osPromise never hangs indefinitely (toggle stays responsive).
+    const timeout = setTimeout(resolve, 10_000);
+
     window.OneSignalDeferred = window.OneSignalDeferred || [];
     window.OneSignalDeferred.push(async (OneSignal) => {
       try {
         await OneSignal.init({
-          appId:                       _osAppId,
+          appId:                        _osAppId,
           allowLocalhostAsSecureOrigin: true,
-          notifyButton:                { enable: false },
-          serviceWorkerParam:          { scope: '/' },
+          // Suppress every piece of OneSignal-generated UI — the toggle is the
+          // sole controller for push permissions.
+          notifyButton:  { enable: false },
+          slidedown:     { prompts: []  },
+          customLink:    { enable: false },
         });
-      } catch { /* swallow init errors so the rest of the app keeps working */ }
+      } catch { /* init error — SDK calls will silently no-op via window.OneSignal guard */ }
+      clearTimeout(timeout);
       resolve();
     });
   });
+
   return _osPromise;
 }
 
-// Kick off init immediately at module load — before any component mounts.
-// This guarantees _osPromise is non-null when child useEffects run.
+// Called at module load — guarantees _osPromise is non-null before any mount.
 initOneSignal();
 
-// Convenience getter — returns window.OneSignal only after init resolves
-const os = () => window.OneSignal ?? null;
+// Safe accessor: returns window.OneSignal only when it is the live SDK object
+// (a plain array means the script hasn't executed yet).
+const os = () => (window.OneSignal && !Array.isArray(window.OneSignal) ? window.OneSignal : null);
 
-// Safe wrappers — never throw, always wait for SDK ready
+// Safe login/logout wrappers — wait for init, then guard on os()
 const osLogin  = (id) => _osPromise.then(() => { try { os()?.login(String(id));  } catch {} });
 const osLogout = ()   => _osPromise.then(() => { try { os()?.logout();            } catch {} });
 import { supabase } from './lib/supabase';
@@ -1390,30 +1399,30 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
     refetchOnWindowFocus: true,
   });
 
-  // ── OneSignal subscription state (non-blocking) ──────────────────────────
+  // ── OneSignal subscription state ─────────────────────────────────────────
   useEffect(() => {
     let alive = true;
 
-    const syncState = () => {
-      if (!alive) return;
-      try {
-        const perm  = os()?.Notifications?.permissionNative;
-        const opted = os()?.User?.PushSubscription?.optedIn ?? false;
-        setSubscribed(perm === 'granted' && opted);
-      } catch { /* stays false */ }
+    // Read optedIn directly from the SDK.  OneSignal's optedIn already
+    // combines the browser permission state with the user's opt-in choice,
+    // so we don't need a separate permissionNative check.
+    const readState = () => {
+      if (!alive || !window.OneSignal) return;
+      setSubscribed(window.OneSignal.User?.PushSubscription?.optedIn ?? false);
     };
 
-    // Wait for SDK init to resolve before reading subscription state,
-    // then also listen for future changes (grant / revoke)
+    // Stable handler so addEventListener/removeEventListener pair correctly.
+    const onChange = () => readState();
+
     _osPromise.then(() => {
       if (!alive) return;
-      syncState();
-      try { os()?.User?.PushSubscription?.addEventListener('change', syncState); } catch {}
+      readState();
+      try { window.OneSignal?.User?.PushSubscription?.addEventListener('change', onChange); } catch {}
     });
 
     return () => {
       alive = false;
-      try { os()?.User?.PushSubscription?.removeEventListener('change', syncState); } catch {}
+      try { window.OneSignal?.User?.PushSubscription?.removeEventListener('change', onChange); } catch {}
     };
   }, [userId]);
 
@@ -1468,20 +1477,23 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
   const handleSubscribeToggle = async () => {
     setSubLoading(true);
     try {
-      await _osPromise;  // ensure SDK is initialised before touching PushSubscription
+      await _osPromise;  // wait for SDK init (resolves in ≤10 s)
+
+      // Guard: if the script never loaded, bail silently
+      if (!window.OneSignal) { setSubLoading(false); return; }
+
       if (subscribed) {
-        await os()?.User?.PushSubscription?.optOut();
-        setSubscribed(false);
+        await window.OneSignal.User.PushSubscription.optOut();
+        // Re-read actual state after the call settles
+        setSubscribed(window.OneSignal.User?.PushSubscription?.optedIn ?? false);
       } else {
-        // optIn() triggers the browser permission prompt internally — correct for
-        // mobile Chrome, Android PWA, and iOS 16.4+ PWA (standalone mode)
-        await os()?.User?.PushSubscription?.optIn();
-        // Re-read actual state; if user denied the prompt, optedIn stays false
-        const perm  = os()?.Notifications?.permissionNative;
-        const opted = os()?.User?.PushSubscription?.optedIn ?? false;
-        setSubscribed(perm === 'granted' && opted);
+        // optIn() shows the browser permission prompt if not yet granted.
+        // Works on desktop Chrome/Firefox, Android Chrome, and iOS 16.4+ PWA.
+        await window.OneSignal.User.PushSubscription.optIn();
+        // Re-read: if user denied the prompt, optedIn will still be false
+        setSubscribed(window.OneSignal.User?.PushSubscription?.optedIn ?? false);
       }
-    } catch { /* prompt dismissed or SDK unavailable */ }
+    } catch { /* permission prompt dismissed or SDK error — leave state as-is */ }
     setSubLoading(false);
   };
 
