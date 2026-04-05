@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Mail, Shield, Calendar, Trophy, Key, AlertTriangle, Check, X, Loader, Camera, ImageIcon, LogOut } from 'lucide-react';
+import { User, Mail, Shield, Calendar, Trophy, Key, AlertTriangle, Check, X, Loader, Camera, ImageIcon, LogOut, Download } from 'lucide-react';
 import * as api from './services/api';
 import { Avatar } from './UserProfilePage';
 
@@ -209,7 +209,7 @@ const StatusMsg = ({ msg }) => {
 };
 
 
-const AccountPage = ({ currentUser, onLogout, onUserUpdate }) => {
+const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, onInstall }) => {
   const [account, setAccount] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -420,6 +420,25 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate }) => {
           <p className="text-slate-400 text-sm">
             Your account uses Google sign-in — no password to manage.
           </p>
+        </Card>
+      )}
+
+      {/* ── Install App ── */}
+      {canInstall && (
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-white">Add to Home Screen</p>
+              <p className="text-xs text-slate-500 mt-0.5">Install for a faster, native app experience.</p>
+            </div>
+            <button
+              onClick={onInstall}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-sm font-bold transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Install
+            </button>
+          </div>
         </Card>
       )}
 

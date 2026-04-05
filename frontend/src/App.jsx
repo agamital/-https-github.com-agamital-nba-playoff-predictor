@@ -1288,50 +1288,18 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
   );
 };
 
-// ── PWA Install Prompt ────────────────────────────────────────────────────────
+// ── PWA Install Banner — iOS only ─────────────────────────────────────────────
+// Android/Chrome install is handled via the sidebar "Install App" button which
+// uses the beforeinstallprompt event lifted to App-level state.
 const InstallBanner = () => {
   const [show, setShow] = useState(false);
-  const [isIOS, setIsIOS] = useState(false);
-  const deferredPrompt = useRef(null);
 
   useEffect(() => {
-    // Already installed or dismissed
     if (localStorage.getItem('pwa_dismissed')) return;
-    // Already running as standalone
     if (window.matchMedia('(display-mode: standalone)').matches) return;
-
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
-    setIsIOS(ios);
-
-    if (ios) {
-      // On iOS show a manual guide
-      setShow(true);
-      return;
-    }
-
-    // Android/Chrome: capture beforeinstallprompt
-    const handler = (e) => {
-      e.preventDefault();
-      deferredPrompt.current = e;
-      setShow(true);
-    };
-    window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !(window).MSStream;
+    if (ios) setShow(true);
   }, []);
-
-  const handleInstall = async () => {
-    if (deferredPrompt.current) {
-      deferredPrompt.current.prompt();
-      const { outcome } = await deferredPrompt.current.userChoice;
-      deferredPrompt.current = null;
-      if (outcome === 'accepted') setShow(false);
-    }
-  };
-
-  const handleDismiss = () => {
-    setShow(false);
-    localStorage.setItem('pwa_dismissed', '1');
-  };
 
   if (!show) return null;
 
@@ -1342,31 +1310,24 @@ const InstallBanner = () => {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-black text-white">Install NBA Picks</p>
-        {isIOS ? (
-          <div className="mt-1.5 space-y-1">
-            <p className="text-xs text-slate-400 flex items-center gap-1 flex-wrap">
-              1. Tap the
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700">
-                <Share className="w-3 h-3 text-blue-400" />
-                <span className="text-[10px] font-bold text-slate-300">Share</span>
-              </span>
-              icon in Safari
-            </p>
-            <p className="text-xs text-slate-400">
-              2. Tap <span className="font-bold text-slate-200">"Add to Home Screen"</span>
-            </p>
-          </div>
-        ) : (
-          <p className="text-xs text-slate-400 mt-0.5">Add to home screen for a native app experience</p>
-        )}
-        {!isIOS && (
-          <button onClick={handleInstall}
-            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-black hover:bg-orange-400 transition-colors">
-            <Download className="w-3 h-3" /> Install App
-          </button>
-        )}
+        <div className="mt-1.5 space-y-1">
+          <p className="text-xs text-slate-400 flex items-center gap-1 flex-wrap">
+            1. Tap the
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700">
+              <Share className="w-3 h-3 text-blue-400" />
+              <span className="text-[10px] font-bold text-slate-300">Share</span>
+            </span>
+            icon in Safari
+          </p>
+          <p className="text-xs text-slate-400">
+            2. Tap <span className="font-bold text-slate-200">"Add to Home Screen"</span>
+          </p>
+        </div>
       </div>
-      <button onClick={handleDismiss} className="text-slate-500 hover:text-slate-300 shrink-0 transition-colors">
+      <button
+        onClick={() => { setShow(false); localStorage.setItem('pwa_dismissed', '1'); }}
+        className="text-slate-500 hover:text-slate-300 shrink-0 transition-colors"
+      >
         <X className="w-4 h-4" />
       </button>
     </div>
@@ -1820,6 +1781,39 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [profileUsername, setProfileUsername] = useState(null);
+  // PWA install prompt — lifted here so sidebar + AccountPage can share it
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+
+  // Notification badge count — same query key as BellButton → shared cache
+  const { data: _navSummary } = useQuery({
+    queryKey: ['notifications', currentUser?.user_id],
+    queryFn:  () => api.getNotificationsSummary(currentUser.user_id),
+    enabled:  !!currentUser?.user_id,
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: true,
+  });
+  const navBadgeCount = _navSummary?.total ?? 0;
+
+  // Capture beforeinstallprompt once so any button in the tree can use it
+  useEffect(() => {
+    if (isStandalone) return;
+    const onPrompt = (e) => { e.preventDefault(); setInstallPrompt(e); };
+    const onInstalled = () => setInstallPrompt(null);
+    window.addEventListener('beforeinstallprompt', onPrompt);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onPrompt);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, [isStandalone]);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') setInstallPrompt(null);
+  };
 
   useEffect(() => {
     const stored = localStorage.getItem('nba_user');
@@ -1912,7 +1906,7 @@ function App() {
       case 'leaderboard':      return <LeaderboardPage onUserClick={handleUserClick} currentUser={currentUser} />;
       case 'mypredictions':    return <MyPredictionsPage currentUser={currentUser} />;
       case 'profile':          return <UserProfilePage username={profileUsername || currentUser?.username} currentUser={currentUser} />;
-      case 'account':          return <AccountPage currentUser={currentUser} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
+      case 'account':          return <AccountPage currentUser={currentUser} onLogout={handleLogout} onUserUpdate={handleUserUpdate} canInstall={!!installPrompt} onInstall={handleInstall} />;
       case 'user-predictions': return selectedUser ? <UserPredictionsPage userId={selectedUser.user_id} username={selectedUser.username} onBack={() => navigate('leaderboard')} /> : null;
       case 'admin':            return <AdminPage currentUser={currentUser} />;
       case 'scoring':          return <ScoringGuide />;
@@ -1950,6 +1944,7 @@ function App() {
                 }
                 navigate(item.id);
               };
+              const badge = item.id === 'betting' && navBadgeCount > 0 ? navBadgeCount : 0;
               return (
                 <button key={item.id} onClick={handleNav}
                   className={`group flex items-center w-full px-3 py-3 text-sm font-semibold rounded-xl transition-all ${
@@ -1957,8 +1952,20 @@ function App() {
                       ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
                       : 'text-slate-300 hover:bg-slate-800/50'
                   }`}>
-                  <Icon className="mr-3 h-5 w-5 shrink-0" />
+                  <div className="relative mr-3 shrink-0">
+                    <Icon className="h-5 w-5" />
+                    {badge > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 flex items-center justify-center px-0.5 rounded-full bg-red-500 text-white text-[9px] font-black leading-none ring-1 ring-slate-900">
+                        {badge > 9 ? '9+' : badge}
+                      </span>
+                    )}
+                  </div>
                   {item.label}
+                  {badge > 0 && (
+                    <span className="ml-auto min-w-[20px] h-5 flex items-center justify-center px-1.5 rounded-full bg-red-500/20 text-red-400 text-[10px] font-black">
+                      {badge > 9 ? '9+' : badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1992,6 +1999,15 @@ function App() {
                   <p className="text-xs text-slate-400">{currentUser.points || 0} pts</p>
                 </div>
               </div>
+              {installPrompt && (
+                <button
+                  onClick={handleInstall}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 text-sm font-bold hover:bg-slate-700 hover:text-white transition-colors"
+                >
+                  <Download className="w-4 h-4 shrink-0" />
+                  Install App
+                </button>
+              )}
               <Button onClick={handleLogout} variant="outline" className="w-full">
                 <LogOut className="w-4 h-4 mr-2" />
                 Logout
@@ -2051,6 +2067,7 @@ function App() {
         {bottomNavItems.map((item) => {
           const Icon = item.icon;
           const active = currentPage === item.id;
+          const badge  = item.id === 'betting' && navBadgeCount > 0 ? navBadgeCount : 0;
           const handleBottomNav = () => {
             if (item.id === 'profile' && currentUser) setProfileUsername(currentUser.username);
             navigate(item.id);
@@ -2063,7 +2080,14 @@ function App() {
                 active ? 'text-orange-400' : 'text-slate-500'
               }`}
             >
-              <Icon className={`w-5 h-5 ${active ? 'text-orange-400' : 'text-slate-500'}`} />
+              <div className="relative">
+                <Icon className={`w-5 h-5 ${active ? 'text-orange-400' : 'text-slate-500'}`} />
+                {badge > 0 && (
+                  <span className="absolute -top-1 -right-2.5 min-w-[15px] h-[15px] flex items-center justify-center px-0.5 rounded-full bg-red-500 text-white text-[8px] font-black leading-none ring-1 ring-slate-900">
+                    {badge > 9 ? '9+' : badge}
+                  </span>
+                )}
+              </div>
               <span className={`text-[10px] font-bold leading-none ${active ? 'text-orange-400' : 'text-slate-500'}`}>
                 {item.label}
               </span>
@@ -2071,6 +2095,16 @@ function App() {
             </button>
           );
         })}
+        {/* Install App tab — only shown on Android/Chrome when install is available */}
+        {installPrompt && (
+          <button
+            onClick={handleInstall}
+            className="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 min-h-[56px] text-sky-400 active:bg-slate-800/60 transition-colors"
+          >
+            <Download className="w-5 h-5" />
+            <span className="text-[10px] font-bold leading-none">Install</span>
+          </button>
+        )}
       </nav>
     </div>
   );
