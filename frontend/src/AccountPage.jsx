@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Mail, Shield, Calendar, Trophy, Key, AlertTriangle, Check, X, Loader, Camera, ImageIcon } from 'lucide-react';
+import { User, Mail, Shield, Calendar, Trophy, Key, AlertTriangle, Check, X, Loader, Camera, ImageIcon, LogOut } from 'lucide-react';
 import * as api from './services/api';
 import { Avatar } from './UserProfilePage';
 
@@ -422,6 +422,23 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate }) => {
           </p>
         </Card>
       )}
+
+      {/* ── Sign Out ── */}
+      <Card className="p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-white">Sign Out</p>
+            <p className="text-xs text-slate-500 mt-0.5">Log out of your account on this device.</p>
+          </div>
+          <button
+            onClick={onLogout}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 text-slate-300 text-sm font-bold hover:bg-slate-800 hover:text-white transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign Out
+          </button>
+        </div>
+      </Card>
 
       {/* ── Danger Zone ── */}
       <Card className="p-6 border-red-900/40">

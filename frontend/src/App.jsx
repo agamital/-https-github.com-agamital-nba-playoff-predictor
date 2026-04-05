@@ -1352,16 +1352,27 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
   // ── OneSignal subscription state (non-blocking) ──────────────────────────
   useEffect(() => {
     let alive = true;
-    (async () => {
+
+    const syncState = () => {
+      if (!alive) return;
       try {
-        await new Promise(r => setTimeout(r, 600));
-        if (!alive) return;
         const perm  = OneSignal.Notifications?.permissionNative;
         const opted = OneSignal.User?.PushSubscription?.optedIn ?? false;
         setSubscribed(perm === 'granted' && opted);
       } catch { /* stays false */ }
-    })();
-    return () => { alive = false; };
+    };
+
+    // Initial read after SDK settles
+    const t = setTimeout(syncState, 600);
+
+    // Stay in sync whenever the subscription changes (e.g. user grants/revokes)
+    try { OneSignal.User?.PushSubscription?.addEventListener('change', syncState); } catch {}
+
+    return () => {
+      alive = false;
+      clearTimeout(t);
+      try { OneSignal.User?.PushSubscription?.removeEventListener('change', syncState); } catch {}
+    };
   }, [userId]);
 
   // ── Anchor panel to button via getBoundingClientRect — no magic numbers ──
@@ -1419,13 +1430,15 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
         await OneSignal.User.PushSubscription.optOut();
         setSubscribed(false);
       } else {
-        await OneSignal.Notifications.requestPermission();
-        if (OneSignal.Notifications?.permissionNative === 'granted') {
-          await OneSignal.User.PushSubscription.optIn();
-          setSubscribed(true);
-        }
+        // optIn() handles the browser permission prompt internally — works on
+        // mobile Chrome and Android PWA without a separate requestPermission call
+        await OneSignal.User.PushSubscription.optIn();
+        // Re-read actual state; if user denied the prompt, optedIn stays false
+        const perm  = OneSignal.Notifications?.permissionNative;
+        const opted = OneSignal.User?.PushSubscription?.optedIn ?? false;
+        setSubscribed(perm === 'granted' && opted);
       }
-    } catch { /* prompt dismissed */ }
+    } catch { /* prompt dismissed or unavailable */ }
     setSubLoading(false);
   };
 
@@ -1804,6 +1817,7 @@ function App() {
   };
 
   const handleLogout = () => {
+    try { OneSignal.logout(); } catch {}
     setCurrentUser(null);
     localStorage.removeItem('nba_user');
     setCurrentPage('home');
