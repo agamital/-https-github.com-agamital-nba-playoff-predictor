@@ -26,8 +26,8 @@
     <!-- Prevent iOS phone number detection -->
     <meta name="format-detection" content="telephone=no" />
 
-    <!-- OneSignal Web SDK (v16) — DISABLED: re-enable once core site is stable -->
-    <!-- <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script> -->
+    <!-- OneSignal Web SDK (v16) — sets window.OneSignal global -->
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
 
     <!-- Hard-suppress every OneSignal-injected UI element.
          The dashboard "Subscription Bell" setting can override SDK init config,

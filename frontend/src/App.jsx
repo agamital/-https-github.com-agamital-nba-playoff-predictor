@@ -12,7 +12,7 @@ import * as ns from './utils/notifications';
 //     Nothing in the render path awaits OneSignal; the app boots unconditionally.
 //   • _bootOneSignal() polls for the CDN SDK, calls init(), then registers an
 //     event-based subscription listener.  Any failure is caught and logged.
-//   • osLinkUser(id) links a confirmed user ID to their subscription ONLY when
+//   • ns.loginUser(id) links a confirmed user ID to their subscription ONLY when
 //     the device already has a permanent onesignalId (not a "local-…" temp ID).
 //     Calling login() before that causes the OperationRepo 400 race condition.
 //
@@ -22,62 +22,8 @@ const _osPromise = Promise.resolve();  // always resolved — never blocks the a
 // Safe accessor — null while CDN script is loading or if init fails.
 const os = () => (window.OneSignal && !Array.isArray(window.OneSignal) ? window.OneSignal : null);
 
-// UUID v4 pattern — the only shape a real OneSignal server-assigned ID takes.
-// Anything else (empty, "local-…", short numeric strings, etc.) is temporary.
-const _UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-// Returns true only when the device has a confirmed permanent onesignalId.
-// Guards against: empty string, "local-…" prefix, short numeric IDs, anything
-// that doesn't match a full UUID v4 — all of which indicate the device hasn't
-// synced with OneSignal's servers yet.
-const _hasPermId = () => {
-  try {
-    const oid = os()?.User?.onesignalId ?? '';
-    return _UUID_V4.test(oid);
-  } catch { return false; }
-};
-
-// Safely link our app's user ID to the OneSignal subscription.
-// Guards (all must pass): SDK ready, notification permission granted,
-// user subscribed (optedIn), device has a permanent UUID onesignalId.
-// Any failure is caught and swallowed — never propagated to React.
-function osLinkUser(externalId) {
-  if (!externalId) return;
-  try {
-    const sdk = os();
-    if (!sdk) return;
-
-    // Permission must be granted — if not, the subscription isn't registered
-    // on OneSignal's servers and login() will 400.
-    const permission = sdk.Notifications?.permission ?? Notification?.permission ?? 'default';
-    if (permission !== 'granted') {
-      console.log('[OneSignal] notifications not granted — skipping login');
-      return;
-    }
-
-    if (!_hasPermId()) {
-      console.log('[OneSignal] onesignalId not yet a permanent UUID — skipping login');
-      return;
-    }
-
-    const optedIn = sdk.User?.PushSubscription?.optedIn ?? false;
-    if (!optedIn) return;
-
-    // v16 SDK: login() links the externalId to this device's subscription.
-    try {
-      Promise.resolve(sdk.login(String(externalId))).catch((err) => {
-        console.warn('[OneSignal] login() rejected (non-fatal):', err?.message ?? err);
-      });
-    } catch (inner) {
-      console.warn('[OneSignal] login() threw (non-fatal):', inner?.message ?? inner);
-    }
-  } catch (err) {
-    console.warn('[OneSignal] osLinkUser error (non-fatal):', err?.message ?? err);
-  }
-}
-
-// Pending user ID — set by the app when a user logs in, consumed once the
-// subscription change event fires with a confirmed permanent ID.
+// Pending user ID — stored at module level so _bootOneSignal's subscription
+// change listener can pick it up after init completes.
 let _pendingLinkId = null;
 
 async function _bootOneSignal() {
@@ -106,33 +52,28 @@ async function _bootOneSignal() {
     // Re-register sw.js so our badge-handling logic stays active.
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
-    // ── Event-based login: only link user once the device gets a real ID ──────
-    // The 'change' event fires when subscription state changes (opt-in, opt-out,
-    // or when the SDK syncs a local- ID to a permanent server-side ID).
-    // At this point onesignalId is guaranteed to be a real UUID — safe to login().
+    // Event-based login: fires when SDK syncs a local- ID to a permanent UUID.
+    // All guards (permission, optedIn, UUID check) live inside ns.loginUser().
     try {
       window.OneSignal.User.PushSubscription.addEventListener('change', (event) => {
         try {
-          const optedIn = event?.current?.optedIn ?? false;
-          if (optedIn && _hasPermId() && _pendingLinkId) {
-            console.log('[OneSignal] subscription confirmed — linking user', _pendingLinkId);
-            osLinkUser(_pendingLinkId);
+          if ((event?.current?.optedIn ?? false) && _pendingLinkId) {
+            ns.loginUser(_pendingLinkId);
           }
         } catch { /* swallow */ }
       });
-    } catch { /* SDK version may not support this — skip silently */ }
+    } catch { /* SDK version may not support addEventListener — skip */ }
 
-    // Also attempt immediately in case the user was already subscribed before
-    // this page load (returning visitor with push already granted).
-    if (_pendingLinkId) osLinkUser(_pendingLinkId);
+    // Attempt immediately for returning visitors already subscribed.
+    if (_pendingLinkId) ns.loginUser(_pendingLinkId);
 
   } catch (err) {
     console.warn('[OneSignal] init error (push disabled for this session):', err?.message ?? err);
   }
 }
 
-// _bootOneSignal() DISABLED — re-enable once core site is stable.
-// _bootOneSignal();
+// Boot asynchronously — intentionally not awaited, never blocks rendering.
+_bootOneSignal();
 
 // ── Persistent badging ────────────────────────────────────────────────────────
 // updateGlobalBadge(count) is the single source of truth for the home-screen
@@ -1583,7 +1524,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
     try {
       const after = isSubscribed ? await ns.optOut() : await ns.optIn();
       setIsSubscribed(after);
-      if (after && _pendingLinkId) osLinkUser(_pendingLinkId);
+      if (after && _pendingLinkId) ns.loginUser(_pendingLinkId);
     } catch (err) {
       console.warn('[PushToggle] unexpected error (non-fatal):', err?.message ?? err);
       setIsSubscribed(ns.getOptedIn());
@@ -2003,7 +1944,7 @@ function App() {
   useEffect(() => {
     _pendingLinkId = currentUser?.user_id ? String(currentUser.user_id) : null;
     if (!_pendingLinkId) return;
-    const t = setTimeout(() => osLinkUser(_pendingLinkId), 2000);
+    const t = setTimeout(() => ns.loginUser(_pendingLinkId), 2000);
     return () => clearTimeout(t);
   }, [currentUser?.user_id]);
 

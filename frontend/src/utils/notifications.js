@@ -110,6 +110,47 @@ export function onSubscriptionChange(callback) {
 }
 
 /**
+ * Links an external user ID (our app's user_id) to this device's OneSignal
+ * subscription.  Only fires when all of the following are true:
+ *   1. SDK is loaded and ready
+ *   2. Notification permission is 'granted'
+ *   3. Device is opted in (subscribed)
+ *   4. onesignalId is a permanent UUID — not a 'local-…' temp ID
+ *
+ * Any 400/403 or other error from OneSignal's backend is caught here and
+ * logged as a warning — it must never reach the React render path.
+ */
+export function loginUser(externalId) {
+  if (!externalId) return;
+  try {
+    const sdk = getOneSignal();
+    if (!sdk) return;
+
+    // Require 'granted' permission — without it the device isn't registered
+    const permission = sdk.Notifications?.permission ?? Notification?.permission ?? 'default';
+    if (permission !== 'granted') return;
+
+    if (!isSDKReady()) {
+      console.log('[OneSignal] loginUser: onesignalId not yet permanent — skipping');
+      return;
+    }
+
+    const optedIn = sdk.User?.PushSubscription?.optedIn ?? false;
+    if (!optedIn) return;
+
+    try {
+      Promise.resolve(sdk.login(String(externalId))).catch((err) => {
+        console.warn('[OneSignal] login() rejected (non-fatal):', err?.message ?? err);
+      });
+    } catch (inner) {
+      console.warn('[OneSignal] login() threw (non-fatal):', inner?.message ?? inner);
+    }
+  } catch (err) {
+    console.warn('[OneSignal] loginUser error (non-fatal):', err?.message ?? err);
+  }
+}
+
+/**
  * Clears all OneSignal operation-queue entries from localStorage so that
  * a stuck 400-retry loop doesn't survive a page reload.
  * Safe to call even when OneSignal is disabled.
