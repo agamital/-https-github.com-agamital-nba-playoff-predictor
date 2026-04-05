@@ -67,12 +67,11 @@ _sync_status = {
 _ONESIGNAL_APP_ID  = os.getenv("ONESIGNAL_APP_ID",  "c69b4c3e-79d1-48a4-8815-3ceabc1eae70")
 _ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY",  "")
 
-# Resend email credentials
-_RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-# RESEND_FROM must be a domain verified in your Resend account.
-# Gmail addresses cannot be used as a Resend sender — verify a custom domain
-# (e.g. nba-playoffs-2026.vercel.app) then set this env var in Railway.
-_RESEND_FROM    = os.getenv("RESEND_FROM",    "NBA Playoff Predictor <noreply@nba-playoffs-2026.vercel.app>")
+# Gmail SMTP credentials (Railway env vars)
+_SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+_SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+_SMTP_USER = os.getenv("SMTP_USER", "")   # nbaplayoffpredictor2000@gmail.com
+_SMTP_PASS = os.getenv("SMTP_PASS", "")   # 16-char Google App Password
 # CRON_SECRET — shared secret between Vercel cron and this backend to prevent
 # unauthenticated calls to the trigger-reminder endpoint.
 _CRON_SECRET    = os.getenv("CRON_SECRET", "")
@@ -1282,76 +1281,39 @@ def _send_onesignal_notification(title: str, body: str, url: str = "https://nba-
 
 def _send_email_reminders(user_rows: list) -> None:
     """
-    Send missing-picks email reminders via Resend to a list of (user_id, email) pairs.
-    Silently no-ops if RESEND_API_KEY is not configured.
+    Send missing-picks email reminders via Gmail SMTP to a list of
+    (user_id, email) pairs.  Silently no-ops if SMTP credentials are absent.
     """
-    if not _RESEND_API_KEY or not user_rows:
+    if not _SMTP_USER or not _SMTP_PASS or not user_rows:
         return
-    try:
-        import resend as _resend
-        _resend.api_key = _RESEND_API_KEY
-        emails_sent = 0
-        for _uid, email in user_rows:
-            if not email:
-                continue
-            try:
-                _resend.Emails.send({
-                    "from":    _RESEND_FROM,
-                    "to":      [email],
-                    "subject": "\U0001f3c0 \u05d0\u05dc \u05ea\u05e9\u05db\u05d7 \u05d0\u05ea \u05d4\u05e0\u05d9\u05d7\u05d5\u05e9\u05d9\u05dd \u05e9\u05dc\u05da \u05dc-NBA!",
-                    "html": (
-                        "<div dir='rtl' style='font-family:sans-serif;max-width:480px;"
-                        "     margin:auto;padding:24px;text-align:right;'>"
-                        "<h2 style='color:#f97316;margin-bottom:8px;'>"
-                        "\u05d9\u05e9 \u05dc\u05da \u05e0\u05d9\u05d7\u05d5\u05e9\u05d9\u05dd \u05e4\u05ea\u05d5\u05d7\u05d9\u05dd!"
-                        "</h2>"
-                        "<p style='color:#334155;'>"
-                        "\u05d9\u05e9 \u05e1\u05d3\u05e8\u05d5\u05ea \u05e4\u05dc\u05d9\u05d9\u05d0\u05d5\u05e3 \u05e4\u05e2\u05d9\u05dc\u05d5\u05ea"
-                        " \u05e9\u05de\u05d7\u05db\u05d5\u05ea \u05dc\u05ea\u05d7\u05d6\u05d9\u05d5\u05ea \u05e9\u05dc\u05da."
-                        "</p>"
-                        "<p style='color:#334155;'>"
-                        "\u05d0\u05dc \u05ea\u05e4\u05e1\u05e4\u05e1 \u05d0\u05ea \u05d4\u05d4\u05d6\u05d3\u05de\u05e0\u05d5\u05ea"
-                        " \u05dc\u05e6\u05d1\u05d5\u05e8 \u05e0\u05e7\u05d5\u05d3\u05d5\u05ea"
-                        " \u2013 \u05db\u05dc \u05e0\u05d9\u05d7\u05d5\u05e9 \u05e0\u05db\u05d5\u05df \u05e7\u05d5\u05d1\u05e2!"
-                        "</p>"
-                        "<a href='https://nba-playoffs-2026.vercel.app'"
-                        "   style='display:inline-block;margin-top:16px;padding:12px 24px;"
-                        "          background:#f97316;color:#fff;border-radius:8px;"
-                        "          text-decoration:none;font-weight:bold;'>"
-                        "\u05dc\u05de\u05d9\u05dc\u05d5\u05d9 \u05d4\u05e0\u05d9\u05d7\u05d5\u05e9\u05d9\u05dd \u05e9\u05dc\u05d9 \u2190"
-                        "</a>"
-                        "<p style='color:#94a3b8;font-size:12px;margin-top:24px;'>"
-                        "\u05d4\u05de\u05d9\u05d9\u05dc \u05e0\u05e9\u05dc\u05d7 \u05d0\u05dc\u05d9\u05da \u05db\u05d9"
-                        " \u05d9\u05e9 \u05dc\u05da \u05d7\u05e9\u05d1\u05d5\u05df"
-                        " \u05d1-NBA Playoff Predictor 2026."
-                        "</p>"
-                        "</div>"
-                    ),
-                })
-                emails_sent += 1
-            except Exception as e:
-                print(f"[Email] Failed to send to {email}: {e}")
-        print(f"[Email] Resend reminders sent: {emails_sent}/{len(user_rows)}")
-    except ImportError:
-        print("[Email] resend package not installed — skipping email reminders")
-    except Exception as e:
-        print(f"[Email] Resend error: {e}")
+    emails_sent = 0
+    subject = "Don't leave points on the table! \U0001f3c0 Your NBA Playoff predictions are incomplete."
+    sample_labels = ["Active series are waiting for your picks"]
+    for _uid, email in user_rows:
+        if not email:
+            continue
+        try:
+            _smtp_send_email(email, subject, _build_reminder_html(sample_labels))
+            emails_sent += 1
+        except Exception as e:
+            print(f"[Email] Failed to send to {email}: {e}")
+    print(f"[Email] SMTP reminders sent: {emails_sent}/{len(user_rows)}")
 
 
 def _send_missing_picks_alert() -> None:
     """
     Twice-daily cron (06:00 UTC = 09:00 IDT, 18:00 UTC = 21:00 IDT):
     find users who have at least one active/unlocked series with no prediction,
-    then send them a targeted OneSignal push AND a Resend email reminder.
+    then send them a targeted OneSignal push AND a Gmail SMTP email reminder.
     Runs until _STANDINGS_SYNC_CUTOFF; skips silently if no credentials are set.
     """
     if datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF:
         return
 
     has_push  = bool(_ONESIGNAL_API_KEY)
-    has_email = bool(_RESEND_API_KEY)
+    has_email = bool(_SMTP_USER and _SMTP_PASS)
     if not has_push and not has_email:
-        print("[Alert] Neither ONESIGNAL_API_KEY nor RESEND_API_KEY set — skipping alert")
+        print("[Alert] Neither ONESIGNAL_API_KEY nor SMTP credentials set — skipping alert")
         return
 
     conn = None
@@ -1477,56 +1439,51 @@ def _build_reminder_html(missing_labels: list[str]) -> str:
     )
 
 
-def _resend_send_email(to: str, subject: str, html: str) -> dict:
+def _smtp_send_email(to: str, subject: str, html: str) -> None:
     """
-    Send a single transactional email via Resend REST API (stdlib only).
-    Returns the parsed Resend response dict on success.
-    Raises RuntimeError with full Resend error body on any HTTP / API failure.
+    Send a single transactional email via Gmail SMTP (TLS on port 587).
+    Uses stdlib smtplib + email.mime — no third-party packages required.
+    Reads credentials from _SMTP_USER / _SMTP_PASS (Railway env vars).
+    Raises RuntimeError with a descriptive message on any failure.
     """
-    import urllib.request as _req
-    import urllib.error  as _uerr
-    import json as _json
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text      import MIMEText
 
-    print(f"[Resend] Sending to={to!r} from={_RESEND_FROM!r} "
-          f"key_prefix={_RESEND_API_KEY[:8] + '...' if _RESEND_API_KEY else 'NOT SET'!r}")
+    if not _SMTP_USER or not _SMTP_PASS:
+        raise RuntimeError("SMTP_USER or SMTP_PASS not set in environment")
 
-    payload = _json.dumps({
-        "from":    _RESEND_FROM,
-        "to":      [to],
-        "subject": subject,
-        "html":    html,
-    }).encode("utf-8")
+    from_addr    = f"NBA Playoff Predictor <{_SMTP_USER}>"
+    masked_pass  = _SMTP_PASS[:2] + "***" + _SMTP_PASS[-2:]
+    print(f"[SMTP] Sending to={to!r} via {_SMTP_HOST}:{_SMTP_PORT} "
+          f"user={_SMTP_USER!r} pass={masked_pass}")
 
-    req = _req.Request(
-        "https://api.resend.com/emails",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {_RESEND_API_KEY}",
-            "Content-Type":  "application/json; charset=utf-8",
-        },
-        method="POST",
-    )
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = from_addr
+    msg["To"]      = to
+    msg.attach(MIMEText(html, "html", "utf-8"))
 
     try:
-        with _req.urlopen(req, timeout=15) as resp:
-            body = _json.loads(resp.read().decode("utf-8"))
-            if not body.get("id"):
-                raise RuntimeError(f"Resend returned no id: {body}")
-            print(f"[Resend] ✓ email id={body['id']} to={to!r}")
-            return body
-    except _uerr.HTTPError as exc:
-        # Read the full error body Resend sends back (e.g. "API key is invalid")
-        try:
-            err_body = exc.read().decode("utf-8")
-            err_json = _json.loads(err_body)
-            detail   = err_json.get("message") or err_json.get("name") or err_body
-        except Exception:
-            detail = str(exc)
-        print(f"[Resend] HTTP {exc.code} error: {detail}")
-        raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
-    except Exception as exc:
-        print(f"[Resend] Unexpected error: {type(exc).__name__}: {exc}")
-        raise
+        with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(_SMTP_USER, _SMTP_PASS)
+            server.sendmail(_SMTP_USER, [to], msg.as_bytes())
+        print(f"[SMTP] ✓ email delivered to={to!r}")
+    except smtplib.SMTPAuthenticationError as exc:
+        raise RuntimeError(
+            f"SMTP authentication failed — check SMTP_USER and SMTP_PASS. "
+            f"Use a 16-char Google App Password, not your account password. "
+            f"Detail: {exc}"
+        ) from exc
+    except smtplib.SMTPRecipientsRefused as exc:
+        raise RuntimeError(f"Recipient refused by SMTP server: {exc.recipients}") from exc
+    except smtplib.SMTPException as exc:
+        raise RuntimeError(f"SMTP error: {type(exc).__name__}: {exc}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Network/connection error reaching {_SMTP_HOST}:{_SMTP_PORT}: {exc}") from exc
 
 
 def _send_daily_email_reminders() -> dict:
@@ -1543,9 +1500,9 @@ def _send_daily_email_reminders() -> dict:
     if datetime.utcnow() >= _STANDINGS_SYNC_CUTOFF:
         return {"skipped": "past cutoff"}
 
-    if not _RESEND_API_KEY:
-        print("[EmailReminder] RESEND_API_KEY not set — skipping")
-        return {"skipped": "no resend api key"}
+    if not _SMTP_USER or not _SMTP_PASS:
+        print("[EmailReminder] SMTP_USER or SMTP_PASS not set — skipping")
+        return {"skipped": "no smtp credentials"}
 
     conn = None
     sent = 0
@@ -1657,7 +1614,7 @@ def _send_daily_email_reminders() -> dict:
                 continue
 
             try:
-                _resend_send_email(email, subject, _build_reminder_html(missing_labels))
+                _smtp_send_email(email, subject, _build_reminder_html(missing_labels))
                 c.execute(
                     "UPDATE users SET reminder_last_sent_at = %s WHERE id = %s",
                     (datetime.utcnow(), user_id),
@@ -3568,12 +3525,11 @@ async def admin_send_test_email(request: Request, to: str):
 
     to = to.strip()   # defensive: remove any leading/trailing whitespace
 
-    if not _RESEND_API_KEY:
-        raise HTTPException(status_code=503,
-                            detail="RESEND_API_KEY not configured — add it to Railway env vars")
-    if not _RESEND_FROM:
-        raise HTTPException(status_code=503,
-                            detail="RESEND_FROM not configured — add it to Railway env vars")
+    if not _SMTP_USER or not _SMTP_PASS:
+        raise HTTPException(
+            status_code=503,
+            detail="SMTP_USER or SMTP_PASS not configured — add them to Railway env vars",
+        )
     if not to or "@" not in to:
         raise HTTPException(status_code=400, detail="Invalid 'to' email address")
 
@@ -3582,12 +3538,11 @@ async def admin_send_test_email(request: Request, to: str):
         "Boston Celtics vs Miami Heat (Conference Semifinals)",
     ]
     subject = "[TEST] Don't leave points on the table! \U0001f3c0 Your NBA Playoff predictions are incomplete."
-    print(f"[TestEmail] Triggered — to={to!r} from={_RESEND_FROM!r}")
+    print(f"[TestEmail] Triggered — to={to!r} via {_SMTP_HOST}:{_SMTP_PORT} from={_SMTP_USER!r}")
     try:
-        result = _resend_send_email(to, subject, _build_reminder_html(sample_labels))
-        return {"sent": True, "to": to, "resend_id": result.get("id")}
+        _smtp_send_email(to, subject, _build_reminder_html(sample_labels))
+        return {"sent": True, "to": to, "smtp_user": _SMTP_USER}
     except RuntimeError as e:
-        # RuntimeError is raised by _resend_send_email with the full Resend detail
         err_str = str(e)
         print(f"[TestEmail] FAILED — {err_str}")
         raise HTTPException(status_code=502, detail=err_str)
