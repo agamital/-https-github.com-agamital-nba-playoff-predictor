@@ -1947,14 +1947,13 @@ function App() {
   });
   const navBadgeCount = _navSummary?.total ?? 0;
 
-  // Sync the home-screen app icon badge whenever the count or subscription
-  // state changes.  All badge logic is centralised in updateGlobalBadge() so
-  // the same path handles both the open-app case and the SW-persist case.
+  // Sync the home-screen app icon badge whenever the count changes.
+  // 'subscribed' lives inside BellButton — read optedIn from localStorage here.
   useEffect(() => {
-    // When push toggle is OFF, force count to 0 so the badge is always cleared.
-    const count = subscribed ? navBadgeCount : 0;
+    const isSubscribed = localStorage.getItem('os_push_opted_in') === 'true';
+    const count = isSubscribed ? navBadgeCount : 0;
     updateGlobalBadge(count);
-  }, [navBadgeCount, subscribed]);
+  }, [navBadgeCount]);
 
   // Capture beforeinstallprompt once so any button in the tree can use it
   useEffect(() => {
