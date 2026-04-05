@@ -21,34 +21,55 @@ const _osPromise = Promise.resolve();  // always resolved — never blocks the a
 // Safe accessor — null while CDN script is loading or if init fails.
 const os = () => (window.OneSignal && !Array.isArray(window.OneSignal) ? window.OneSignal : null);
 
-// Returns true only when the device has a confirmed (non-temporary) onesignalId.
-// A "local-…" prefix means the device hasn't synced with OneSignal's servers yet;
-// calling login() at this point triggers the 400 race condition.
+// UUID v4 pattern — the only shape a real OneSignal server-assigned ID takes.
+// Anything else (empty, "local-…", short numeric strings, etc.) is temporary.
+const _UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// Returns true only when the device has a confirmed permanent onesignalId.
+// Guards against: empty string, "local-…" prefix, short numeric IDs, anything
+// that doesn't match a full UUID v4 — all of which indicate the device hasn't
+// synced with OneSignal's servers yet.
 const _hasPermId = () => {
   try {
     const oid = os()?.User?.onesignalId ?? '';
-    return oid.length > 0 && !oid.startsWith('local-');
+    return _UUID_V4.test(oid);
   } catch { return false; }
 };
 
 // Safely link our app's user ID to the OneSignal subscription.
-// Guards: SDK ready + subscribed + permanent onesignalId.
-// All errors are swallowed — a login failure must never crash the app.
+// Guards (all must pass): SDK ready, notification permission granted,
+// user subscribed (optedIn), device has a permanent UUID onesignalId.
+// Any failure is caught and swallowed — never propagated to React.
 function osLinkUser(externalId) {
   if (!externalId) return;
   try {
     const sdk = os();
     if (!sdk) return;
-    if (!_hasPermId()) {
-      console.log('[OneSignal] onesignalId still local — skipping login until confirmed');
+
+    // Permission must be granted — if not, the subscription isn't registered
+    // on OneSignal's servers and login() will 400.
+    const permission = sdk.Notifications?.permission ?? Notification?.permission ?? 'default';
+    if (permission !== 'granted') {
+      console.log('[OneSignal] notifications not granted — skipping login');
       return;
     }
+
+    if (!_hasPermId()) {
+      console.log('[OneSignal] onesignalId not yet a permanent UUID — skipping login');
+      return;
+    }
+
     const optedIn = sdk.User?.PushSubscription?.optedIn ?? false;
     if (!optedIn) return;
-    // v16 SDK: login() associates the external user ID with this device.
-    Promise.resolve(sdk.login(String(externalId))).catch((err) => {
-      console.warn('[OneSignal] login() failed (non-fatal):', err?.message ?? err);
-    });
+
+    // v16 SDK: login() links the externalId to this device's subscription.
+    try {
+      Promise.resolve(sdk.login(String(externalId))).catch((err) => {
+        console.warn('[OneSignal] login() rejected (non-fatal):', err?.message ?? err);
+      });
+    } catch (inner) {
+      console.warn('[OneSignal] login() threw (non-fatal):', inner?.message ?? inner);
+    }
   } catch (err) {
     console.warn('[OneSignal] osLinkUser error (non-fatal):', err?.message ?? err);
   }
@@ -1991,10 +2012,14 @@ function App() {
   }, []);
 
   // Keep _pendingLinkId in sync with the logged-in user.
-  // osLinkUser() uses it once the device has a permanent onesignalId.
+  // The 2 s delay gives the OneSignal SDK time to finalise the subscription
+  // and replace any "local-…" onesignalId with a real permanent UUID before
+  // osLinkUser() runs its guards — eliminating the login-user 400 race.
   useEffect(() => {
     _pendingLinkId = currentUser?.user_id ? String(currentUser.user_id) : null;
-    if (_pendingLinkId) osLinkUser(_pendingLinkId);
+    if (!_pendingLinkId) return;
+    const t = setTimeout(() => osLinkUser(_pendingLinkId), 2000);
+    return () => clearTimeout(t);
   }, [currentUser?.user_id]);
 
   const handleLogin = (user) => {
