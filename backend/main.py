@@ -69,7 +69,7 @@ _ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY",  "")
 
 # Gmail SMTP credentials (Railway env vars)
 _SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-_SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+_SMTP_PORT = int(os.getenv("SMTP_PORT", "2525"))
 _SMTP_USER = os.getenv("SMTP_USER", "")   # nbaplayoffpredictor2000@gmail.com
 _SMTP_PASS = os.getenv("SMTP_PASS", "")   # 16-char Google App Password
 # CRON_SECRET — shared secret between Vercel cron and this backend to prevent
@@ -1441,17 +1441,16 @@ def _build_reminder_html(missing_labels: list[str]) -> str:
 
 def _smtp_send_email(to: str, subject: str, html: str) -> None:
     """
-    Send a single transactional email via Gmail SMTP using implicit SSL (port 465).
-    smtplib.SMTP_SSL wraps the socket in TLS from the first byte — no STARTTLS
-    handshake needed, which avoids the Errno 101 / Errno 111 failures seen on
-    Railway when using the STARTTLS path on port 587.
+    Send a single transactional email via SMTP with STARTTLS on port 2525.
+    Port 587 and 465 are both blocked by Railway's network; 2525 is the
+    last-resort alternative that most mail providers expose for exactly
+    this reason (cloud-hosted environments that block standard ports).
 
     Uses stdlib smtplib + email.mime — no third-party packages required.
     Reads credentials from _SMTP_USER / _SMTP_PASS (Railway env vars).
     Raises RuntimeError with a descriptive message on any failure.
     """
     import smtplib
-    import ssl
     from email.mime.multipart import MIMEMultipart
     from email.mime.text      import MIMEText
 
@@ -1460,7 +1459,7 @@ def _smtp_send_email(to: str, subject: str, html: str) -> None:
 
     from_addr   = f"NBA Playoff Predictor <{_SMTP_USER}>"
     masked_pass = _SMTP_PASS[:2] + "***" + _SMTP_PASS[-2:]
-    print(f"[SMTP] Connecting to {_SMTP_HOST}:{_SMTP_PORT} (SSL) "
+    print(f"[SMTP] Connecting to {_SMTP_HOST}:{_SMTP_PORT} (STARTTLS) "
           f"user={_SMTP_USER!r} pass={masked_pass}")
 
     msg = MIMEMultipart("alternative")
@@ -1469,38 +1468,49 @@ def _smtp_send_email(to: str, subject: str, html: str) -> None:
     msg["To"]      = to
     msg.attach(MIMEText(html, "html", "utf-8"))
 
-    ssl_ctx = ssl.create_default_context()
-
     # ── Stage 1: connect ────────────────────────────────────────────────────
     try:
-        server = smtplib.SMTP_SSL(_SMTP_HOST, _SMTP_PORT, context=ssl_ctx, timeout=20)
+        server = smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=20)
+        server.ehlo()
+        print(f"[SMTP] Stage 1 OK — connected to {_SMTP_HOST}:{_SMTP_PORT}")
     except OSError as exc:
         raise RuntimeError(
-            f"[SMTP] Connection failed to {_SMTP_HOST}:{_SMTP_PORT} — "
-            f"network unreachable or port blocked. Detail: {exc}"
+            f"[SMTP] Stage 1 FAILED — connection to {_SMTP_HOST}:{_SMTP_PORT} "
+            f"refused or network unreachable. Detail: {exc}"
         ) from exc
 
     with server:
-        # ── Stage 2: authenticate ──────────────────────────────────────────
+        # ── Stage 2: STARTTLS ────────────────────────────────────────────────
+        try:
+            server.starttls()
+            server.ehlo()
+            print("[SMTP] Stage 2 OK — STARTTLS handshake complete")
+        except smtplib.SMTPException as exc:
+            raise RuntimeError(
+                f"[SMTP] Stage 2 FAILED — STARTTLS upgrade error: {exc}"
+            ) from exc
+
+        # ── Stage 3: authenticate ────────────────────────────────────────────
         try:
             server.login(_SMTP_USER, _SMTP_PASS)
+            print(f"[SMTP] Stage 3 OK — authenticated as {_SMTP_USER!r}")
         except smtplib.SMTPAuthenticationError as exc:
             raise RuntimeError(
-                f"[SMTP] Authentication failed for {_SMTP_USER!r}. "
+                f"[SMTP] Stage 3 FAILED — authentication failed for {_SMTP_USER!r}. "
                 f"Ensure SMTP_PASS is the 16-char Google App Password "
                 f"(not the account password). Detail: {exc}"
             ) from exc
 
-        # ── Stage 3: send ─────────────────────────────────────────────────
+        # ── Stage 4: send ────────────────────────────────────────────────────
         try:
             server.sendmail(_SMTP_USER, [to], msg.as_bytes())
         except smtplib.SMTPRecipientsRefused as exc:
             raise RuntimeError(
-                f"[SMTP] Recipient refused: {exc.recipients}"
+                f"[SMTP] Stage 4 FAILED — recipient refused: {exc.recipients}"
             ) from exc
         except smtplib.SMTPException as exc:
             raise RuntimeError(
-                f"[SMTP] Send failed: {type(exc).__name__}: {exc}"
+                f"[SMTP] Stage 4 FAILED — send error: {type(exc).__name__}: {exc}"
             ) from exc
 
     print(f"[SMTP] ✓ email delivered to={to!r}")
