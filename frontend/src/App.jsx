@@ -29,12 +29,20 @@ function initOneSignal() {
         await OneSignal.init({
           appId:                        _osAppId,
           allowLocalhostAsSecureOrigin: true,
-          // Suppress every piece of OneSignal-generated UI — the toggle is the
-          // sole controller for push permissions.
-          notifyButton:  { enable: false },
-          slidedown:     { prompts: []  },
-          customLink:    { enable: false },
+          // Disable every built-in OneSignal UI element.
+          // The custom toggle in Account Settings is the sole subscription controller.
+          notifyButton: { enable: false },
+          slidedown:    { prompts: []   },
+          customLink:   { enable: false },
+          welcomeNotification: { disable: true },
         });
+        // Belt-and-suspenders: remove any DOM nodes the SDK may have injected
+        // despite the config flags (dashboard settings can override SDK config).
+        [
+          '#onesignal-bell-container',
+          '#onesignal-slidedown-container',
+          '#onesignal-popover-container',
+        ].forEach(sel => document.querySelector(sel)?.remove());
       } catch { /* init error — SDK calls will silently no-op via window.OneSignal guard */ }
       clearTimeout(timeout);
       resolve();

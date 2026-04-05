@@ -28,6 +28,22 @@
 
     <!-- OneSignal Web SDK (v16) — sets window.OneSignal global -->
     <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+
+    <!-- Hard-suppress every OneSignal-injected UI element.
+         The dashboard "Subscription Bell" setting can override SDK init config,
+         so CSS is the only reliable way to guarantee nothing renders.
+         Our custom toggle in Account Settings is the sole subscription controller. -->
+    <style>
+      #onesignal-bell-container,
+      #onesignal-slidedown-container,
+      #onesignal-popover-container,
+      .onesignal-bell-launcher,
+      .onesignal-bell-launcher-button,
+      .onesignal-reset,
+      [id^="onesignal-"] iframe,
+      .slidedown-container,
+      .onesignal-slidedown-container { display: none !important; visibility: hidden !important; pointer-events: none !important; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
