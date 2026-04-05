@@ -4,6 +4,31 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronRight, Share, Bell, Lock } from 'lucide-react';
 import OneSignal from 'react-onesignal';
 import * as api from './services/api';
+
+// ── OneSignal init — module-level so it survives StrictMode double-mount ──────
+// _osPromise resolves when init() completes. All login/logout/subscription calls
+// must wait on this promise so they never run before the SDK is ready, which
+// would cause the LoginManager "Cannot read 'On' from undefined" crash.
+let _osInitDone    = false;
+let _osPromise     = null;
+const _osAppId     = import.meta.env.VITE_ONESIGNAL_APP_ID || 'c69b4c3e-79d1-48a4-8815-3ceabc1eae70';
+
+function initOneSignal() {
+  if (_osInitDone) return _osPromise;
+  _osInitDone = true;
+  _osPromise  = OneSignal.init({
+    appId:                      _osAppId,
+    allowLocalhostAsSecureOrigin: true,
+    notifyButton:               { enable: false },
+    serviceWorkerPath:          '/OneSignalSDKWorker.js',
+    serviceWorkerParam:         { scope: '/' },
+  }).catch(() => { /* init error — SDK calls will silently no-op */ });
+  return _osPromise;
+}
+
+// Safe wrappers — never throw, always wait for SDK ready
+const osLogin  = (id)  => _osPromise?.then(() => { try { OneSignal.login(String(id));  } catch {} }).catch(() => {});
+const osLogout = ()    => _osPromise?.then(() => { try { OneSignal.logout();            } catch {} }).catch(() => {});
 import { supabase } from './lib/supabase';
 import { picksRevealed, PICKS_REVEAL_DATE } from './scoringConstants';
 import './index.css';
@@ -1362,15 +1387,16 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
       } catch { /* stays false */ }
     };
 
-    // Initial read after SDK settles
-    const t = setTimeout(syncState, 600);
-
-    // Stay in sync whenever the subscription changes (e.g. user grants/revokes)
-    try { OneSignal.User?.PushSubscription?.addEventListener('change', syncState); } catch {}
+    // Wait for SDK init to resolve before reading subscription state,
+    // then also listen for future changes (grant / revoke)
+    (_osPromise || Promise.resolve()).then(() => {
+      if (!alive) return;
+      syncState();
+      try { OneSignal.User?.PushSubscription?.addEventListener('change', syncState); } catch {}
+    });
 
     return () => {
       alive = false;
-      clearTimeout(t);
       try { OneSignal.User?.PushSubscription?.removeEventListener('change', syncState); } catch {}
     };
   }, [userId]);
@@ -1426,19 +1452,22 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
   const handleSubscribeToggle = async () => {
     setSubLoading(true);
     try {
+      // Ensure SDK is initialised before touching PushSubscription
+      await (_osPromise || Promise.resolve());
+
       if (subscribed) {
         await OneSignal.User.PushSubscription.optOut();
         setSubscribed(false);
       } else {
-        // optIn() handles the browser permission prompt internally — works on
-        // mobile Chrome and Android PWA without a separate requestPermission call
+        // optIn() triggers the browser permission prompt internally — correct for
+        // mobile Chrome, Android PWA, and iOS 16.4+ PWA (standalone mode)
         await OneSignal.User.PushSubscription.optIn();
         // Re-read actual state; if user denied the prompt, optedIn stays false
         const perm  = OneSignal.Notifications?.permissionNative;
         const opted = OneSignal.User?.PushSubscription?.optedIn ?? false;
         setSubscribed(perm === 'granted' && opted);
       }
-    } catch { /* prompt dismissed or unavailable */ }
+    } catch { /* prompt dismissed or SDK unavailable */ }
     setSubLoading(false);
   };
 
@@ -1767,6 +1796,9 @@ function App() {
   const [profileUsername, setProfileUsername] = useState(null);
 
   useEffect(() => {
+    // Kick off OneSignal init as early as possible — before any login/logout calls
+    initOneSignal();
+
     const stored = localStorage.getItem('nba_user');
     if (stored) {
       const user = JSON.parse(stored);
@@ -1801,13 +1833,10 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Sync OneSignal external ID whenever user changes
+  // Sync OneSignal external ID whenever user changes — waits for SDK ready
   useEffect(() => {
-    if (!currentUser) {
-      try { OneSignal.logout(); } catch {}
-      return;
-    }
-    try { OneSignal.login(String(currentUser.user_id)); } catch {}
+    if (!currentUser) { osLogout(); return; }
+    osLogin(currentUser.user_id);
   }, [currentUser?.user_id]);
 
   const handleLogin = (user) => {
@@ -1817,7 +1846,7 @@ function App() {
   };
 
   const handleLogout = () => {
-    try { OneSignal.logout(); } catch {}
+    osLogout();
     setCurrentUser(null);
     localStorage.removeItem('nba_user');
     setCurrentPage('home');
