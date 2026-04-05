@@ -1441,21 +1441,26 @@ def _build_reminder_html(missing_labels: list[str]) -> str:
 
 def _smtp_send_email(to: str, subject: str, html: str) -> None:
     """
-    Send a single transactional email via Gmail SMTP (TLS on port 587).
+    Send a single transactional email via Gmail SMTP using implicit SSL (port 465).
+    smtplib.SMTP_SSL wraps the socket in TLS from the first byte — no STARTTLS
+    handshake needed, which avoids the Errno 101 / Errno 111 failures seen on
+    Railway when using the STARTTLS path on port 587.
+
     Uses stdlib smtplib + email.mime — no third-party packages required.
     Reads credentials from _SMTP_USER / _SMTP_PASS (Railway env vars).
     Raises RuntimeError with a descriptive message on any failure.
     """
     import smtplib
+    import ssl
     from email.mime.multipart import MIMEMultipart
     from email.mime.text      import MIMEText
 
     if not _SMTP_USER or not _SMTP_PASS:
         raise RuntimeError("SMTP_USER or SMTP_PASS not set in environment")
 
-    from_addr    = f"NBA Playoff Predictor <{_SMTP_USER}>"
-    masked_pass  = _SMTP_PASS[:2] + "***" + _SMTP_PASS[-2:]
-    print(f"[SMTP] Sending to={to!r} via {_SMTP_HOST}:{_SMTP_PORT} "
+    from_addr   = f"NBA Playoff Predictor <{_SMTP_USER}>"
+    masked_pass = _SMTP_PASS[:2] + "***" + _SMTP_PASS[-2:]
+    print(f"[SMTP] Connecting to {_SMTP_HOST}:{_SMTP_PORT} (SSL) "
           f"user={_SMTP_USER!r} pass={masked_pass}")
 
     msg = MIMEMultipart("alternative")
@@ -1464,26 +1469,41 @@ def _smtp_send_email(to: str, subject: str, html: str) -> None:
     msg["To"]      = to
     msg.attach(MIMEText(html, "html", "utf-8"))
 
+    ssl_ctx = ssl.create_default_context()
+
+    # ── Stage 1: connect ────────────────────────────────────────────────────
     try:
-        with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(_SMTP_USER, _SMTP_PASS)
-            server.sendmail(_SMTP_USER, [to], msg.as_bytes())
-        print(f"[SMTP] ✓ email delivered to={to!r}")
-    except smtplib.SMTPAuthenticationError as exc:
-        raise RuntimeError(
-            f"SMTP authentication failed — check SMTP_USER and SMTP_PASS. "
-            f"Use a 16-char Google App Password, not your account password. "
-            f"Detail: {exc}"
-        ) from exc
-    except smtplib.SMTPRecipientsRefused as exc:
-        raise RuntimeError(f"Recipient refused by SMTP server: {exc.recipients}") from exc
-    except smtplib.SMTPException as exc:
-        raise RuntimeError(f"SMTP error: {type(exc).__name__}: {exc}") from exc
+        server = smtplib.SMTP_SSL(_SMTP_HOST, _SMTP_PORT, context=ssl_ctx, timeout=20)
     except OSError as exc:
-        raise RuntimeError(f"Network/connection error reaching {_SMTP_HOST}:{_SMTP_PORT}: {exc}") from exc
+        raise RuntimeError(
+            f"[SMTP] Connection failed to {_SMTP_HOST}:{_SMTP_PORT} — "
+            f"network unreachable or port blocked. Detail: {exc}"
+        ) from exc
+
+    with server:
+        # ── Stage 2: authenticate ──────────────────────────────────────────
+        try:
+            server.login(_SMTP_USER, _SMTP_PASS)
+        except smtplib.SMTPAuthenticationError as exc:
+            raise RuntimeError(
+                f"[SMTP] Authentication failed for {_SMTP_USER!r}. "
+                f"Ensure SMTP_PASS is the 16-char Google App Password "
+                f"(not the account password). Detail: {exc}"
+            ) from exc
+
+        # ── Stage 3: send ─────────────────────────────────────────────────
+        try:
+            server.sendmail(_SMTP_USER, [to], msg.as_bytes())
+        except smtplib.SMTPRecipientsRefused as exc:
+            raise RuntimeError(
+                f"[SMTP] Recipient refused: {exc.recipients}"
+            ) from exc
+        except smtplib.SMTPException as exc:
+            raise RuntimeError(
+                f"[SMTP] Send failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    print(f"[SMTP] ✓ email delivered to={to!r}")
 
 
 def _send_daily_email_reminders() -> dict:
