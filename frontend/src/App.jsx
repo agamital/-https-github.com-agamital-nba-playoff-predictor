@@ -24,33 +24,42 @@ function initOneSignal() {
     const timeout = setTimeout(resolve, 10_000);
 
     window.OneSignalDeferred = window.OneSignalDeferred || [];
-    window.OneSignalDeferred.push(async (OneSignal) => {
-      try {
-        await OneSignal.init({
+    window.OneSignalDeferred.push((OneSignal) => {
+      // Wrap the entire callback in a promise chain so any synchronous throw
+      // or rejected promise from OneSignal.init() is caught here and can never
+      // propagate to React.  The app MUST boot even if OneSignal is down.
+      Promise.resolve()
+        .then(() => OneSignal.init({
           appId:                        _osAppId,
           allowLocalhostAsSecureOrigin: true,
-          // Disable every built-in OneSignal UI element.
-          // The custom toggle in Account Settings is the sole subscription controller.
-          notifyButton: { enable: false },
-          slidedown:    { prompts: []   },
-          customLink:   { enable: false },
+          notifyButton:        { enable: false },
+          slidedown:           { prompts: []   },
+          customLink:          { enable: false },
           welcomeNotification: { disable: true },
+        }))
+        .then(() => {
+          // Belt-and-suspenders: remove any DOM nodes the SDK injected despite
+          // config flags (dashboard settings can override SDK init config).
+          [
+            '#onesignal-bell-container',
+            '#onesignal-slidedown-container',
+            '#onesignal-popover-container',
+          ].forEach(sel => document.querySelector(sel)?.remove());
+        })
+        .catch((err) => {
+          // OneSignal failed (network error, 400, bad config…) — log and move on.
+          // The app renders normally; push notifications simply won't work.
+          console.warn('[OneSignal] init failed — push notifications disabled:', err?.message ?? err);
+        })
+        .finally(() => {
+          clearTimeout(timeout);
+          resolve(); // always unblock _osPromise so the rest of the app can run
+          // Re-register sw.js so badge handling stays active regardless of
+          // which service worker OneSignal may have claimed.
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+          }
         });
-        // Belt-and-suspenders: remove any DOM nodes the SDK may have injected
-        // despite the config flags (dashboard settings can override SDK config).
-        [
-          '#onesignal-bell-container',
-          '#onesignal-slidedown-container',
-          '#onesignal-popover-container',
-        ].forEach(sel => document.querySelector(sel)?.remove());
-      } catch { /* init error — SDK calls will silently no-op via window.OneSignal guard */ }
-      clearTimeout(timeout);
-      resolve();
-      // Re-register our sw.js so its badge-handling code stays active even if
-      // OneSignal's own worker registered at the same scope and claimed priority.
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js').catch(() => {});
-      }
     });
   });
 
@@ -91,9 +100,42 @@ function updateGlobalBadge(count) {
   }
 }
 
-// Safe login/logout wrappers — wait for init, then guard on os()
-const osLogin  = (id) => _osPromise.then(() => { try { os()?.login(String(id));  } catch {} });
-const osLogout = ()   => _osPromise.then(() => { try { os()?.logout();            } catch {} });
+// Safe login/logout wrappers — wait for init, then guard on os().
+// osLogin uses OneSignal.User as a version-check gate: v16 CDN exposes
+// OneSignal.User before login() is callable; if it's absent the SDK is
+// either still initialising or too old — skip silently rather than throw.
+// All branches are wrapped in try/catch + .catch() so a 400 "login-user"
+// network error from OneSignal's backend can never propagate to React.
+const osLogin = (id) =>
+  _osPromise
+    .then(() => {
+      const sdk = os();
+      if (!sdk) return;
+      if (sdk.User) {
+        // v16 CDN path — User namespace present
+        return Promise.resolve(sdk.login(String(id))).catch(() => {});
+      }
+      // Older builds may expose setExternalUserId
+      if (typeof sdk.setExternalUserId === 'function') {
+        return Promise.resolve(sdk.setExternalUserId(String(id))).catch(() => {});
+      }
+      // SDK is present but neither API is available — skip without error
+    })
+    .catch(() => {});
+
+const osLogout = () =>
+  _osPromise
+    .then(() => {
+      const sdk = os();
+      if (!sdk) return;
+      if (sdk.User && typeof sdk.logout === 'function') {
+        return Promise.resolve(sdk.logout()).catch(() => {});
+      }
+      if (typeof sdk.removeExternalUserId === 'function') {
+        return Promise.resolve(sdk.removeExternalUserId()).catch(() => {});
+      }
+    })
+    .catch(() => {});
 import { supabase } from './lib/supabase';
 import { picksRevealed, PICKS_REVEAL_DATE } from './scoringConstants';
 import './index.css';
