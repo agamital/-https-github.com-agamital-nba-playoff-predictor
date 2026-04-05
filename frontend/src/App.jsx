@@ -1371,26 +1371,49 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
   // ── OneSignal subscription state ─────────────────────────────────────────
   useEffect(() => {
     let alive = true;
+    let retryTimer = null;
 
-    // Read optedIn directly from the SDK.  OneSignal's optedIn already
-    // combines the browser permission state with the user's opt-in choice,
-    // so we don't need a separate permissionNative check.
-    const readState = () => {
+    const readState = (label = '') => {
       if (!alive || !window.OneSignal) return;
-      setSubscribed(window.OneSignal.User?.PushSubscription?.optedIn ?? false);
+      const opted = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
+      const perm  = Notification?.permission ?? 'unknown';
+      console.log(`[PushToggle] ${label} optedIn=${opted} permission=${perm}`);
+      setSubscribed(opted);
     };
 
-    // Stable handler so addEventListener/removeEventListener pair correctly.
-    const onChange = () => readState();
+    // Stable reference so add/removeEventListener pair correctly
+    const onChange = (event) => {
+      const opted = event?.current?.optedIn ?? window.OneSignal?.User?.PushSubscription?.optedIn ?? false;
+      console.log('[PushToggle] change event → optedIn=', opted);
+      if (alive) setSubscribed(opted);
+    };
 
     _osPromise.then(() => {
       if (!alive) return;
-      readState();
+
+      // Register change listener first so we catch any server-push update
       try { window.OneSignal?.User?.PushSubscription?.addEventListener('change', onChange); } catch {}
+
+      // Read immediately — may be false if OneSignal hasn't fetched server
+      // subscription status yet (it's async after init)
+      readState('init');
+
+      // Retry after 1.5 s: by then OneSignal has fetched the subscription from
+      // its servers and optedIn reflects the true persisted state
+      retryTimer = setTimeout(() => readState('retry-1500ms'), 1500);
     });
+
+    // Re-sync whenever the user returns to the tab/app (e.g. after granting
+    // permission in the system settings and switching back)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') readState('visibilitychange');
+    };
+    document.addEventListener('visibilitychange', onVisible);
 
     return () => {
       alive = false;
+      clearTimeout(retryTimer);
+      document.removeEventListener('visibilitychange', onVisible);
       try { window.OneSignal?.User?.PushSubscription?.removeEventListener('change', onChange); } catch {}
     };
   }, [userId]);
@@ -1444,26 +1467,39 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
   const isMobile   = window.innerWidth < 768;
 
   const handleSubscribeToggle = async () => {
+    if (subLoading) return;  // prevent double-tap while SDK is processing
     setSubLoading(true);
     try {
       await _osPromise;  // wait for SDK init (resolves in ≤10 s)
 
-      // Guard: if the script never loaded, bail silently
-      if (!window.OneSignal) { setSubLoading(false); return; }
+      if (!window.OneSignal) {
+        console.warn('[PushToggle] window.OneSignal not available');
+        return;
+      }
+
+      const before = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
+      console.log(`[PushToggle] toggle clicked — before=${before}`);
 
       if (subscribed) {
         await window.OneSignal.User.PushSubscription.optOut();
-        // Re-read actual state after the call settles
-        setSubscribed(window.OneSignal.User?.PushSubscription?.optedIn ?? false);
       } else {
-        // optIn() shows the browser permission prompt if not yet granted.
-        // Works on desktop Chrome/Firefox, Android Chrome, and iOS 16.4+ PWA.
+        // optIn() shows the native permission prompt if not yet granted
         await window.OneSignal.User.PushSubscription.optIn();
-        // Re-read: if user denied the prompt, optedIn will still be false
-        setSubscribed(window.OneSignal.User?.PushSubscription?.optedIn ?? false);
       }
-    } catch { /* permission prompt dismissed or SDK error — leave state as-is */ }
-    setSubLoading(false);
+
+      // Re-read after a tick so the SDK has time to settle
+      await new Promise(r => setTimeout(r, 300));
+      const after = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
+      console.log(`[PushToggle] after=${after}`);
+      setSubscribed(after);
+    } catch (err) {
+      console.warn('[PushToggle] error:', err);
+      // Re-read so UI matches actual state even on error
+      const actual = window.OneSignal?.User?.PushSubscription?.optedIn ?? false;
+      setSubscribed(actual);
+    } finally {
+      setSubLoading(false);
+    }
   };
 
   const goTo = (page) => { setOpen(false); onNavigate(page); };
@@ -1811,14 +1847,17 @@ function App() {
   // after the app is closed/backgrounded.
   useEffect(() => {
     const count = navBadgeCount;
+    console.log(`[Badge] navBadgeCount=${count} setAppBadge_supported=${'setAppBadge' in navigator}`);
 
     // ── Page context (immediate) ─────────────────────────────────────────────
     if ('setAppBadge' in navigator) {
       if (count > 0) {
-        navigator.setAppBadge(count).catch(() => {
-          // Some browsers only support the flag variant (no number)
-          navigator.setAppBadge().catch(() => {});
-        });
+        navigator.setAppBadge(count)
+          .then(() => console.log(`[Badge] setAppBadge(${count}) OK`))
+          .catch(() => {
+            // Some browsers only support the flag variant (no number)
+            navigator.setAppBadge().catch(() => {});
+          });
       } else {
         navigator.clearAppBadge().catch(() => {});
       }
