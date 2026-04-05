@@ -4,74 +4,55 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronRight, Share, Bell, Lock } from 'lucide-react';
 import * as api from './services/api';
 
-// ── OneSignal — CDN approach (OneSignalSDK.page.js loaded in index.html) ──────
-// window.OneSignal is set by the CDN script; all calls must guard on it.
-// _osPromise resolves when init() completes (or times out after 10 s) so every
-// SDK call is race-free even if the CDN script loads slowly.
-// initOneSignal() is called at module level so _osPromise is non-null before
-// any child component's useEffect tries to read PushSubscription state.
-let _osInitDone = false;
-let _osPromise  = null;
-const _osAppId  = import.meta.env.VITE_ONESIGNAL_APP_ID || 'c69b4c3e-79d1-48a4-8815-3ceabc1eae70';
+// ── OneSignal — fire-and-forget, completely isolated from app rendering ───────
+// The app renders immediately regardless of OneSignal's state.
+// _osPromise is a stable resolved promise — nothing in the render path awaits it.
+// OneSignal boots in the background via _bootOneSignal(); any failure is caught
+// and logged but never propagated to React.
+// login() / setExternalUserId() calls are intentionally omitted: they trigger
+// the 400 "login-user" operation which causes OneSignal's OperationRepo to
+// spam errors; broadcast notifications work fine without them.
+const _osAppId   = 'c69b4c3e-79d1-48a4-8815-3ceabc1eae70';
+const _osPromise = Promise.resolve();   // always resolved — never blocks the app
 
-function initOneSignal() {
-  if (_osInitDone) return _osPromise;
-  _osInitDone = true;
+// Safe accessor: returns the live SDK object, or null while loading / on error.
+const os = () => (window.OneSignal && !Array.isArray(window.OneSignal) ? window.OneSignal : null);
 
-  _osPromise = new Promise((resolve) => {
-    // 10-second failsafe: resolve even if the CDN script never loads so that
-    // awaiting _osPromise never hangs indefinitely (toggle stays responsive).
-    const timeout = setTimeout(resolve, 10_000);
+async function _bootOneSignal() {
+  try {
+    // Wait for the CDN script to fully replace window.OneSignal with the SDK.
+    // window.OneSignalDeferred starts as an array; becomes the real SDK after load.
+    let waited = 0;
+    while ((!os()) && waited < 10000) {
+      await new Promise(r => setTimeout(r, 200));
+      waited += 200;
+    }
+    if (!os()) { console.warn('[OneSignal] SDK not ready after 10 s — push disabled'); return; }
 
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    window.OneSignalDeferred.push((OneSignal) => {
-      // Wrap the entire callback in a promise chain so any synchronous throw
-      // or rejected promise from OneSignal.init() is caught here and can never
-      // propagate to React.  The app MUST boot even if OneSignal is down.
-      Promise.resolve()
-        .then(() => OneSignal.init({
-          appId:                        _osAppId,
-          allowLocalhostAsSecureOrigin: true,
-          notifyButton:        { enable: false },
-          slidedown:           { prompts: []   },
-          customLink:          { enable: false },
-          welcomeNotification: { disable: true },
-        }))
-        .then(() => {
-          // Belt-and-suspenders: remove any DOM nodes the SDK injected despite
-          // config flags (dashboard settings can override SDK init config).
-          [
-            '#onesignal-bell-container',
-            '#onesignal-slidedown-container',
-            '#onesignal-popover-container',
-          ].forEach(sel => document.querySelector(sel)?.remove());
-        })
-        .catch((err) => {
-          // OneSignal failed (network error, 400, bad config…) — log and move on.
-          // The app renders normally; push notifications simply won't work.
-          console.warn('[OneSignal] init failed — push notifications disabled:', err?.message ?? err);
-        })
-        .finally(() => {
-          clearTimeout(timeout);
-          resolve(); // always unblock _osPromise so the rest of the app can run
-          // Re-register sw.js so badge handling stays active regardless of
-          // which service worker OneSignal may have claimed.
-          if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js').catch(() => {});
-          }
-        });
+    await window.OneSignal.init({
+      appId:               _osAppId,
+      allowLocalhostAsSecureOrigin: true,
+      notifyButton:        { enable: false },
+      slidedown:           { prompts: []   },
+      customLink:          { enable: false },
+      welcomeNotification: { disable: true },
     });
-  });
 
-  return _osPromise;
+    // Remove any UI nodes the SDK injected despite config flags.
+    ['#onesignal-bell-container','#onesignal-slidedown-container','#onesignal-popover-container']
+      .forEach(sel => document.querySelector(sel)?.remove());
+
+    // Re-register sw.js so our badge handler stays active alongside OneSignal's worker.
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+  } catch (err) {
+    // Any OneSignal failure is swallowed here — the app continues normally.
+    console.warn('[OneSignal] init error (push notifications disabled):', err?.message ?? err);
+  }
 }
 
-// Called at module load — guarantees _osPromise is non-null before any mount.
-initOneSignal();
-
-// Safe accessor: returns window.OneSignal only when it is the live SDK object
-// (a plain array means the script hasn't executed yet).
-const os = () => (window.OneSignal && !Array.isArray(window.OneSignal) ? window.OneSignal : null);
+// Boot in the background — intentionally not awaited.
+_bootOneSignal();
 
 // ── Persistent badging ────────────────────────────────────────────────────────
 // updateGlobalBadge(count) is the single source of truth for the home-screen
@@ -100,46 +81,6 @@ function updateGlobalBadge(count) {
   }
 }
 
-// Safe login/logout wrappers — wait for init, then guard on os().
-//
-// IMPORTANT: osLogin() only calls sdk.login() when the user already has an
-// active push subscription (optedIn === true).  Calling login() before the
-// device is registered on OneSignal's servers (onesignalId still "local-…")
-// always produces a 400 "login-user" error.  The correct flow is:
-//   1. User opts in  →  device gets a real onesignalId on OS servers
-//   2. THEN call login(externalId) to associate the device with our user
-// osLogin() is therefore called from handleSubscribeToggle after optIn(),
-// not on every page mount / user-state change.
-const osLogin = (id) =>
-  _osPromise
-    .then(() => {
-      const sdk = os();
-      if (!sdk) return;
-      // Skip if the device is not yet subscribed — login() will 400.
-      const optedIn = sdk.User?.PushSubscription?.optedIn ?? false;
-      if (!optedIn) return;
-      if (sdk.User) {
-        return Promise.resolve(sdk.login(String(id))).catch(() => {});
-      }
-      if (typeof sdk.setExternalUserId === 'function') {
-        return Promise.resolve(sdk.setExternalUserId(String(id))).catch(() => {});
-      }
-    })
-    .catch(() => {});
-
-const osLogout = () =>
-  _osPromise
-    .then(() => {
-      const sdk = os();
-      if (!sdk) return;
-      if (sdk.User && typeof sdk.logout === 'function') {
-        return Promise.resolve(sdk.logout()).catch(() => {});
-      }
-      if (typeof sdk.removeExternalUserId === 'function') {
-        return Promise.resolve(sdk.removeExternalUserId()).catch(() => {});
-      }
-    })
-    .catch(() => {});
 import { supabase } from './lib/supabase';
 import { picksRevealed, PICKS_REVEAL_DATE } from './scoringConstants';
 import './index.css';
@@ -1577,9 +1518,6 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
       const after = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
       localStorage.setItem('os_push_opted_in', String(after));
       setSubscribed(after);
-      // Associate external user ID now that the device is registered on
-      // OneSignal's servers.  This is the only safe moment to call login().
-      if (after && userId) osLogin(userId);
     } catch (err) {
       console.warn('[PushToggle] error:', err);
       const actual = window.OneSignal?.User?.PushSubscription?.optedIn ?? false;
@@ -1991,12 +1929,6 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Sync OneSignal external ID whenever user changes — waits for SDK ready
-  useEffect(() => {
-    if (!currentUser) { osLogout(); return; }
-    osLogin(currentUser.user_id);
-  }, [currentUser?.user_id]);
-
   const handleLogin = (user) => {
     setCurrentUser(user);
     localStorage.setItem('nba_user', JSON.stringify(user));
@@ -2004,7 +1936,6 @@ function App() {
   };
 
   const handleLogout = () => {
-    osLogout();
     setCurrentUser(null);
     localStorage.removeItem('nba_user');
     setCurrentPage('home');
