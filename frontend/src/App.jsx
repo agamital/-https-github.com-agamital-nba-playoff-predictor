@@ -4,26 +4,65 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronRight, Share, Bell, Lock } from 'lucide-react';
 import * as api from './services/api';
 
-// ── OneSignal — fire-and-forget, completely isolated from app rendering ───────
-// The app renders immediately regardless of OneSignal's state.
-// _osPromise is a stable resolved promise — nothing in the render path awaits it.
-// OneSignal boots in the background via _bootOneSignal(); any failure is caught
-// and logged but never propagated to React.
-// login() / setExternalUserId() calls are intentionally omitted: they trigger
-// the 400 "login-user" operation which causes OneSignal's OperationRepo to
-// spam errors; broadcast notifications work fine without them.
+// ── OneSignal v16 — fire-and-forget, isolated from app rendering ──────────────
+//
+// Architecture:
+//   • _osPromise = Promise.resolve() — always resolved immediately.
+//     Nothing in the render path awaits OneSignal; the app boots unconditionally.
+//   • _bootOneSignal() polls for the CDN SDK, calls init(), then registers an
+//     event-based subscription listener.  Any failure is caught and logged.
+//   • osLinkUser(id) links a confirmed user ID to their subscription ONLY when
+//     the device already has a permanent onesignalId (not a "local-…" temp ID).
+//     Calling login() before that causes the OperationRepo 400 race condition.
+//
 const _osAppId   = 'c69b4c3e-79d1-48a4-8815-3ceabc1eae70';
-const _osPromise = Promise.resolve();   // always resolved — never blocks the app
+const _osPromise = Promise.resolve();  // always resolved — never blocks the app
 
-// Safe accessor: returns the live SDK object, or null while loading / on error.
+// Safe accessor — null while CDN script is loading or if init fails.
 const os = () => (window.OneSignal && !Array.isArray(window.OneSignal) ? window.OneSignal : null);
+
+// Returns true only when the device has a confirmed (non-temporary) onesignalId.
+// A "local-…" prefix means the device hasn't synced with OneSignal's servers yet;
+// calling login() at this point triggers the 400 race condition.
+const _hasPermId = () => {
+  try {
+    const oid = os()?.User?.onesignalId ?? '';
+    return oid.length > 0 && !oid.startsWith('local-');
+  } catch { return false; }
+};
+
+// Safely link our app's user ID to the OneSignal subscription.
+// Guards: SDK ready + subscribed + permanent onesignalId.
+// All errors are swallowed — a login failure must never crash the app.
+function osLinkUser(externalId) {
+  if (!externalId) return;
+  try {
+    const sdk = os();
+    if (!sdk) return;
+    if (!_hasPermId()) {
+      console.log('[OneSignal] onesignalId still local — skipping login until confirmed');
+      return;
+    }
+    const optedIn = sdk.User?.PushSubscription?.optedIn ?? false;
+    if (!optedIn) return;
+    // v16 SDK: login() associates the external user ID with this device.
+    Promise.resolve(sdk.login(String(externalId))).catch((err) => {
+      console.warn('[OneSignal] login() failed (non-fatal):', err?.message ?? err);
+    });
+  } catch (err) {
+    console.warn('[OneSignal] osLinkUser error (non-fatal):', err?.message ?? err);
+  }
+}
+
+// Pending user ID — set by the app when a user logs in, consumed once the
+// subscription change event fires with a confirmed permanent ID.
+let _pendingLinkId = null;
 
 async function _bootOneSignal() {
   try {
-    // Wait for the CDN script to fully replace window.OneSignal with the SDK.
-    // window.OneSignalDeferred starts as an array; becomes the real SDK after load.
+    // Poll until the CDN script replaces window.OneSignal with the live SDK.
     let waited = 0;
-    while ((!os()) && waited < 10000) {
+    while (!os() && waited < 10000) {
       await new Promise(r => setTimeout(r, 200));
       waited += 200;
     }
@@ -38,20 +77,39 @@ async function _bootOneSignal() {
       welcomeNotification: { disable: true },
     });
 
-    // Remove any UI nodes the SDK injected despite config flags.
+    // Remove any injected UI nodes (dashboard settings can override SDK config).
     ['#onesignal-bell-container','#onesignal-slidedown-container','#onesignal-popover-container']
       .forEach(sel => document.querySelector(sel)?.remove());
 
-    // Re-register sw.js so our badge handler stays active alongside OneSignal's worker.
+    // Re-register sw.js so our badge-handling logic stays active.
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
+    // ── Event-based login: only link user once the device gets a real ID ──────
+    // The 'change' event fires when subscription state changes (opt-in, opt-out,
+    // or when the SDK syncs a local- ID to a permanent server-side ID).
+    // At this point onesignalId is guaranteed to be a real UUID — safe to login().
+    try {
+      window.OneSignal.User.PushSubscription.addEventListener('change', (event) => {
+        try {
+          const optedIn = event?.current?.optedIn ?? false;
+          if (optedIn && _hasPermId() && _pendingLinkId) {
+            console.log('[OneSignal] subscription confirmed — linking user', _pendingLinkId);
+            osLinkUser(_pendingLinkId);
+          }
+        } catch { /* swallow */ }
+      });
+    } catch { /* SDK version may not support this — skip silently */ }
+
+    // Also attempt immediately in case the user was already subscribed before
+    // this page load (returning visitor with push already granted).
+    if (_pendingLinkId) osLinkUser(_pendingLinkId);
+
   } catch (err) {
-    // Any OneSignal failure is swallowed here — the app continues normally.
-    console.warn('[OneSignal] init error (push notifications disabled):', err?.message ?? err);
+    console.warn('[OneSignal] init error (push disabled for this session):', err?.message ?? err);
   }
 }
 
-// Boot in the background — intentionally not awaited.
+// Boot asynchronously — intentionally not awaited, never blocks rendering.
 _bootOneSignal();
 
 // ── Persistent badging ────────────────────────────────────────────────────────
@@ -1518,6 +1576,9 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
       const after = window.OneSignal.User?.PushSubscription?.optedIn ?? false;
       localStorage.setItem('os_push_opted_in', String(after));
       setSubscribed(after);
+      // Attempt user linking now — device may have a permanent ID by this point.
+      // osLinkUser() guards on _hasPermId() so it's safe to call eagerly.
+      if (after && _pendingLinkId) osLinkUser(_pendingLinkId);
     } catch (err) {
       console.warn('[PushToggle] error:', err);
       const actual = window.OneSignal?.User?.PushSubscription?.optedIn ?? false;
@@ -1929,6 +1990,13 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Keep _pendingLinkId in sync with the logged-in user.
+  // osLinkUser() uses it once the device has a permanent onesignalId.
+  useEffect(() => {
+    _pendingLinkId = currentUser?.user_id ? String(currentUser.user_id) : null;
+    if (_pendingLinkId) osLinkUser(_pendingLinkId);
+  }, [currentUser?.user_id]);
+
   const handleLogin = (user) => {
     setCurrentUser(user);
     localStorage.setItem('nba_user', JSON.stringify(user));
@@ -1936,6 +2004,7 @@ function App() {
   };
 
   const handleLogout = () => {
+    _pendingLinkId = null;
     setCurrentUser(null);
     localStorage.removeItem('nba_user');
     setCurrentPage('home');
