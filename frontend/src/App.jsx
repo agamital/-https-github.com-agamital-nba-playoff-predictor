@@ -1803,25 +1803,35 @@ function App() {
   });
   const navBadgeCount = _navSummary?.total ?? 0;
 
-  // Sync app-icon badge on the home screen.
-  // 1. Call navigator.setAppBadge() directly from the page (works while app is open).
-  // 2. postMessage the count to the service worker so it can set the badge from
-  //    SW context — this is what makes the badge persist on the home-screen icon
-  //    when the app is closed or backgrounded (the only time you see the icon).
+  // Sync the home-screen app icon badge.
+  // navigator.setAppBadge() from the page context sets the badge while the app
+  // is open.  We also post to the service worker via .ready (not .controller —
+  // .controller is null on first load and may point to OneSignal's SW instead
+  // of ours) so sw.js can call self.registration.setAppBadge() which persists
+  // after the app is closed/backgrounded.
   useEffect(() => {
-    // Page context — immediate update while app is open
+    const count = navBadgeCount;
+
+    // ── Page context (immediate) ─────────────────────────────────────────────
     if ('setAppBadge' in navigator) {
-      if (navBadgeCount > 0) {
-        navigator.setAppBadge(navBadgeCount).catch(() => {});
+      if (count > 0) {
+        navigator.setAppBadge(count).catch(() => {
+          // Some browsers only support the flag variant (no number)
+          navigator.setAppBadge().catch(() => {});
+        });
       } else {
         navigator.clearAppBadge().catch(() => {});
       }
     }
-    // Service worker context — persists badge after app is closed
-    navigator.serviceWorker?.controller?.postMessage({
-      type: 'SET_BADGE',
-      count: navBadgeCount,
-    });
+
+    // ── Service worker context (persists when app is closed) ─────────────────
+    // Use .ready instead of .controller: .ready resolves when our sw.js is
+    // active regardless of whether another SW (OneSignal) controls the page.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready
+        .then(reg => reg.active?.postMessage({ type: 'SET_BADGE', count }))
+        .catch(() => {});
+    }
   }, [navBadgeCount]);
 
   // Capture beforeinstallprompt once so any button in the tree can use it

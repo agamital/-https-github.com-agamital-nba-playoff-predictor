@@ -30,23 +30,25 @@ self.addEventListener('activate', event => {
 });
 
 // ── App Badge API ────────────────────────────────────────────────────────────
-// The page posts { type:'SET_BADGE', count } whenever the missing-picks count
-// changes.  Setting the badge from the service worker context makes it persist
-// on the home-screen icon even when the app is closed / backgrounded.
+// The page posts { type:'SET_BADGE', count } via navigator.serviceWorker.ready
+// so this handler runs in the SW context where self.registration.setAppBadge()
+// persists the badge on the home-screen icon even when the app is closed.
 self.addEventListener('message', event => {
   if (event.data?.type !== 'SET_BADGE') return;
   const n = Number(event.data.count) || 0;
   if (n > 0) {
-    navigator.setAppBadge?.(n).catch(() => {});
+    // self.registration.setAppBadge is the correct SW-context Badge API.
+    // Fall back to navigator.setAppBadge for older SW implementations.
+    (self.registration.setAppBadge?.(n) ?? navigator.setAppBadge?.(n))?.catch(() => {});
   } else {
-    navigator.clearAppBadge?.().catch(() => {});
+    (self.registration.clearAppBadge?.() ?? navigator.clearAppBadge?.())?.catch(() => {});
   }
 });
 
 // Clear badge when the user taps any notification and opens the app.
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  navigator.clearAppBadge?.().catch(() => {});
+  (self.registration.clearAppBadge?.() ?? navigator.clearAppBadge?.())?.catch(() => {});
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
       const existing = list.find(c => c.url.startsWith(self.location.origin));
