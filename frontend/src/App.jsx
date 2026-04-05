@@ -130,8 +130,8 @@ async function _bootOneSignal() {
   }
 }
 
-// Boot asynchronously — intentionally not awaited, never blocks rendering.
-_bootOneSignal();
+// _bootOneSignal() DISABLED — re-enable once core site is stable.
+// _bootOneSignal();
 
 // ── Persistent badging ────────────────────────────────────────────────────────
 // updateGlobalBadge(count) is the single source of truth for the home-screen
