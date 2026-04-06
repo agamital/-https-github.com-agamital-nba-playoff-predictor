@@ -1370,9 +1370,9 @@ def _send_missing_picks_alert() -> None:
             except Exception as e:
                 print(f"[Alert] OneSignal push error: {e}")
 
-        # ── Resend email ──────────────────────────────────────────────────
+        # ── Gmail email — use the same full per-user path as daily reminders ──
         if has_email:
-            threading.Thread(target=_send_email_reminders, args=(rows,), daemon=True).start()
+            threading.Thread(target=_send_daily_email_reminders, daemon=True).start()
 
     except Exception as e:
         print(f"[Alert] Missing-picks alert error: {e}")
@@ -1568,17 +1568,19 @@ def _send_daily_email_reminders() -> dict:
         conn = get_db_conn()
         c = conn.cursor()
 
-        # ── 1. Open series (no games played yet in this series) ──────────
+        # ── 1. Open series: active (unlocked) + not yet completed ────────
+        # status = 'active' means picks are still open; no need to also
+        # filter on home_wins + away_wins = 0 (that would skip series
+        # where a game has been played but the series is still unlocked).
         c.execute("""
             SELECT id, home_team_name, away_team_name, round
             FROM series
             WHERE season = '2026'
               AND status = 'active'
-              AND COALESCE(home_wins, 0) + COALESCE(away_wins, 0) = 0
         """)
         open_series = c.fetchall()   # (id, home_name, away_name, round)
 
-        # ── 2. Open play-in games (not yet decided) ───────────────────────
+        # ── 2. Open play-in games: not yet decided ────────────────────────
         c.execute("""
             SELECT pg.id, ht.name, at.name
             FROM playin_games pg
@@ -1586,6 +1588,7 @@ def _send_daily_email_reminders() -> dict:
             JOIN teams at ON at.id = pg.team2_id
             WHERE pg.season = '2026'
               AND pg.winner_id IS NULL
+              AND pg.status = 'active'
         """)
         open_playin = c.fetchall()   # (id, team1_name, team2_name)
 
@@ -3650,6 +3653,18 @@ async def admin_send_test_email(request: Request, to: str):
         err_str = f"{type(e).__name__}: {e}"
         print(f"[TestEmail] FAILED (unexpected) — {err_str}")
         raise HTTPException(status_code=500, detail=err_str)
+
+
+@app.post("/api/admin/run-reminder-now")
+async def admin_run_reminder_now():
+    """
+    Synchronously run _send_daily_email_reminders() and return its result.
+    Use this to diagnose why daily reminders aren't sending — the response
+    shows how many users were eligible, how many emails were sent, and any
+    errors, without waiting for the 10:00 UTC cron.
+    """
+    result = _send_daily_email_reminders()
+    return result
 
 
 @app.post("/api/admin/standings/push")
