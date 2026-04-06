@@ -317,13 +317,16 @@ const RecentGamesSection = () => {
   const { data: gwpData, isLoading: gwpLoading } = useQuery({
     queryKey: ['gamesWithPerformers', yesterday],
     queryFn:  () => api.getGamesWithPerformers(yesterday),
-    staleTime: 30 * 60 * 1000,
+    staleTime: 0,              // always refetch on mount — boxscores can arrive late
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 
   const { data: todayData, isLoading: todayLoading } = useQuery({
     queryKey: ['todayGames', today],
     queryFn:  () => api.getTodayGames(today),
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
+    refetchOnMount: true,
     refetchInterval: 5 * 60 * 1000,
   });
 
