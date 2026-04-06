@@ -3176,6 +3176,32 @@ async def startup():
         max_instances=1,
     )
 
+    # ── 2b) Boxscore catch-up — 08:00 UTC ──────────────────────────────────
+    # Late NBA games (10:30 PM ET start) finish around 01:00–05:00 UTC.
+    # The 04:00 UTC daily sync can miss them. This job re-syncs yesterday's
+    # boxscores at 08:00 UTC to capture any games that finished after 04:00.
+    def _boxscore_catchup():
+        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+        today_utc = datetime.utcnow().strftime('%Y-%m-%d')
+        for _date, _label in [(yesterday, 'yesterday'), (today_utc, 'today')]:
+            try:
+                bx = sync_daily_boxscores(date_str=_date, season='2026',
+                                          force=True, triggered_by='catchup_0800')
+                print(f"[Catchup] Boxscore ({_label}/{_date}): "
+                      f"games={bx.get('games_processed',0)} "
+                      f"players={bx.get('players_upserted',0)}")
+            except Exception as e:
+                print(f"[Catchup] Boxscore ({_label}) ERROR: {type(e).__name__}: {e}")
+
+    _scheduler.add_job(
+        _boxscore_catchup,
+        CronTrigger.from_crontab('0 8 * * *'),   # 08:00 UTC = after all US games finish
+        id='boxscore_catchup',
+        replace_existing=True,
+        misfire_grace_time=600,
+        max_instances=1,
+    )
+
     # ── 3) Missing-picks push alert — 06:00 UTC = 09:00 Jerusalem (IDT) ──
     _scheduler.add_job(
         _send_missing_picks_alert,
@@ -3216,6 +3242,25 @@ async def startup():
 
     # Fire-and-forget initial sync so DB is populated shortly after boot
     threading.Thread(target=_initial_standings_sync, daemon=True).start()
+
+    # Backfill yesterday + today boxscores on every startup (force=True) so
+    # a Railway redeploy always catches up on any missed games immediately.
+    def _startup_boxscore_backfill():
+        import time as _time
+        _time.sleep(15)  # let DB connections settle
+        for _date, _lbl in [
+            ((datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d'), 'yesterday'),
+            (datetime.utcnow().strftime('%Y-%m-%d'), 'today'),
+        ]:
+            try:
+                bx = sync_daily_boxscores(date_str=_date, season='2026',
+                                          force=True, triggered_by='startup_backfill')
+                print(f"[Startup] Boxscore backfill ({_lbl}/{_date}): "
+                      f"games={bx.get('games_processed',0)} players={bx.get('players_upserted',0)}")
+            except Exception as _e:
+                print(f"[Startup] Boxscore backfill ({_lbl}) ERROR: {_e}")
+
+    threading.Thread(target=_startup_boxscore_backfill, daemon=True).start()
     print("Server startup complete")
 
 
@@ -5284,15 +5329,18 @@ async def get_games_with_performers(date: str | None = None, season: str = "2026
                 print(f"[GamesWithPerformers] Both scoreboards failed: {e}")
 
     # ── 3. Merge by game_id ─────────────────────────────────────────────
+    # Iterate over the UNION of DB games and API scoreboard games so that
+    # games show up even when player_game_stats hasn't been synced yet.
+    all_gids = sorted(set(performers_by_game.keys()) | set(api_games.keys()))
     result = []
-    for gid in sorted(performers_by_game.keys()):
+    for gid in all_gids:
         info = dict(api_games.get(gid) or {"id": gid, "completed": True,
                                            "status": "Final", "clock": None,
                                            "period": 0, "broadcast": ""})
 
         # Derive home/away stubs from performers when API data is absent
         if not (info.get("home") or {}).get("abbr"):
-            teams = list(dict.fromkeys(p['team_abbr'] for p in performers_by_game[gid]))
+            teams = list(dict.fromkeys(p['team_abbr'] for p in performers_by_game.get(gid, [])))
             info["away"] = {"abbr": teams[0] if teams else "", "score": None, "winner": False}
             info["home"] = {"abbr": teams[1] if len(teams) > 1 else "", "score": None, "winner": False}
 
@@ -5312,7 +5360,7 @@ async def get_games_with_performers(date: str | None = None, season: str = "2026
                                 "score": away_total,
                                 "winner": bool(away_total > (home_total or 0))}
 
-        result.append({**info, "performers": performers_by_game[gid]})
+        result.append({**info, "performers": performers_by_game.get(gid, [])})
 
     return {"date": date, "games": result, "count": len(result)}
 
