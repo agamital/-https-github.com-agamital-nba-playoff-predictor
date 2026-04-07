@@ -1573,10 +1573,12 @@ def _send_daily_email_reminders() -> dict:
         # filter on home_wins + away_wins = 0 (that would skip series
         # where a game has been played but the series is still unlocked).
         c.execute("""
-            SELECT id, home_team_name, away_team_name, round
-            FROM series
-            WHERE season = '2026'
-              AND status = 'active'
+            SELECT s.id, ht.name, at.name, s.round
+            FROM series s
+            JOIN teams ht ON s.home_team_id = ht.id
+            JOIN teams at ON s.away_team_id = at.id
+            WHERE s.season = '2026'
+              AND s.status = 'active'
         """)
         open_series = c.fetchall()   # (id, home_name, away_name, round)
 
@@ -5399,7 +5401,39 @@ async def get_game_boxscore(espn_game_id: str, season: str = "2026"):
     conn.close()
 
     if not rows:
-        raise HTTPException(404, "No boxscore data found for this game")
+        # DB has no data — try live API fetch as fallback
+        print(f"[Boxscore] No DB rows for game {espn_game_id} — trying live API fetch")
+        try:
+            api_players = _fetch_boxscore_primary(espn_game_id)
+        except Exception as e:
+            print(f"[Boxscore] Live API fetch failed for {espn_game_id}: {e}")
+            api_players = []
+
+        if not api_players:
+            raise HTTPException(404, "No boxscore data found for this game")
+
+        by_team: dict = defaultdict(list)
+        for p in api_players:
+            by_team[p['team_abbr']].append({
+                'player_name': p.get('player_name', ''),
+                'minutes':     round(float(p.get('minutes') or 0), 1),
+                'points':      p.get('points', 0),
+                'rebounds':    p.get('rebounds', 0),
+                'assists':     p.get('assists', 0),
+                'steals':      p.get('steals', 0),
+                'blocks':      p.get('blocks', 0),
+                'fg3m':        p.get('fg3m', 0),
+                'turnovers':   p.get('turnovers', 0),
+                'fgm':         p.get('fgm', 0),
+                'fga':         p.get('fga', 0),
+                'plus_minus':  p.get('plus_minus', 0),
+            })
+
+        return {
+            "espn_game_id": espn_game_id,
+            "teams": [{"team_abbr": abbr, "players": players}
+                      for abbr, players in by_team.items()],
+        }
 
     by_team: dict = defaultdict(list)
     for row in rows:
