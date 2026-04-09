@@ -3430,143 +3430,74 @@ async def admin_standings_sync():
 @app.post("/api/admin/player-stats/sync")
 async def admin_player_stats_sync():
     """
-    Fetch full-season per-game averages from ESPN's public stats API and
-    upsert into player_stats. Works on Railway — no API key needed.
-    ESPN athlete IDs are used as player_id so they match boxscore data.
+    Aggregate per-game averages directly from player_game_stats and upsert
+    into player_stats. Pure SQL — no external API, no timeout risk.
+    Players with < 5 games are excluded (insufficient sample).
     """
-    import concurrent.futures
-    import requests as _rq
-
-    ESPN_STATS_URL = (
-        "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba"
-        "/statistics/byathlete"
-    )
-
-    def _safe(v, default=0.0):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return default
-
-    def _fetch_all():
-        """Paginate ESPN byathlete stats endpoint → list of player dicts."""
-        all_players = []
-        page = 1
-        while True:
-            resp = _rq.get(ESPN_STATS_URL, params={
-                "season":     2026,
-                "seasontype": 2,      # regular season
-                "limit":      100,
-                "page":       page,
-            }, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-
-            # Build label→index map from top-level categories
-            label_idx: dict = {}
-            offset = 0
-            for cat in data.get("categories", []):
-                for i, lbl in enumerate(cat.get("labels", [])):
-                    label_idx[lbl] = offset + i
-                offset += len(cat.get("labels", []))
-
-            athletes = data.get("athletes", [])
-            if not athletes:
-                break
-
-            for item in athletes:
-                ath  = item.get("athlete", {})
-                pid  = ath.get("id", "")
-                name = ath.get("displayName", "")
-                team = ath.get("team", {}).get("abbreviation", "")
-                if not pid or not name:
-                    continue
-
-                # Flatten totals/values across athlete categories
-                vals: list = []
-                for cat in item.get("categories", []):
-                    vals.extend(cat.get("totals", cat.get("values", [])))
-
-                def g(lbl, default=0.0):
-                    idx = label_idx.get(lbl)
-                    if idx is None or idx >= len(vals):
-                        return default
-                    return _safe(vals[idx], default)
-
-                # ESPN labels for per-game averages
-                all_players.append({
-                    "id":   pid,
-                    "name": name,
-                    "team": team,
-                    "gp":   int(g("GP") or g("gamesPlayed")),
-                    "ppg":  g("avgPoints",   g("PTS")),
-                    "apg":  g("avgAssists",  g("AST")),
-                    "rpg":  g("avgRebounds", g("REB")),
-                    "spg":  g("avgSteals",   g("STL")),
-                    "bpg":  g("avgBlocks",   g("BLK")),
-                    "fg3m": g("avg3PointFieldGoalsMade", g("3PM")),
-                })
-
-            page_count = data.get("pageCount", 1)
-            print(f"[PlayerSync] ESPN page {page}/{page_count} — {len(athletes)} athletes")
-            if page >= page_count:
-                break
-            page += 1
-
-        return all_players
-
-    def _do_sync():
-        players = _fetch_all()
-        if not players:
-            return {"success": False, "error": "No players returned from ESPN stats API"}
-
-        conn      = get_db_conn()
-        c         = conn.cursor()
-        synced_at = datetime.utcnow()
-        count     = 0
-
-        for p in players:
-            try:
-                pid = int(p["id"])
-            except (ValueError, TypeError):
-                continue
-            if not p["name"]:
-                continue
-
-            c.execute('''
-                INSERT INTO player_stats
-                    (player_id, player_name, team_abbreviation, season,
-                     games_played, pts_per_game, ast_per_game, reb_per_game,
-                     stl_per_game, blk_per_game, fg3m_per_game, updated_at)
-                VALUES (%s, %s, %s, '2026', %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (player_id, season) DO UPDATE SET
-                    player_name       = EXCLUDED.player_name,
-                    team_abbreviation = EXCLUDED.team_abbreviation,
-                    games_played      = EXCLUDED.games_played,
-                    pts_per_game      = EXCLUDED.pts_per_game,
-                    ast_per_game      = EXCLUDED.ast_per_game,
-                    reb_per_game      = EXCLUDED.reb_per_game,
-                    stl_per_game      = EXCLUDED.stl_per_game,
-                    blk_per_game      = EXCLUDED.blk_per_game,
-                    fg3m_per_game     = EXCLUDED.fg3m_per_game,
-                    updated_at        = EXCLUDED.updated_at
-            ''', (pid, p["name"], p["team"], p["gp"],
-                  min(round(p["ppg"], 1), 60), min(round(p["apg"], 1), 30),
-                  min(round(p["rpg"], 1), 30), min(round(p["spg"], 1), 10),
-                  min(round(p["bpg"], 1), 10), min(round(p["fg3m"], 1), 15),
-                  synced_at))
-            count += 1
-
+    conn = get_db_conn()
+    c    = conn.cursor()
+    try:
+        c.execute('''
+            INSERT INTO player_stats
+                (player_id, player_name, team_abbreviation, season,
+                 games_played, pts_per_game, ast_per_game, reb_per_game,
+                 stl_per_game, blk_per_game, fg3m_per_game, updated_at)
+            SELECT
+                COALESCE(ps.player_id, 0),
+                agg.player_name,
+                agg.team_abbr,
+                '2026',
+                agg.gp,
+                agg.ppg,
+                agg.apg,
+                agg.rpg,
+                agg.spg,
+                agg.bpg,
+                agg.fg3m,
+                NOW()
+            FROM (
+                SELECT
+                    player_name,
+                    MAX(team_abbr)                                          AS team_abbr,
+                    COUNT(DISTINCT espn_game_id)                            AS gp,
+                    ROUND(AVG(points)::numeric,    1)                       AS ppg,
+                    ROUND(AVG(assists)::numeric,   1)                       AS apg,
+                    ROUND(AVG(rebounds)::numeric,  1)                       AS rpg,
+                    ROUND(AVG(steals)::numeric,    1)                       AS spg,
+                    ROUND(AVG(blocks)::numeric,    1)                       AS bpg,
+                    ROUND(AVG(COALESCE(fg3m, 0))::numeric, 1)               AS fg3m
+                FROM player_game_stats
+                WHERE season = '2026'
+                  AND (points > 0 OR assists > 0 OR rebounds > 0)
+                GROUP BY player_name
+                HAVING COUNT(DISTINCT espn_game_id) >= 5
+            ) agg
+            LEFT JOIN player_stats ps
+                ON LOWER(ps.player_name) = LOWER(agg.player_name)
+               AND ps.season = '2026'
+            ON CONFLICT (player_id, season) DO UPDATE SET
+                player_name       = EXCLUDED.player_name,
+                team_abbreviation = EXCLUDED.team_abbreviation,
+                games_played      = EXCLUDED.games_played,
+                pts_per_game      = EXCLUDED.pts_per_game,
+                ast_per_game      = EXCLUDED.ast_per_game,
+                reb_per_game      = EXCLUDED.reb_per_game,
+                stl_per_game      = EXCLUDED.stl_per_game,
+                blk_per_game      = EXCLUDED.blk_per_game,
+                fg3m_per_game     = EXCLUDED.fg3m_per_game,
+                updated_at        = EXCLUDED.updated_at
+        ''')
+        updated = c.rowcount
         conn.commit()
+        print(f"[PlayerSync] Aggregated from player_game_stats → {updated} rows updated")
+        return {"success": True, "source": "player_game_stats", "count": updated,
+                "synced_at": datetime.utcnow().isoformat()}
+    except Exception as e:
+        conn.rollback()
+        print(f"[PlayerSync] ERROR: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
         conn.close()
-        print(f"[PlayerSync] ESPN sync done — {count} players upserted")
-        return {"success": True, "source": "ESPN stats API", "count": count,
-                "synced_at": synced_at.isoformat()}
-
-    loop = asyncio.get_event_loop()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        result = await loop.run_in_executor(pool, _do_sync)
-    return result
 
 
 @app.post("/api/admin/cleanup-duplicate-players")
