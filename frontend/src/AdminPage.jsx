@@ -1216,6 +1216,55 @@ const _NBA_BROWSER_HEADERS = {
   'x-nba-stats-token': 'true',
 };
 
+const PlayerStatsSyncCard = ({ addToast }) => {
+  const [syncing, setSyncing] = useState(false);
+  const [result, setResult]   = useState(null);
+
+  const run = async () => {
+    setSyncing(true);
+    setResult(null);
+    try {
+      const res = await api.syncPlayerStats();
+      setResult(res);
+      addToast(res.success ? `Player stats synced ✓ (${res.count || 0} players)` : `Sync failed: ${res.error}`, res.success ? 'success' : 'error');
+    } catch (e) {
+      const msg = e.response?.data?.detail || e.message;
+      setResult({ error: msg });
+      addToast('Sync error: ' + msg, 'error');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 mb-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <h3 className="text-white font-bold text-base">Player Stats Sync</h3>
+          <p className="text-slate-400 text-xs mt-0.5">
+            Syncs PPG / APG / RPG from NBA API into the player_stats table.
+            Run this to fix MVP search ordering by PPG.
+          </p>
+        </div>
+        <button
+          onClick={run}
+          disabled={syncing}
+          className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white transition-colors"
+        >
+          {syncing ? 'Syncing…' : 'Sync Now'}
+        </button>
+      </div>
+      {result && (
+        <div className="mt-3 p-3 rounded-lg bg-slate-800 text-xs font-mono text-slate-300 break-all">
+          {result.error
+            ? <span className="text-red-400">{result.error}</span>
+            : <span className="text-green-400">{JSON.stringify(result)}</span>}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ReminderCard = ({ addToast }) => {
   const [running, setRunning]     = useState(false);
   const [testing, setTesting]     = useState(false);
@@ -1818,6 +1867,7 @@ const AdminPage = ({ currentUser }) => {
       </div>
 
       <UserManagementCard currentUser={currentUser} addToast={addToast} />
+      <PlayerStatsSyncCard addToast={addToast} />
       <ReminderCard addToast={addToast} />
       <StandingsSyncCard addToast={addToast} onPlayinRefreshed={setPlayin} />
       <FuturesLockCard />

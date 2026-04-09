@@ -2698,8 +2698,9 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
         summary['games_processed'] += 1
 
     # ── Step 5: Recompute per-game averages from player_game_stats ──────────
-    # This ensures pts_per_game (and other stats) in player_stats are always
-    # correct even when _sync_player_stats_job() (NBA API) hasn't run.
+    # Match by espn_player_id first; fall back to player name so rows that
+    # came from _sync_player_stats_job() (NBA API, no espn_player_id) also
+    # get their PPG updated.
     try:
         c.execute(f'''
             UPDATE player_stats ps
@@ -2712,6 +2713,7 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
                 games_played  = sub.gp
             FROM (
                 SELECT espn_player_id,
+                       LOWER(player_name)                     AS lname,
                        COUNT(*)                               AS gp,
                        ROUND(AVG(points)::numeric,  1)        AS avg_pts,
                        ROUND(AVG(assists)::numeric, 1)        AS avg_ast,
@@ -2721,10 +2723,13 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
                        ROUND(AVG(fg3m)::numeric,    1)        AS avg_fg3m
                 FROM player_game_stats
                 WHERE season = %s
-                GROUP BY espn_player_id
+                GROUP BY espn_player_id, LOWER(player_name)
             ) sub
-            WHERE ps.espn_player_id = sub.espn_player_id
-              AND ps.season = %s
+            WHERE ps.season = %s
+              AND (
+                  ps.espn_player_id = sub.espn_player_id
+                  OR LOWER(ps.player_name) = sub.lname
+              )
         ''', (season, season))
         updated_rows = c.rowcount
         print(f"[Boxscore] ✓ Recomputed per-game averages for {updated_rows} players")
@@ -6116,27 +6121,39 @@ async def search_players(q: str = "", conference: str = "All",
         name_filter = "AND ps.player_name ILIKE %s"
         params.append(f"%{q.strip()}%")
 
-    # No LIMIT inside the subquery — DISTINCT ON with an inner LIMIT would
-    # only process the first N rows in alphabetical order, so high-PPG players
-    # whose names start with S/T/etc. would be silently dropped.
-    # Dedup all matching rows first, then sort by PPG and limit at the outer level.
+    # Use a CTE to compute PPG from actual game data (player_game_stats) as the
+    # primary source. This works even when pts_per_game in player_stats is 0
+    # (e.g. NBA API sync failed). Falls back to pts_per_game when no game data.
+    # DISTINCT ON deduplicates the full set before the outer ORDER BY by PPG.
     c.execute(f'''
+        WITH game_ppg AS (
+            SELECT LOWER(player_name) AS lname,
+                   ROUND(AVG(points)::numeric, 1) AS ppg
+            FROM player_game_stats
+            WHERE season = %s
+            GROUP BY LOWER(player_name)
+        )
         SELECT player_id, player_name, team_abbreviation, ppg, logo_url, conference
         FROM (
             SELECT DISTINCT ON (LOWER(ps.player_name))
                    ps.player_id, ps.player_name, ps.team_abbreviation,
-                   COALESCE(ps.pts_per_game, 0) AS ppg,
+                   GREATEST(
+                       COALESCE(gp.ppg, 0),
+                       COALESCE(ps.pts_per_game, 0)
+                   ) AS ppg,
                    t.logo_url, t.conference
             FROM player_stats ps
+            LEFT JOIN game_ppg gp ON gp.lname = LOWER(ps.player_name)
             LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
             WHERE ps.season = %s
               {conf_filter}
               {name_filter}
-            ORDER BY LOWER(ps.player_name), ps.pts_per_game DESC NULLS LAST
+            ORDER BY LOWER(ps.player_name),
+                     GREATEST(COALESCE(gp.ppg,0), COALESCE(ps.pts_per_game,0)) DESC NULLS LAST
         ) deduped
         ORDER BY ppg DESC NULLS LAST, player_name ASC
         LIMIT %s
-    ''', params + [limit * 3])   # fetch extra so accent-dedup in Python still yields `limit` rows
+    ''', [season] + params + [limit * 3])   # extra rows for accent-dedup in Python
 
     # Post-dedup by accent-normalized name (catches "Doncic" ↔ "Dončić" pairs
     # that DISTINCT ON LOWER() can't collapse).

@@ -449,6 +449,11 @@ export const deleteAdminUser = async (adminUserId, userId) => {
   return response.data;
 };
 
+export const syncPlayerStats = async () => {
+  const response = await api.post('/api/admin/player-stats/sync');
+  return response.data;
+};
+
 export const toggleUserReminderOptOut = async (adminUserId, userId, optOut) => {
   const response = await api.patch(`/api/admin/users/${userId}`, null, {
     params: { admin_user_id: adminUserId, reminder_opt_out: optOut },
