@@ -6085,79 +6085,78 @@ async def search_players(q: str = "", conference: str = "All",
                          limit: int = 15, season: str = "2026"):
     """
     Player search for MVP autocomplete.
-    - q == "" → return top players by PPG (suggestion list on focus)
-    - q >= 1 char → filter by name ILIKE, still sorted by PPG
-    Optionally filtered by conference.
+    Driven entirely by player_game_stats (real boxscore data).
+    player_stats is joined secondarily for player_id only.
+    - q == "" → top players by composite MVP score
+    - q >= 1 char → filter by name, still sorted by score
     """
     conn = get_db_conn()
     c    = conn.cursor()
 
-    # Conference filter subquery
-    conf_filter = ""
     params: list = [season]
+
+    # Name filter on the aggregated name
+    name_filter = ""
+    if q.strip():
+        name_filter = "AND agg.player_name ILIKE %s"
+        params.append(f"%{q.strip()}%")
+
+    # Conference filter via the teams table using team_abbr from game stats
+    conf_filter = ""
     if conference and conference not in ("All", ""):
-        conf_filter = """AND UPPER(ps.team_abbreviation) IN (
+        conf_filter = """AND UPPER(agg.team_abbr) IN (
             SELECT UPPER(abbreviation) FROM teams
             WHERE UPPER(conference) = UPPER(%s)
                OR UPPER(conference) LIKE UPPER(%s) || '%%'
         )"""
         params.extend([conference, conference])
 
-    # Name filter — only when query has content
-    name_filter = ""
-    if q.strip():
-        name_filter = "AND ps.player_name ILIKE %s"
-        params.append(f"%{q.strip()}%")
-
-    # Sort by a composite MVP-impact score instead of raw PPG.
-    # Formula: PTS + 1.2×REB + 1.5×AST + 2×STL + 2×BLK
-    # This rewards all-around play — a guard with 10 APG competes with a 30-PPG scorer.
-    # Source priority: player_game_stats (actual game data) > player_stats (NBA API sync).
+    # Drive ranking from player_game_stats aggregates (real boxscore numbers).
+    # player_stats is only joined for player_id and conference logo.
+    # Exclude DNP rows (all zeros), require >= 5 games for a meaningful sample.
+    # MVP score: PTS + 1.2×REB + 1.5×AST + 2×STL + 2×BLK
     c.execute(f'''
-        WITH game_avgs AS (
-            SELECT LOWER(player_name) AS lname,
-                   ROUND(AVG(points)::numeric,   1) AS ppg,
-                   ROUND(AVG(assists)::numeric,  1) AS apg,
-                   ROUND(AVG(rebounds)::numeric, 1) AS rpg,
-                   ROUND(AVG(steals)::numeric,   1) AS spg,
-                   ROUND(AVG(blocks)::numeric,   1) AS bpg
+        WITH agg AS (
+            SELECT
+                player_name,
+                MAX(team_abbr)                                      AS team_abbr,
+                COUNT(DISTINCT espn_game_id)                        AS gp,
+                ROUND(AVG(points)::numeric,    1)                   AS ppg,
+                ROUND(AVG(assists)::numeric,   1)                   AS apg,
+                ROUND(AVG(rebounds)::numeric,  1)                   AS rpg,
+                ROUND(AVG(steals)::numeric,    1)                   AS spg,
+                ROUND(AVG(blocks)::numeric,    1)                   AS bpg
             FROM player_game_stats
             WHERE season = %s
-            GROUP BY LOWER(player_name)
+              AND (points > 0 OR assists > 0 OR rebounds > 0)
+            GROUP BY player_name
+            HAVING COUNT(DISTINCT espn_game_id) >= 5
         )
-        SELECT player_id, player_name, team_abbreviation,
-               ppg, apg, rpg, spg, bpg, mvp_score,
-               logo_url, conference
-        FROM (
-            SELECT DISTINCT ON (LOWER(ps.player_name))
-                   ps.player_id, ps.player_name, ps.team_abbreviation,
-                   GREATEST(COALESCE(ga.ppg, 0), COALESCE(ps.pts_per_game, 0)) AS ppg,
-                   GREATEST(COALESCE(ga.apg, 0), COALESCE(ps.ast_per_game, 0)) AS apg,
-                   GREATEST(COALESCE(ga.rpg, 0), COALESCE(ps.reb_per_game, 0)) AS rpg,
-                   GREATEST(COALESCE(ga.spg, 0), COALESCE(ps.stl_per_game, 0)) AS spg,
-                   GREATEST(COALESCE(ga.bpg, 0), COALESCE(ps.blk_per_game, 0)) AS bpg,
-                   (
-                       GREATEST(COALESCE(ga.ppg,0), COALESCE(ps.pts_per_game,0))
-                     + 1.2 * GREATEST(COALESCE(ga.rpg,0), COALESCE(ps.reb_per_game,0))
-                     + 1.5 * GREATEST(COALESCE(ga.apg,0), COALESCE(ps.ast_per_game,0))
-                     + 2.0 * GREATEST(COALESCE(ga.spg,0), COALESCE(ps.stl_per_game,0))
-                     + 2.0 * GREATEST(COALESCE(ga.bpg,0), COALESCE(ps.blk_per_game,0))
-                   ) AS mvp_score,
-                   t.logo_url, t.conference
-            FROM player_stats ps
-            LEFT JOIN game_avgs ga ON ga.lname = LOWER(ps.player_name)
-            LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
-            WHERE ps.season = %s
-              {conf_filter}
-              {name_filter}
-            ORDER BY LOWER(ps.player_name), ps.pts_per_game DESC NULLS LAST
-        ) deduped
-        ORDER BY mvp_score DESC NULLS LAST, player_name ASC
+        SELECT
+            COALESCE(ps.player_id, 0)                               AS player_id,
+            agg.player_name,
+            COALESCE(ps.team_abbreviation, agg.team_abbr)           AS team,
+            agg.ppg, agg.apg, agg.rpg, agg.spg, agg.bpg,
+            (agg.ppg
+             + 1.2 * agg.rpg
+             + 1.5 * agg.apg
+             + 2.0 * agg.spg
+             + 2.0 * agg.bpg)                                       AS mvp_score,
+            t.logo_url,
+            t.conference
+        FROM agg
+        LEFT JOIN player_stats ps
+            ON LOWER(ps.player_name) = LOWER(agg.player_name)
+           AND ps.season = %s
+        LEFT JOIN teams t
+            ON UPPER(t.abbreviation) = UPPER(COALESCE(ps.team_abbreviation, agg.team_abbr))
+        WHERE 1=1
+          {name_filter}
+          {conf_filter}
+        ORDER BY mvp_score DESC NULLS LAST, agg.player_name ASC
         LIMIT %s
-    ''', [season] + params + [limit * 3])
+    ''', params + [season, limit * 3])
 
-    # Post-dedup by accent-normalized name (catches "Doncic" ↔ "Dončić" pairs
-    # that DISTINCT ON LOWER() can't collapse).
     seen_norm: set = set()
     players = []
     for r in c.fetchall():
