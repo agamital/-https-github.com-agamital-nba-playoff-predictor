@@ -3430,75 +3430,119 @@ async def admin_standings_sync():
 @app.post("/api/admin/player-stats/sync")
 async def admin_player_stats_sync():
     """
-    Force-sync player stats from NBA API (LeagueDashPlayerStats — all players).
-    Bypasses the regular-season cutoff so admins can always refresh.
+    Force-sync regular-season per-game stats into player_stats.
+    Strategy 1: nba_api Python package (if installed).
+    Strategy 2: Direct HTTP call to stats.nba.com (always available).
     """
-    if not NBA_API_AVAILABLE:
-        return {"success": False, "error": "nba_api module not installed on server"}
-
     import concurrent.futures
+    import requests as _http
+
+    def _fetch_rows_direct():
+        """Call stats.nba.com directly — no nba_api package needed."""
+        url = "https://stats.nba.com/stats/leaguedashplayerstats"
+        params = {
+            "Season":          "2025-26",
+            "SeasonType":      "Regular Season",
+            "PerMode":         "PerGame",
+            "LeagueID":        "00",
+            "MeasureType":     "Base",
+            "PaceAdjust":      "N",
+            "PlusMinus":       "N",
+            "Rank":            "N",
+            "DateFrom":        "",
+            "DateTo":          "",
+            "GameScope":       "",
+            "GameSegment":     "",
+            "LastNGames":      "0",
+            "Location":        "",
+            "Month":           "0",
+            "OpponentTeamID":  "0",
+            "Outcome":         "",
+            "PORound":         "0",
+            "Period":          "0",
+            "PlayerExperience":"",
+            "PlayerPosition":  "",
+            "StarterBench":    "",
+            "TeamID":          "0",
+            "TwoWay":          "0",
+            "VsConference":    "",
+            "VsDivision":      "",
+        }
+        resp = _http.get(url, headers=_NBA_HEADERS, params=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        rs   = data["resultSets"][0]
+        hdrs = rs["headers"]
+        return hdrs, rs["rowSet"]
+
+    def _upsert(hdrs, rows):
+        def col(row, name, default=0):
+            try: return row[hdrs.index(name)]
+            except (ValueError, IndexError): return default
+
+        conn      = get_db_conn()
+        c         = conn.cursor()
+        synced_at = datetime.utcnow()
+        count     = 0
+        for row in rows:
+            pid  = col(row, 'PLAYER_ID')
+            name = col(row, 'PLAYER_NAME', '')
+            team = col(row, 'TEAM_ABBREVIATION', '')
+            gp   = int(col(row, 'GP') or 0)
+            pts  = float(col(row, 'PTS') or 0)
+            ast  = float(col(row, 'AST') or 0)
+            reb  = float(col(row, 'REB') or 0)
+            stl  = float(col(row, 'STL') or 0)
+            blk  = float(col(row, 'BLK') or 0)
+            fg3m = float(col(row, 'FG3M') or 0)
+            if not pid or not name:
+                continue
+            c.execute('''
+                INSERT INTO player_stats
+                    (player_id, player_name, team_abbreviation, season,
+                     games_played, pts_per_game, ast_per_game, reb_per_game,
+                     stl_per_game, blk_per_game, fg3m_per_game, updated_at)
+                VALUES (%s, %s, %s, '2026', %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (player_id, season) DO UPDATE SET
+                    player_name       = EXCLUDED.player_name,
+                    team_abbreviation = EXCLUDED.team_abbreviation,
+                    games_played      = EXCLUDED.games_played,
+                    pts_per_game      = EXCLUDED.pts_per_game,
+                    ast_per_game      = EXCLUDED.ast_per_game,
+                    reb_per_game      = EXCLUDED.reb_per_game,
+                    stl_per_game      = EXCLUDED.stl_per_game,
+                    blk_per_game      = EXCLUDED.blk_per_game,
+                    fg3m_per_game     = EXCLUDED.fg3m_per_game,
+                    updated_at        = EXCLUDED.updated_at
+            ''', (pid, name, team, gp, pts, ast, reb, stl, blk, fg3m, synced_at))
+            count += 1
+        conn.commit()
+        conn.close()
+        return count, synced_at
 
     def _force_sync():
+        # Strategy 1: nba_api package
+        if NBA_API_AVAILABLE:
+            try:
+                from nba_api.stats.endpoints import leaguedashplayerstats
+                lp = leaguedashplayerstats.LeagueDashPlayerStats(
+                    season='2025-26', season_type_all_star='Regular Season',
+                    per_mode_detailed='PerGame', league_id_nullable='00',
+                    headers=_NBA_HEADERS, timeout=_NBA_TIMEOUT,
+                )
+                raw = lp.get_dict()
+                rs  = raw.get('resultSets', [{}])[0]
+                hdrs, rows = rs['headers'], rs['rowSet']
+                count, ts = _upsert(hdrs, rows)
+                return {"success": True, "source": "nba_api", "count": count, "synced_at": ts.isoformat()}
+            except Exception as e:
+                print(f"[PlayerSync] nba_api failed, trying direct HTTP: {e}")
+
+        # Strategy 2: direct stats.nba.com HTTP call
         try:
-            from nba_api.stats.endpoints import leaguedashplayerstats
-            lp = leaguedashplayerstats.LeagueDashPlayerStats(
-                season='2025-26',
-                season_type_all_star='Regular Season',
-                per_mode_detailed='PerGame',
-                league_id_nullable='00',
-                headers=_NBA_HEADERS,
-                timeout=_NBA_TIMEOUT,
-            )
-            raw = lp.get_dict()
-            result_set  = raw.get('resultSets', [{}])[0]
-            col_headers = result_set['headers']
-            rows        = result_set['rowSet']
-
-            def col(row, name, default=0):
-                try:
-                    return row[col_headers.index(name)]
-                except (ValueError, IndexError):
-                    return default
-
-            conn      = get_db_conn()
-            c         = conn.cursor()
-            synced_at = datetime.utcnow()
-            count     = 0
-            for row in rows:  # ALL players — no limit
-                pid  = col(row, 'PLAYER_ID')
-                name = col(row, 'PLAYER_NAME', '')
-                team = col(row, 'TEAM_ABBREVIATION', '')
-                gp   = int(col(row, 'GP') or 0)
-                pts  = float(col(row, 'PTS') or 0)
-                ast  = float(col(row, 'AST') or 0)
-                reb  = float(col(row, 'REB') or 0)
-                stl  = float(col(row, 'STL') or 0)
-                blk  = float(col(row, 'BLK') or 0)
-                fg3m = float(col(row, 'FG3M') or 0)
-                if not pid or not name:
-                    continue
-                c.execute('''
-                    INSERT INTO player_stats
-                        (player_id, player_name, team_abbreviation, season,
-                         games_played, pts_per_game, ast_per_game, reb_per_game,
-                         stl_per_game, blk_per_game, fg3m_per_game, updated_at)
-                    VALUES (%s, %s, %s, '2026', %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (player_id, season) DO UPDATE SET
-                        player_name       = EXCLUDED.player_name,
-                        team_abbreviation = EXCLUDED.team_abbreviation,
-                        games_played      = EXCLUDED.games_played,
-                        pts_per_game      = EXCLUDED.pts_per_game,
-                        ast_per_game      = EXCLUDED.ast_per_game,
-                        reb_per_game      = EXCLUDED.reb_per_game,
-                        stl_per_game      = EXCLUDED.stl_per_game,
-                        blk_per_game      = EXCLUDED.blk_per_game,
-                        fg3m_per_game     = EXCLUDED.fg3m_per_game,
-                        updated_at        = EXCLUDED.updated_at
-                ''', (pid, name, team, gp, pts, ast, reb, stl, blk, fg3m, synced_at))
-                count += 1
-            conn.commit()
-            conn.close()
-            return {"success": True, "rows_synced": count, "synced_at": synced_at.isoformat()}
+            hdrs, rows = _fetch_rows_direct()
+            count, ts  = _upsert(hdrs, rows)
+            return {"success": True, "source": "stats.nba.com direct", "count": count, "synced_at": ts.isoformat()}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
