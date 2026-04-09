@@ -6116,6 +6116,10 @@ async def search_players(q: str = "", conference: str = "All",
         name_filter = "AND ps.player_name ILIKE %s"
         params.append(f"%{q.strip()}%")
 
+    # No LIMIT inside the subquery — DISTINCT ON with an inner LIMIT would
+    # only process the first N rows in alphabetical order, so high-PPG players
+    # whose names start with S/T/etc. would be silently dropped.
+    # Dedup all matching rows first, then sort by PPG and limit at the outer level.
     c.execute(f'''
         SELECT player_id, player_name, team_abbreviation, ppg, logo_url, conference
         FROM (
@@ -6129,10 +6133,10 @@ async def search_players(q: str = "", conference: str = "All",
               {conf_filter}
               {name_filter}
             ORDER BY LOWER(ps.player_name), ps.pts_per_game DESC NULLS LAST
-            LIMIT %s
         ) deduped
-        ORDER BY ppg DESC NULLS LAST
-    ''', params + [limit * 3])   # fetch extra so accent-dedup still yields limit rows
+        ORDER BY ppg DESC NULLS LAST, player_name ASC
+        LIMIT %s
+    ''', params + [limit * 3])   # fetch extra so accent-dedup in Python still yields `limit` rows
 
     # Post-dedup by accent-normalized name (catches "Doncic" ↔ "Dončić" pairs
     # that DISTINCT ON LOWER() can't collapse).
