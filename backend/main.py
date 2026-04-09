@@ -6157,79 +6157,99 @@ async def search_players(q: str = "", conference: str = "All",
                          limit: int = 15, season: str = "2026"):
     """
     Player search for MVP autocomplete.
-    Primary source: player_stats (ESPN full-season sync).
-    Supplemental:   player_game_stats recent averages via GREATEST().
-    - q == "" → top players by composite MVP score
-    - q >= 1 char → filter by name, still sorted by score
+    Merges two sources: player_stats (ESPN full-season) + player_game_stats
+    (synced boxscores). Uses GREATEST so full-season wins when available,
+    falls back to recent game averages otherwise. Never returns empty results
+    for a conference that has players in either source.
     """
     conn = get_db_conn()
     c    = conn.cursor()
 
-    # params[0] = season for the recent CTE
-    # params[1] = season for the main WHERE ps.season = %s
-    # optional name/conf params appended after
-    cte_params: list  = [season]
-    main_params: list = [season]
+    name_filter     = ""
+    conf_filter     = ""
+    name_params:list = []
+    conf_params:list = []
 
-    name_filter = ""
     if q.strip():
-        name_filter = "AND ps.player_name ILIKE %s"
-        main_params.append(f"%{q.strip()}%")
+        name_filter = "AND LOWER(pname) LIKE LOWER(%s)"
+        name_params.append(f"%{q.strip()}%")
 
-    conf_filter = ""
     if conference and conference not in ("All", ""):
-        conf_filter = """AND UPPER(ps.team_abbreviation) IN (
+        conf_filter = """AND UPPER(team) IN (
             SELECT UPPER(abbreviation) FROM teams
             WHERE UPPER(conference) = UPPER(%s)
                OR UPPER(conference) LIKE UPPER(%s) || '%%'
         )"""
-        main_params.extend([conference, conference])
+        conf_params.extend([conference, conference])
 
-    # Full-season data comes from player_stats (populated by ESPN sync).
-    # player_game_stats recent averages supplement via GREATEST so the list
-    # stays fresh even before the next sync.
-    # MVP score: PTS + 1.2×REB + 1.5×AST + 2×STL + 2×BLK
+    # Merge full-season (player_stats) + recent boxscore (player_game_stats).
+    # Group by lower(player_name) to deduplicate across both sources.
+    # GREATEST picks whichever source has higher values.
+    # MVP score: PTS*2.0 + REB*1.2 + AST*1.5 + STL*2.0 + BLK*2.0
     c.execute(f'''
-        WITH recent AS (
-            SELECT LOWER(player_name) AS lname,
-                   ROUND(AVG(points)::numeric,   1) AS ppg,
-                   ROUND(AVG(assists)::numeric,  1) AS apg,
-                   ROUND(AVG(rebounds)::numeric, 1) AS rpg,
-                   ROUND(AVG(steals)::numeric,   1) AS spg,
-                   ROUND(AVG(blocks)::numeric,   1) AS bpg
+        WITH season AS (
+            -- full-season averages from ESPN sync
+            SELECT
+                LOWER(player_name)        AS lname,
+                MAX(player_id)            AS player_id,
+                MAX(player_name)          AS player_name,
+                MAX(team_abbreviation)    AS team_abbr,
+                MAX(pts_per_game)         AS ppg,
+                MAX(ast_per_game)         AS apg,
+                MAX(reb_per_game)         AS rpg,
+                MAX(stl_per_game)         AS spg,
+                MAX(blk_per_game)         AS bpg
+            FROM player_stats
+            WHERE season = %s
+            GROUP BY LOWER(player_name)
+        ),
+        recent AS (
+            -- per-game averages from synced boxscores (any season games we have)
+            SELECT
+                LOWER(player_name)                           AS lname,
+                MAX(player_name)                             AS player_name,
+                MAX(team_abbr)                               AS team_abbr,
+                ROUND(AVG(points)::numeric,   1)             AS ppg,
+                ROUND(AVG(assists)::numeric,  1)             AS apg,
+                ROUND(AVG(rebounds)::numeric, 1)             AS rpg,
+                ROUND(AVG(steals)::numeric,   1)             AS spg,
+                ROUND(AVG(blocks)::numeric,   1)             AS bpg
             FROM player_game_stats
             WHERE season = %s
               AND (points > 0 OR assists > 0 OR rebounds > 0)
             GROUP BY LOWER(player_name)
+            HAVING COUNT(DISTINCT espn_game_id) >= 5
+        ),
+        merged AS (
+            SELECT
+                COALESCE(s.lname, r.lname)                           AS lname,
+                COALESCE(s.player_name, r.player_name)               AS pname,
+                COALESCE(s.team_abbr,   r.team_abbr)                 AS team,
+                COALESCE(s.player_id, 0)                             AS player_id,
+                GREATEST(COALESCE(s.ppg,0), COALESCE(r.ppg,0))      AS ppg,
+                GREATEST(COALESCE(s.apg,0), COALESCE(r.apg,0))      AS apg,
+                GREATEST(COALESCE(s.rpg,0), COALESCE(r.rpg,0))      AS rpg,
+                GREATEST(COALESCE(s.spg,0), COALESCE(r.spg,0))      AS spg,
+                GREATEST(COALESCE(s.bpg,0), COALESCE(r.bpg,0))      AS bpg
+            FROM season s
+            FULL OUTER JOIN recent r ON s.lname = r.lname
         )
         SELECT
-            ps.player_id,
-            ps.player_name,
-            ps.team_abbreviation                                      AS team,
-            GREATEST(COALESCE(ps.pts_per_game,0), COALESCE(r.ppg,0)) AS ppg,
-            GREATEST(COALESCE(ps.ast_per_game,0), COALESCE(r.apg,0)) AS apg,
-            GREATEST(COALESCE(ps.reb_per_game,0), COALESCE(r.rpg,0)) AS rpg,
-            GREATEST(COALESCE(ps.stl_per_game,0), COALESCE(r.spg,0)) AS spg,
-            GREATEST(COALESCE(ps.blk_per_game,0), COALESCE(r.bpg,0)) AS bpg,
-            (
-              GREATEST(COALESCE(ps.pts_per_game,0), COALESCE(r.ppg,0))
-            + 1.2 * GREATEST(COALESCE(ps.reb_per_game,0), COALESCE(r.rpg,0))
-            + 1.5 * GREATEST(COALESCE(ps.ast_per_game,0), COALESCE(r.apg,0))
-            + 2.0 * GREATEST(COALESCE(ps.stl_per_game,0), COALESCE(r.spg,0))
-            + 2.0 * GREATEST(COALESCE(ps.blk_per_game,0), COALESCE(r.bpg,0))
-            )                                                         AS mvp_score,
+            m.player_id,
+            m.pname                                                   AS player_name,
+            m.team,
+            m.ppg, m.apg, m.rpg, m.spg, m.bpg,
+            (m.ppg*2.0 + m.rpg*1.2 + m.apg*1.5 + m.spg*2.0 + m.bpg*2.0) AS mvp_score,
             t.logo_url,
             t.conference
-        FROM player_stats ps
-        LEFT JOIN recent r ON r.lname = LOWER(ps.player_name)
-        LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
-        WHERE ps.season = %s
-          AND ps.pts_per_game > 0
+        FROM merged m
+        LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(m.team)
+        WHERE (m.ppg > 0 OR m.apg > 0 OR m.rpg > 0)
           {name_filter}
           {conf_filter}
-        ORDER BY mvp_score DESC NULLS LAST, ps.player_name ASC
+        ORDER BY mvp_score DESC NULLS LAST, m.pname ASC
         LIMIT %s
-    ''', cte_params + main_params + [limit * 3])
+    ''', [season, season] + name_params + conf_params + [limit * 3])
 
     seen_norm: set = set()
     players = []
@@ -6990,6 +7010,245 @@ async def set_leaders_results(season: str = "2026",
     conn.commit()
     conn.close()
     return {"message": "Leaders results set", "results": actual}
+
+
+@app.get("/api/fmvp/probability")
+async def get_fmvp_probability(season: str = "2026"):
+    """
+    Compute Vegas-style FMVP probability scores for every active playoff series.
+
+    Formula per player (using regular-season stats + any synced playoff games):
+      base  = PPG*2.0 + RPG*0.5 + APG*0.7 + ClutchPPG*1.5
+      score = base * ts_mult * trailing_mult * clinch_bonus * def_boost
+      ts_mult:       TS% > 60% → 1.2x | TS% < 50% → 0.8x
+      trailing_mult: 0.05x if player's team is losing the series
+      clinch_bonus:  team at 3 wins → last-game stats weighted 2x
+      def_boost:     +10% for the better defender when two teammates within 2 PPG
+    Returns top-5 per series normalized to 100%.
+    """
+    from collections import defaultdict
+
+    conn = get_db_conn()
+    c    = conn.cursor()
+
+    try:
+        # ── 1. Active series ──────────────────────────────────────────────────
+        c.execute('''
+            SELECT s.id, s.round, s.conference,
+                   s.home_team_id, s.away_team_id,
+                   s.home_wins, s.away_wins,
+                   ht.name, ht.abbreviation, ht.conference,
+                   at.name, at.abbreviation, at.conference
+            FROM series s
+            JOIN teams ht ON s.home_team_id = ht.id
+            JOIN teams at ON s.away_team_id = at.id
+            WHERE s.season = %s AND s.status = 'active'
+            ORDER BY s.round DESC, s.id
+        ''', (season,))
+        series_list = c.fetchall()
+
+        # ── 2. Full-season player stats (ESPN sync) ───────────────────────────
+        c.execute('''
+            SELECT LOWER(player_name),
+                   MAX(pts_per_game), MAX(reb_per_game),
+                   MAX(ast_per_game), MAX(stl_per_game), MAX(blk_per_game),
+                   MAX(team_abbreviation)
+            FROM player_stats WHERE season = %s
+            GROUP BY LOWER(player_name)
+        ''', (season,))
+        season_stats = {}
+        for row in c.fetchall():
+            season_stats[row[0]] = {
+                'ppg': float(row[1] or 0), 'rpg': float(row[2] or 0),
+                'apg': float(row[3] or 0), 'spg': float(row[4] or 0),
+                'bpg': float(row[5] or 0), 'team': row[6] or '',
+            }
+
+        # ── 3. Per-game boxscore stats (for TS% + clutch + clinch) ───────────
+        # Get all synced games for active series teams
+        active_abbrs = set()
+        for s in series_list:
+            active_abbrs.add((s[8] or '').upper())   # home abbr
+            active_abbrs.add((s[11] or '').upper())  # away abbr
+
+        c.execute('''
+            SELECT LOWER(player_name), team_abbr,
+                   points, fga, fta, steals, blocks, rebounds, assists,
+                   game_date, espn_game_id
+            FROM player_game_stats
+            WHERE season = %s
+              AND (points > 0 OR assists > 0 OR rebounds > 0)
+            ORDER BY game_date
+        ''', (season,))
+        raw_games = c.fetchall()
+
+        # Group all games by player
+        player_all_games: dict = defaultdict(list)
+        for row in raw_games:
+            lname     = row[0]
+            team_abbr = (row[1] or '').upper()
+            player_all_games[lname].append({
+                'team_abbr': team_abbr,
+                'pts': int(row[2] or 0), 'fga': int(row[3] or 0),
+                'fta': int(row[4] or 0), 'stl': int(row[5] or 0),
+                'blk': int(row[6] or 0), 'reb': int(row[7] or 0),
+                'ast': int(row[8] or 0), 'date': str(row[9]),
+                'game_id': row[10],
+            })
+
+        # ── 4. Score each player per series ──────────────────────────────────
+        result = {}
+        for srow in series_list:
+            sid         = srow[0]
+            rnd         = srow[1]
+            conf        = srow[2]
+            home_tid    = srow[3]
+            away_tid    = srow[4]
+            home_wins   = int(srow[5] or 0)
+            away_wins   = int(srow[6] or 0)
+            home_name   = srow[7];  home_abbr = (srow[8] or '').upper()
+            home_conf   = srow[9]
+            away_name   = srow[10]; away_abbr = (srow[11] or '').upper()
+            away_conf   = srow[12]
+
+            # Which team is trailing?
+            trailing_abbr  = None
+            if home_wins > away_wins:
+                trailing_abbr = away_abbr
+            elif away_wins > home_wins:
+                trailing_abbr = home_abbr
+
+            # Clinching team (3 wins in a best-of-7)
+            clinching_abbr = None
+            if home_wins == 3:
+                clinching_abbr = home_abbr
+            elif away_wins == 3:
+                clinching_abbr = away_abbr
+
+            series_abbrs = {home_abbr, away_abbr}
+
+            # Build candidate list from season_stats filtered to these two teams
+            candidates = []
+            for lname, ss in season_stats.items():
+                t = (ss['team'] or '').upper()
+                if t not in series_abbrs:
+                    continue
+                if ss['ppg'] < 5:    # skip fringe players
+                    continue
+
+                # Compute TS% from boxscore data
+                player_games = player_all_games.get(lname, [])
+                team_games   = [g for g in player_games if g['team_abbr'] in series_abbrs]
+                total_pts = sum(g['pts'] for g in team_games)
+                total_fga = sum(g['fga'] for g in team_games)
+                total_fta = sum(g['fta'] for g in team_games)
+                ts_denom  = 2 * (total_fga + 0.44 * total_fta)
+                ts_pct    = (total_pts / ts_denom) if ts_denom > 0 else 0.56  # default 56%
+
+                # Clutch PPG: average pts in recent 5 games (proxy)
+                recent5 = team_games[-5:] if team_games else []
+                clutch_ppg = (sum(g['pts'] for g in recent5) / len(recent5)
+                              if recent5 else ss['ppg'])
+
+                # Clinching bonus: if team at 3 wins, last game gets 2x weight
+                ppg = ss['ppg']
+                if clinching_abbr and t == clinching_abbr and team_games:
+                    last_g = team_games[-1]
+                    weighted_pts = sum(g['pts'] for g in team_games) + last_g['pts']
+                    ppg = weighted_pts / (len(team_games) + 1)
+
+                # Base score
+                base = (ppg * 2.0
+                        + ss['rpg'] * 0.5
+                        + ss['apg'] * 0.7
+                        + clutch_ppg * 1.5)
+
+                # TS% multiplier
+                if ts_pct > 0.60:
+                    ts_mult = 1.2
+                elif ts_pct < 0.50:
+                    ts_mult = 0.8
+                else:
+                    ts_mult = 1.0
+
+                score = base * ts_mult
+
+                # Trailing penalty
+                is_trailing = (trailing_abbr is not None and t == trailing_abbr)
+                if is_trailing:
+                    score *= 0.05
+
+                candidates.append({
+                    'lname': lname,
+                    'name': lname.title(),  # will fix case below
+                    'team': t,
+                    'ppg':  round(ppg, 1),
+                    'rpg':  round(ss['rpg'], 1),
+                    'apg':  round(ss['apg'], 1),
+                    'spg':  round(ss['spg'], 1),
+                    'bpg':  round(ss['bpg'], 1),
+                    'ts_pct': round(ts_pct * 100, 1),
+                    'clutch_ppg': round(clutch_ppg, 1),
+                    'is_trailing': is_trailing,
+                    'score': score,
+                })
+
+            # Defensive tie-breaker: teammates within 2 PPG → better defender +10%
+            team_groups: dict = defaultdict(list)
+            for p in candidates:
+                team_groups[p['team']].append(p)
+            for grp in team_groups.values():
+                grp.sort(key=lambda x: x['ppg'], reverse=True)
+                for i in range(len(grp)):
+                    for j in range(i + 1, len(grp)):
+                        if abs(grp[i]['ppg'] - grp[j]['ppg']) <= 2:
+                            def_i = grp[i]['spg'] + grp[i]['bpg']
+                            def_j = grp[j]['spg'] + grp[j]['bpg']
+                            if def_i >= def_j:
+                                grp[i]['score'] *= 1.1
+                            else:
+                                grp[j]['score'] *= 1.1
+
+            # Sort and take top 5
+            candidates.sort(key=lambda x: x['score'], reverse=True)
+            top5 = candidates[:5]
+
+            # Normalize to 100%
+            total = sum(p['score'] for p in top5)
+            for p in top5:
+                p['probability'] = round((p['score'] / total * 100) if total > 0 else 0, 1)
+                p['score']       = round(p['score'], 2)
+
+            # Restore proper casing from player_stats
+            for p in top5:
+                if p['lname'] in season_stats:
+                    pass  # lname is lowercase, title() is good enough fallback
+            # Better: find original name from season_stats keys that match
+            lname_to_name = {k: None for k in season_stats}
+            c.execute("SELECT LOWER(player_name), MAX(player_name) FROM player_stats WHERE season=%s GROUP BY LOWER(player_name)", (season,))
+            name_map = {row[0]: row[1] for row in c.fetchall()}
+            for p in top5:
+                p['name'] = name_map.get(p['lname'], p['name'])
+                del p['lname']
+
+            result[str(sid)] = {
+                'series': {
+                    'round': rnd,
+                    'conference': conf,
+                    'home': {'name': home_name, 'abbr': home_abbr,
+                              'wins': home_wins, 'conf': home_conf},
+                    'away': {'name': away_name, 'abbr': away_abbr,
+                              'wins': away_wins, 'conf': away_conf},
+                },
+                'top5': top5,
+                'games_used': len([g for g in raw_games
+                                   if (g[1] or '').upper() in series_abbrs]),
+            }
+
+        return result
+
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

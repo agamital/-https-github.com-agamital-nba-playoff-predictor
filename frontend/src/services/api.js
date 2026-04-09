@@ -454,6 +454,11 @@ export const syncPlayerStats = async () => {
   return response.data;
 };
 
+export const getFmvpProbability = async (season = '2026') => {
+  const response = await api.get('/api/fmvp/probability', { params: { season } });
+  return response.data;
+};
+
 export const toggleUserReminderOptOut = async (adminUserId, userId, optOut) => {
   const response = await api.patch(`/api/admin/users/${userId}`, null, {
     params: { admin_user_id: adminUserId, reminder_opt_out: optOut },
