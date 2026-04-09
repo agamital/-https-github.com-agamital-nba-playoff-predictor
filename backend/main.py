@@ -7015,237 +7015,137 @@ async def set_leaders_results(season: str = "2026",
 @app.get("/api/fmvp/probability")
 async def get_fmvp_probability(season: str = "2026"):
     """
-    Compute Vegas-style FMVP probability scores for every active playoff series.
+    FMVP probability based on Vegas odds (American format).
 
-    Formula per player (using regular-season stats + any synced playoff games):
-      base  = PPG*2.0 + RPG*0.5 + APG*0.7 + ClutchPPG*1.5
-      score = base * ts_mult * trailing_mult * clinch_bonus * def_boost
-      ts_mult:       TS% > 60% → 1.2x | TS% < 50% → 0.8x
-      trailing_mult: 0.05x if player's team is losing the series
-      clinch_bonus:  team at 3 wins → last-game stats weighted 2x
-      def_boost:     +10% for the better defender when two teammates within 2 PPG
-    Returns top-5 per series normalized to 100%.
+    Primary source: hardcoded Vegas FMVP American odds (as of 2026 pre-playoffs).
+    Implied probability = 100 / (odds + 100) for positive odds.
+    Stats from player_stats + player_game_stats supplement each row with
+    season averages and TS% for context.
+
+    Returns top candidates with probability normalized to 100%.
     """
-    from collections import defaultdict
+    # ── Vegas FMVP odds (American, positive = underdog) ──────────────────────
+    # Source: Polymarket / Vegas consensus pre-playoffs 2026
+    VEGAS_FMVP = [
+        {"name": "Shai Gilgeous-Alexander", "team": "OKC", "odds": 145,
+         "note": "Reigning FMVP; heavy favorite"},
+        {"name": "Victor Wembanyama",        "team": "SAS", "odds": 600,
+         "note": "Primary upset candidate"},
+        {"name": "Nikola Jokic",             "team": "DEN", "odds": 900,
+         "note": "Value pick if Denver finds 2023 form"},
+        {"name": "Jaylen Brown",             "team": "BOS", "odds": 1200,
+         "note": "2024 FMVP; voters trust him in June"},
+        {"name": "Jayson Tatum",             "team": "BOS", "odds": 1400,
+         "note": "Often moves in tandem with Brown"},
+        {"name": "Donovan Mitchell",         "team": "CLE", "odds": 1600,
+         "note": "Favorite if Cavs win the East"},
+        {"name": "Cade Cunningham",          "team": "DET", "odds": 2500,
+         "note": "Longshot despite Detroit's 58-win season"},
+        {"name": "Luka Doncic",             "team": "LAL", "odds": 3300,
+         "note": "Now with the Lakers"},
+    ]
 
+    # ── Vegas Championship odds → team implied Finals probability ─────────────
+    VEGAS_CHAMP = {
+        "OKC": 115,   # +115  → 46.5%
+        "SAS": 550,   # +550  → 15.4%
+        "BOS": 600,   # +600  → 14.3%
+        "CLE": 950,   # +950  → 9.5%
+        "DEN": 1100,  # +1100 → 8.3%
+        "DET": 1400,  # +1400 → 6.7%
+        "NYK": 1700,  # +1700 → 5.6%
+        "HOU": 4000,  # +4000 → 2.4%
+    }
+
+    def american_to_implied(odds: int) -> float:
+        """Convert positive American odds to implied probability (0–1)."""
+        return 100.0 / (odds + 100.0)
+
+    # Implied prob for each FMVP candidate (raw, before overround removal)
+    for p in VEGAS_FMVP:
+        p["implied_raw"] = american_to_implied(p["odds"])
+
+    # Normalize FMVP implied probs to sum to 100% (remove bookmaker overround)
+    total_implied = sum(p["implied_raw"] for p in VEGAS_FMVP)
+    for p in VEGAS_FMVP:
+        p["probability"] = round(p["implied_raw"] / total_implied * 100, 1)
+
+    # ── Pull season stats from DB to enrich each candidate ───────────────────
     conn = get_db_conn()
     c    = conn.cursor()
-
     try:
-        # ── 1. Active series ──────────────────────────────────────────────────
-        c.execute('''
-            SELECT s.id, s.round, s.conference,
-                   s.home_team_id, s.away_team_id,
-                   s.home_wins, s.away_wins,
-                   ht.name, ht.abbreviation, ht.conference,
-                   at.name, at.abbreviation, at.conference
-            FROM series s
-            JOIN teams ht ON s.home_team_id = ht.id
-            JOIN teams at ON s.away_team_id = at.id
-            WHERE s.season = %s AND s.status = 'active'
-            ORDER BY s.round DESC, s.id
-        ''', (season,))
-        series_list = c.fetchall()
+        names_lower = [p["name"].lower() for p in VEGAS_FMVP]
 
-        # ── 2. Full-season player stats (ESPN sync) ───────────────────────────
         c.execute('''
             SELECT LOWER(player_name),
                    MAX(pts_per_game), MAX(reb_per_game),
-                   MAX(ast_per_game), MAX(stl_per_game), MAX(blk_per_game),
-                   MAX(team_abbreviation)
-            FROM player_stats WHERE season = %s
+                   MAX(ast_per_game), MAX(stl_per_game), MAX(blk_per_game)
+            FROM player_stats
+            WHERE season = %s
+              AND LOWER(player_name) = ANY(%s)
             GROUP BY LOWER(player_name)
-        ''', (season,))
-        season_stats = {}
-        for row in c.fetchall():
-            season_stats[row[0]] = {
-                'ppg': float(row[1] or 0), 'rpg': float(row[2] or 0),
-                'apg': float(row[3] or 0), 'spg': float(row[4] or 0),
-                'bpg': float(row[5] or 0), 'team': row[6] or '',
-            }
-
-        # ── 3. Per-game boxscore stats (for TS% + clutch + clinch) ───────────
-        # Get all synced games for active series teams
-        active_abbrs = set()
-        for s in series_list:
-            active_abbrs.add((s[8] or '').upper())   # home abbr
-            active_abbrs.add((s[11] or '').upper())  # away abbr
+        ''', (season, names_lower))
+        stat_rows = {row[0]: row[1:] for row in c.fetchall()}
 
         c.execute('''
-            SELECT LOWER(player_name), team_abbr,
-                   points, fga, fta, steals, blocks, rebounds, assists,
-                   game_date, espn_game_id
+            SELECT LOWER(player_name),
+                   SUM(points), SUM(fga), SUM(fta), COUNT(DISTINCT espn_game_id)
             FROM player_game_stats
             WHERE season = %s
               AND (points > 0 OR assists > 0 OR rebounds > 0)
-            ORDER BY game_date
-        ''', (season,))
-        raw_games = c.fetchall()
+              AND LOWER(player_name) = ANY(%s)
+            GROUP BY LOWER(player_name)
+        ''', (season, names_lower))
+        game_rows = {row[0]: row[1:] for row in c.fetchall()}
 
-        # Group all games by player
-        player_all_games: dict = defaultdict(list)
-        for row in raw_games:
-            lname     = row[0]
-            team_abbr = (row[1] or '').upper()
-            player_all_games[lname].append({
-                'team_abbr': team_abbr,
-                'pts': int(row[2] or 0), 'fga': int(row[3] or 0),
-                'fta': int(row[4] or 0), 'stl': int(row[5] or 0),
-                'blk': int(row[6] or 0), 'reb': int(row[7] or 0),
-                'ast': int(row[8] or 0), 'date': str(row[9]),
-                'game_id': row[10],
+        # ── Team championship implied probabilities ────────────────────────────
+        team_finals_prob = {}
+        raw_total = sum(american_to_implied(v) for v in VEGAS_CHAMP.values())
+        for abbr, odds in VEGAS_CHAMP.items():
+            team_finals_prob[abbr] = round(
+                american_to_implied(odds) / raw_total * 100, 1)
+
+        result = []
+        for p in VEGAS_FMVP:
+            lname = p["name"].lower()
+            sr    = stat_rows.get(lname)
+            gr    = game_rows.get(lname)
+
+            ppg = round(float(sr[0] or 0), 1) if sr else 0.0
+            rpg = round(float(sr[1] or 0), 1) if sr else 0.0
+            apg = round(float(sr[2] or 0), 1) if sr else 0.0
+            spg = round(float(sr[3] or 0), 1) if sr else 0.0
+            bpg = round(float(sr[4] or 0), 1) if sr else 0.0
+
+            ts_pct = 0.0
+            if gr and gr[1] and (float(gr[1]) + 0.44 * float(gr[2] or 0)) > 0:
+                denom  = 2 * (float(gr[1]) + 0.44 * float(gr[2]))
+                ts_pct = round(float(gr[0]) / denom * 100, 1)
+
+            # Stats-based MVP impact score (context only, not used for prob)
+            mvp_score = round(ppg * 2.0 + rpg * 0.5 + apg * 0.7, 1)
+
+            result.append({
+                "name":             p["name"],
+                "team":             p["team"],
+                "odds":             f"+{p['odds']}",
+                "probability":      p["probability"],
+                "note":             p["note"],
+                "team_finals_prob": team_finals_prob.get(p["team"], 0.0),
+                "ppg":              ppg,
+                "rpg":              rpg,
+                "apg":              apg,
+                "spg":              spg,
+                "bpg":              bpg,
+                "ts_pct":           ts_pct,
+                "mvp_score":        mvp_score,
             })
 
-        # ── 4. Score each player per series ──────────────────────────────────
-        result = {}
-        for srow in series_list:
-            sid         = srow[0]
-            rnd         = srow[1]
-            conf        = srow[2]
-            home_tid    = srow[3]
-            away_tid    = srow[4]
-            home_wins   = int(srow[5] or 0)
-            away_wins   = int(srow[6] or 0)
-            home_name   = srow[7];  home_abbr = (srow[8] or '').upper()
-            home_conf   = srow[9]
-            away_name   = srow[10]; away_abbr = (srow[11] or '').upper()
-            away_conf   = srow[12]
-
-            # Which team is trailing?
-            trailing_abbr  = None
-            if home_wins > away_wins:
-                trailing_abbr = away_abbr
-            elif away_wins > home_wins:
-                trailing_abbr = home_abbr
-
-            # Clinching team (3 wins in a best-of-7)
-            clinching_abbr = None
-            if home_wins == 3:
-                clinching_abbr = home_abbr
-            elif away_wins == 3:
-                clinching_abbr = away_abbr
-
-            series_abbrs = {home_abbr, away_abbr}
-
-            # Build candidate list from season_stats filtered to these two teams
-            candidates = []
-            for lname, ss in season_stats.items():
-                t = (ss['team'] or '').upper()
-                if t not in series_abbrs:
-                    continue
-                if ss['ppg'] < 5:    # skip fringe players
-                    continue
-
-                # Compute TS% from boxscore data
-                player_games = player_all_games.get(lname, [])
-                team_games   = [g for g in player_games if g['team_abbr'] in series_abbrs]
-                total_pts = sum(g['pts'] for g in team_games)
-                total_fga = sum(g['fga'] for g in team_games)
-                total_fta = sum(g['fta'] for g in team_games)
-                ts_denom  = 2 * (total_fga + 0.44 * total_fta)
-                ts_pct    = (total_pts / ts_denom) if ts_denom > 0 else 0.56  # default 56%
-
-                # Clutch PPG: average pts in recent 5 games (proxy)
-                recent5 = team_games[-5:] if team_games else []
-                clutch_ppg = (sum(g['pts'] for g in recent5) / len(recent5)
-                              if recent5 else ss['ppg'])
-
-                # Clinching bonus: if team at 3 wins, last game gets 2x weight
-                ppg = ss['ppg']
-                if clinching_abbr and t == clinching_abbr and team_games:
-                    last_g = team_games[-1]
-                    weighted_pts = sum(g['pts'] for g in team_games) + last_g['pts']
-                    ppg = weighted_pts / (len(team_games) + 1)
-
-                # Base score
-                base = (ppg * 2.0
-                        + ss['rpg'] * 0.5
-                        + ss['apg'] * 0.7
-                        + clutch_ppg * 1.5)
-
-                # TS% multiplier
-                if ts_pct > 0.60:
-                    ts_mult = 1.2
-                elif ts_pct < 0.50:
-                    ts_mult = 0.8
-                else:
-                    ts_mult = 1.0
-
-                score = base * ts_mult
-
-                # Trailing penalty
-                is_trailing = (trailing_abbr is not None and t == trailing_abbr)
-                if is_trailing:
-                    score *= 0.05
-
-                candidates.append({
-                    'lname': lname,
-                    'name': lname.title(),  # will fix case below
-                    'team': t,
-                    'ppg':  round(ppg, 1),
-                    'rpg':  round(ss['rpg'], 1),
-                    'apg':  round(ss['apg'], 1),
-                    'spg':  round(ss['spg'], 1),
-                    'bpg':  round(ss['bpg'], 1),
-                    'ts_pct': round(ts_pct * 100, 1),
-                    'clutch_ppg': round(clutch_ppg, 1),
-                    'is_trailing': is_trailing,
-                    'score': score,
-                })
-
-            # Defensive tie-breaker: teammates within 2 PPG → better defender +10%
-            team_groups: dict = defaultdict(list)
-            for p in candidates:
-                team_groups[p['team']].append(p)
-            for grp in team_groups.values():
-                grp.sort(key=lambda x: x['ppg'], reverse=True)
-                for i in range(len(grp)):
-                    for j in range(i + 1, len(grp)):
-                        if abs(grp[i]['ppg'] - grp[j]['ppg']) <= 2:
-                            def_i = grp[i]['spg'] + grp[i]['bpg']
-                            def_j = grp[j]['spg'] + grp[j]['bpg']
-                            if def_i >= def_j:
-                                grp[i]['score'] *= 1.1
-                            else:
-                                grp[j]['score'] *= 1.1
-
-            # Sort and take top 5
-            candidates.sort(key=lambda x: x['score'], reverse=True)
-            top5 = candidates[:5]
-
-            # Normalize to 100%
-            total = sum(p['score'] for p in top5)
-            for p in top5:
-                p['probability'] = round((p['score'] / total * 100) if total > 0 else 0, 1)
-                p['score']       = round(p['score'], 2)
-
-            # Restore proper casing from player_stats
-            for p in top5:
-                if p['lname'] in season_stats:
-                    pass  # lname is lowercase, title() is good enough fallback
-            # Better: find original name from season_stats keys that match
-            lname_to_name = {k: None for k in season_stats}
-            c.execute("SELECT LOWER(player_name), MAX(player_name) FROM player_stats WHERE season=%s GROUP BY LOWER(player_name)", (season,))
-            name_map = {row[0]: row[1] for row in c.fetchall()}
-            for p in top5:
-                p['name'] = name_map.get(p['lname'], p['name'])
-                del p['lname']
-
-            result[str(sid)] = {
-                'series': {
-                    'round': rnd,
-                    'conference': conf,
-                    'home': {'name': home_name, 'abbr': home_abbr,
-                              'wins': home_wins, 'conf': home_conf},
-                    'away': {'name': away_name, 'abbr': away_abbr,
-                              'wins': away_wins, 'conf': away_conf},
-                },
-                'top5': top5,
-                'games_used': len([g for g in raw_games
-                                   if (g[1] or '').upper() in series_abbrs]),
-            }
-
-        return result
+        return {
+            "top": result,
+            "source": "Vegas/Polymarket consensus odds — pre-playoffs 2026",
+            "formula": "Implied prob = 100/(odds+100), normalized to remove overround",
+        }
 
     finally:
         conn.close()
