@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, Lock, CheckCircle, Star, BarChart2, Info, Search, TrendingUp } from 'lucide-react';
+import { Trophy, Lock, CheckCircle, Star, BarChart2, Info, Search } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 import { FUTURES_BASE_POINTS, LEADERS_POINTS, LEADERS_TIERS } from './scoringConstants';
@@ -259,92 +259,6 @@ const Section = ({ title, icon, color, children, pts, oddsMult }) => {
   );
 };
 
-// ── FMVP Probability Card ────────────────────────────────────────────────────
-const CONF_LABEL = { West: 'West Finals', East: 'East Finals', Finals: 'Finals' };
-
-const MvpProbabilityCard = () => {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['fmvpProbability'],
-    queryFn: api.getFmvpProbability,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  if (isLoading) return (
-    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 mb-6 animate-pulse">
-      <div className="h-4 bg-slate-800 rounded w-48 mb-4" />
-      <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-10 bg-slate-800 rounded" />)}</div>
-    </div>
-  );
-
-  if (error || !data) return null;
-
-  const seriesEntries = Object.entries(data).filter(([, s]) => s.top5?.length > 0);
-  if (!seriesEntries.length) return null;
-
-  return (
-    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 mb-6">
-      <div className="flex items-center gap-2 mb-4">
-        <TrendingUp className="w-4 h-4 text-orange-400" />
-        <span className="text-white font-black text-sm uppercase tracking-wider">MVP Probability Race</span>
-        <span className="text-[10px] text-slate-500 ml-auto font-bold">Vegas-style formula</span>
-      </div>
-
-      <div className="space-y-5">
-        {seriesEntries.map(([sid, seriesData]) => {
-          const s = seriesData.series;
-          const label = s.conference
-            ? CONF_LABEL[s.conference] || `Round ${s.round}`
-            : `Round ${s.round}`;
-          const matchup = `${s.home?.abbr} ${s.home?.wins}–${s.away?.wins} ${s.away?.abbr}`;
-
-          return (
-            <div key={sid}>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[11px] font-black text-orange-400 uppercase tracking-wider">{label}</span>
-                <span className="text-[10px] text-slate-500 font-bold">{matchup}</span>
-              </div>
-              <div className="space-y-2">
-                {seriesData.top5.map((p, idx) => (
-                  <div key={p.name} className="flex items-center gap-3">
-                    {/* Rank */}
-                    <span className={`w-5 h-5 shrink-0 flex items-center justify-center text-[10px] font-black rounded-full
-                      ${idx === 0 ? 'bg-yellow-500/20 text-yellow-400' :
-                        idx === 1 ? 'bg-slate-400/10 text-slate-300' :
-                        idx === 2 ? 'bg-orange-700/20 text-orange-500' :
-                        'bg-slate-800 text-slate-500'}`}>
-                      {idx + 1}
-                    </span>
-                    {/* Name + team */}
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm font-bold text-white truncate block">{p.name}</span>
-                      <span className="text-[10px] text-slate-500">
-                        {p.team} · {p.ppg}pts {p.rpg}reb {p.apg}ast · TS%{p.ts_pct}
-                        {p.is_trailing && <span className="text-red-400 ml-1">⚠ trailing</span>}
-                      </span>
-                    </div>
-                    {/* Probability bar */}
-                    <div className="shrink-0 text-right w-24">
-                      <span className="text-sm font-black text-orange-400">{p.probability}%</span>
-                      <div className="h-1.5 bg-slate-800 rounded-full mt-1 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-orange-500 to-red-500 transition-all"
-                          style={{ width: `${p.probability}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <p className="text-[9px] text-slate-600 mt-4 font-bold text-center">
-        PPG×2 + RPG×0.5 + APG×0.7 + ClutchPPG×1.5 · TS% multiplier · trailing ×0.05 · clinching 2x last game
-      </p>
-    </div>
-  );
-};
 
 // ── Main FuturesPage ────────────────────────────────────────────────────────
 const FuturesPage = ({ currentUser, onNavigate }) => {
@@ -576,8 +490,6 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">MVPs</span>
           <div className="h-px flex-1 bg-slate-800" />
         </div>
-
-        <MvpProbabilityCard />
 
         <Section title="Finals MVP" color="text-orange-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.finals_mvp} oddsMult={odds.finals_mvp}>
           <MvpSearchInput value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Search any playoff player…" conference="All" />
