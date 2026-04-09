@@ -261,6 +261,7 @@ def init_db():
     c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT ''")
     c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
     c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder_last_sent_at TIMESTAMP")
+    c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder_opt_out BOOLEAN DEFAULT FALSE")
 
     c.execute('''CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY,
@@ -1611,6 +1612,7 @@ def _send_daily_email_reminders() -> dict:
             FROM users u
             WHERE u.email IS NOT NULL
               AND u.email != ''
+              AND (u.reminder_opt_out IS NULL OR u.reminder_opt_out = FALSE)
               AND (u.reminder_last_sent_at IS NULL OR u.reminder_last_sent_at < %s)
               AND (
                 EXISTS (
@@ -6414,7 +6416,8 @@ async def admin_list_users(admin_user_id: int):
         c.execute("""
             SELECT u.id, u.username, u.email, u.role, u.points, u.created_at,
                    COUNT(DISTINCT p.id)  AS series_preds,
-                   COUNT(DISTINCT pp.id) AS playin_preds
+                   COUNT(DISTINCT pp.id) AS playin_preds,
+                   u.reminder_opt_out
             FROM users u
             LEFT JOIN predictions p        ON p.user_id  = u.id
             LEFT JOIN playin_predictions pp ON pp.user_id = u.id
@@ -6423,13 +6426,14 @@ async def admin_list_users(admin_user_id: int):
         """)
         return [
             {
-                "id":               row[0],
-                "username":         row[1],
-                "email":            row[2],
-                "role":             row[3],
-                "points":           row[4] or 0,
-                "created_at":       row[5].isoformat() if row[5] else None,
-                "prediction_count": (row[6] or 0) + (row[7] or 0),
+                "id":                row[0],
+                "username":          row[1],
+                "email":             row[2],
+                "role":              row[3],
+                "points":            row[4] or 0,
+                "created_at":        row[5].isoformat() if row[5] else None,
+                "prediction_count":  (row[6] or 0) + (row[7] or 0),
+                "reminder_opt_out":  bool(row[8]),
             }
             for row in c.fetchall()
         ]
@@ -6498,6 +6502,30 @@ async def admin_delete_user(user_id: int, admin_user_id: int):
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+@app.patch("/api/admin/users/{user_id}/reminder-opt-out")
+async def admin_toggle_reminder_opt_out(user_id: int, admin_user_id: int, opt_out: bool):
+    """Toggle email reminder opt-out for a user. Admin only."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        _verify_admin(c, admin_user_id)
+        c.execute(
+            "UPDATE users SET reminder_opt_out = %s WHERE id = %s RETURNING id",
+            (opt_out, user_id)
+        )
+        if not c.fetchone():
+            raise HTTPException(404, "User not found")
+        conn.commit()
+        return {"message": "Updated", "reminder_opt_out": opt_out}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(400, str(e))
     finally:
         conn.close()
 

@@ -449,6 +449,13 @@ export const deleteAdminUser = async (adminUserId, userId) => {
   return response.data;
 };
 
+export const toggleUserReminderOptOut = async (adminUserId, userId, optOut) => {
+  const response = await api.patch(`/api/admin/users/${userId}/reminder-opt-out`, null, {
+    params: { admin_user_id: adminUserId, opt_out: optOut },
+  });
+  return response.data;
+};
+
 // Futures page — combined static data (teams + odds + lock)
 export const getFuturesPageData = async (season = '2026') => {
   const response = await api.get('/api/futures/page-data', { params: { season } });

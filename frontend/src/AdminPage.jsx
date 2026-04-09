@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp, X, Users, Search, Pencil, Trash2, Save, RotateCcw, Activity, AlertTriangle, Database, Wifi } from 'lucide-react';
+import { Shield, CheckCircle, Trophy, RefreshCw, Zap, Lock, Unlock, BarChart2, DollarSign, Target, ChevronDown, ChevronUp, X, Users, Search, Pencil, Trash2, Save, RotateCcw, Activity, AlertTriangle, Database, Wifi, Mail, MailX } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className }) => (
@@ -972,6 +972,16 @@ const UserManagementCard = ({ currentUser, addToast }) => {
     }
   };
 
+  const toggleReminderOptOut = async (userId, currentOptOut) => {
+    try {
+      await api.toggleUserReminderOptOut(currentUser.user_id, userId, !currentOptOut);
+      addToast(!currentOptOut ? 'Email reminders disabled for user' : 'Email reminders enabled for user', 'success');
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, reminder_opt_out: !currentOptOut } : u));
+    } catch (e) {
+      addToast('Failed: ' + (e.response?.data?.detail || e.message), 'error');
+    }
+  };
+
   const filtered = users.filter(u =>
     u.username.toLowerCase().includes(search.toLowerCase()) ||
     u.email.toLowerCase().includes(search.toLowerCase())
@@ -1038,13 +1048,16 @@ const UserManagementCard = ({ currentUser, addToast }) => {
                     <th className="text-center px-3 py-2.5 hidden md:table-cell">Picks</th>
                     <th className="text-center px-3 py-2.5 hidden lg:table-cell">Joined</th>
                     <th className="text-center px-3 py-2.5">Role</th>
+                    <th className="text-center px-3 py-2.5" title="Email reminders">
+                      <Mail className="w-3.5 h-3.5 inline-block" />
+                    </th>
                     <th className="text-right px-3 py-2.5">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {filtered.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="text-center text-slate-600 py-6 text-sm">
+                      <td colSpan={8} className="text-center text-slate-600 py-6 text-sm">
                         {search ? 'No users match your search.' : 'No users found.'}
                       </td>
                     </tr>
@@ -1104,6 +1117,23 @@ const UserManagementCard = ({ currentUser, addToast }) => {
                           }`}>
                             {user.role}
                           </span>
+                        </td>
+                        {/* Email reminders toggle */}
+                        <td className="px-3 py-2.5 text-center">
+                          <button
+                            onClick={() => toggleReminderOptOut(user.id, user.reminder_opt_out)}
+                            title={user.reminder_opt_out ? 'Reminders OFF — click to enable' : 'Reminders ON — click to disable'}
+                            className={`p-1.5 rounded-lg border transition-colors ${
+                              user.reminder_opt_out
+                                ? 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20'
+                                : 'bg-green-500/10 border-green-500/30 text-green-400 hover:bg-green-500/20'
+                            }`}
+                          >
+                            {user.reminder_opt_out
+                              ? <MailX className="w-3.5 h-3.5" />
+                              : <Mail className="w-3.5 h-3.5" />
+                            }
+                          </button>
                         </td>
                         {/* Actions */}
                         <td className="px-3 py-2.5">

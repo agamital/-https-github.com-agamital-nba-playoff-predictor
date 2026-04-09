@@ -47,3 +47,44 @@
 .pb-safe {
   padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
 }
+
+/* ── iOS / Safari fixes ───────────────────────────────────────────────────── */
+
+/* Prevent grey flash on tap for all interactive elements on iOS */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Ensure buttons are tappable without 300ms delay on iOS */
+button, a, [role="button"] {
+  touch-action: manipulation;
+}
+
+/* Smooth momentum scroll inside overflow containers on iOS */
+.overflow-y-auto, .overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Fix position:fixed viewport issues on iOS Safari (address bar shrink) */
+.fixed-bottom-sheet {
+  position: fixed;
+  /* Use dvh (dynamic viewport height) where supported, fall back to vh */
+  max-height: 84dvh;
+  max-height: 84vh; /* fallback */
+}
+
+/* Top bar safe area for notched iPhones */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Bottom nav: ensure taps register through safe area */
+.nav-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Fix 100vh on mobile Safari (doesn't account for address bar) */
+.min-h-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+}

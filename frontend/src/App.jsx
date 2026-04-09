@@ -1694,12 +1694,12 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
           ref={buttonRef}
           onClick={() => setOpen(o => !o)}
           title={isCritical ? `${badgeCount} action${badgeCount > 1 ? 's' : ''} needed` : 'Notifications'}
-          className="relative p-2 rounded-xl hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors"
-          style={{ minWidth: 36, minHeight: 36 }}
+          className="relative flex items-center justify-center rounded-xl hover:bg-slate-800/60 active:bg-slate-700/60 transition-colors"
+          style={{ minWidth: 44, minHeight: 44 }}
         >
           <Bell className={`w-5 h-5 ${isCritical ? 'text-orange-400' : 'text-slate-400'} ${isCritical ? 'bell-shake' : ''}`} />
           {badgeCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-white text-[10px] font-black leading-none ring-2 ring-slate-900 pointer-events-none">
+            <span className="absolute top-1 right-1 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-white text-[10px] font-black leading-none ring-2 ring-slate-900 pointer-events-none">
               {badgeCount > 9 ? '9+' : badgeCount}
             </span>
           )}
@@ -1715,7 +1715,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
             <div
               ref={panelRef}
               className="fixed bottom-0 left-0 right-0 z-[999] flex flex-col bg-slate-900 border-t border-slate-700 rounded-t-2xl shadow-2xl pb-safe"
-              style={{ maxHeight: '84vh' }}
+              style={{ maxHeight: 'min(84dvh, 84vh)' }}
             >
               {/* drag handle */}
               <div className="flex justify-center pt-3 pb-1.5 shrink-0">
@@ -2110,8 +2110,8 @@ function App() {
       </aside>
 
       {/* ── MOBILE TOP BAR (brand only, no hamburger) ── */}
-      <div className="md:hidden sticky top-0 z-50 bg-slate-900/95 backdrop-blur-xl border-b border-blue-500/20">
-        <div className="flex items-center justify-between px-4 py-3">
+      <div className="md:hidden sticky top-0 z-50 bg-slate-900/95 backdrop-blur-xl border-b border-blue-500/20 pt-safe">
+        <div className="flex items-center justify-between px-4" style={{ minHeight: 56 }}>
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg flex items-center justify-center shrink-0">
               <Trophy className="w-5 h-5 text-white" />
@@ -2168,7 +2168,7 @@ function App() {
             <button
               key={item.id}
               onClick={handleBottomNav}
-              className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 min-h-[56px] transition-colors active:bg-slate-800/60 ${
+              className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 min-h-[60px] transition-colors active:bg-slate-800/60 ${
                 active ? 'text-orange-400' : 'text-slate-500'
               }`}
             >
