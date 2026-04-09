@@ -3430,70 +3430,142 @@ async def admin_standings_sync():
 @app.post("/api/admin/player-stats/sync")
 async def admin_player_stats_sync():
     """
-    Aggregate per-game averages directly from our player_game_stats table
-    and upsert into player_stats. No external API calls needed.
+    Fetch full-season per-game averages from ESPN's public stats API and
+    upsert into player_stats. Works on Railway — no API key needed.
+    ESPN athlete IDs are used as player_id so they match boxscore data.
     """
-    conn = get_db_conn()
-    c    = conn.cursor()
-    try:
-        c.execute('''
-            INSERT INTO player_stats
-                (player_id, player_name, team_abbreviation, season,
-                 games_played, pts_per_game, ast_per_game, reb_per_game,
-                 stl_per_game, blk_per_game, fg3m_per_game, updated_at)
-            SELECT
-                ps_existing.player_id,
-                agg.player_name,
-                agg.team,
-                '2026',
-                agg.gp,
-                agg.ppg,
-                agg.apg,
-                agg.rpg,
-                agg.spg,
-                agg.bpg,
-                agg.fg3m,
-                NOW()
-            FROM (
-                SELECT
-                    player_name,
-                    MAX(team_abbr)                                   AS team,
-                    COUNT(*)                                         AS gp,
-                    ROUND(AVG(points)::numeric,    1)                AS ppg,
-                    ROUND(AVG(assists)::numeric,   1)                AS apg,
-                    ROUND(AVG(rebounds)::numeric,  1)                AS rpg,
-                    ROUND(AVG(steals)::numeric,    1)                AS spg,
-                    ROUND(AVG(blocks)::numeric,    1)                AS bpg,
-                    ROUND(AVG(COALESCE(fg3m, 0))::numeric, 1)        AS fg3m
-                FROM player_game_stats
-                WHERE season = '2026'
-                GROUP BY player_name
-            ) agg
-            JOIN player_stats ps_existing
-                ON LOWER(ps_existing.player_name) = LOWER(agg.player_name)
-               AND ps_existing.season = '2026'
-            ON CONFLICT (player_id, season) DO UPDATE SET
-                player_name       = EXCLUDED.player_name,
-                team_abbreviation = EXCLUDED.team_abbreviation,
-                games_played      = EXCLUDED.games_played,
-                pts_per_game      = EXCLUDED.pts_per_game,
-                ast_per_game      = EXCLUDED.ast_per_game,
-                reb_per_game      = EXCLUDED.reb_per_game,
-                stl_per_game      = EXCLUDED.stl_per_game,
-                blk_per_game      = EXCLUDED.blk_per_game,
-                fg3m_per_game     = EXCLUDED.fg3m_per_game,
-                updated_at        = EXCLUDED.updated_at
-        ''')
-        updated = c.rowcount
+    import concurrent.futures
+    import requests as _rq
+
+    ESPN_STATS_URL = (
+        "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba"
+        "/statistics/byathlete"
+    )
+
+    def _safe(v, default=0.0):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    def _fetch_all():
+        """Paginate ESPN byathlete stats endpoint → list of player dicts."""
+        all_players = []
+        page = 1
+        while True:
+            resp = _rq.get(ESPN_STATS_URL, params={
+                "season":     2026,
+                "seasontype": 2,      # regular season
+                "limit":      100,
+                "page":       page,
+            }, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+
+            # Build label→index map from top-level categories
+            label_idx: dict = {}
+            offset = 0
+            for cat in data.get("categories", []):
+                for i, lbl in enumerate(cat.get("labels", [])):
+                    label_idx[lbl] = offset + i
+                offset += len(cat.get("labels", []))
+
+            athletes = data.get("athletes", [])
+            if not athletes:
+                break
+
+            for item in athletes:
+                ath  = item.get("athlete", {})
+                pid  = ath.get("id", "")
+                name = ath.get("displayName", "")
+                team = ath.get("team", {}).get("abbreviation", "")
+                if not pid or not name:
+                    continue
+
+                # Flatten totals/values across athlete categories
+                vals: list = []
+                for cat in item.get("categories", []):
+                    vals.extend(cat.get("totals", cat.get("values", [])))
+
+                def g(lbl, default=0.0):
+                    idx = label_idx.get(lbl)
+                    if idx is None or idx >= len(vals):
+                        return default
+                    return _safe(vals[idx], default)
+
+                # ESPN labels for per-game averages
+                all_players.append({
+                    "id":   pid,
+                    "name": name,
+                    "team": team,
+                    "gp":   int(g("GP") or g("gamesPlayed")),
+                    "ppg":  g("avgPoints",   g("PTS")),
+                    "apg":  g("avgAssists",  g("AST")),
+                    "rpg":  g("avgRebounds", g("REB")),
+                    "spg":  g("avgSteals",   g("STL")),
+                    "bpg":  g("avgBlocks",   g("BLK")),
+                    "fg3m": g("avg3PointFieldGoalsMade", g("3PM")),
+                })
+
+            page_count = data.get("pageCount", 1)
+            print(f"[PlayerSync] ESPN page {page}/{page_count} — {len(athletes)} athletes")
+            if page >= page_count:
+                break
+            page += 1
+
+        return all_players
+
+    def _do_sync():
+        players = _fetch_all()
+        if not players:
+            return {"success": False, "error": "No players returned from ESPN stats API"}
+
+        conn      = get_db_conn()
+        c         = conn.cursor()
+        synced_at = datetime.utcnow()
+        count     = 0
+
+        for p in players:
+            try:
+                pid = int(p["id"])
+            except (ValueError, TypeError):
+                continue
+            if not p["name"]:
+                continue
+
+            c.execute('''
+                INSERT INTO player_stats
+                    (player_id, player_name, team_abbreviation, season,
+                     games_played, pts_per_game, ast_per_game, reb_per_game,
+                     stl_per_game, blk_per_game, fg3m_per_game, updated_at)
+                VALUES (%s, %s, %s, '2026', %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (player_id, season) DO UPDATE SET
+                    player_name       = EXCLUDED.player_name,
+                    team_abbreviation = EXCLUDED.team_abbreviation,
+                    games_played      = EXCLUDED.games_played,
+                    pts_per_game      = EXCLUDED.pts_per_game,
+                    ast_per_game      = EXCLUDED.ast_per_game,
+                    reb_per_game      = EXCLUDED.reb_per_game,
+                    stl_per_game      = EXCLUDED.stl_per_game,
+                    blk_per_game      = EXCLUDED.blk_per_game,
+                    fg3m_per_game     = EXCLUDED.fg3m_per_game,
+                    updated_at        = EXCLUDED.updated_at
+            ''', (pid, p["name"], p["team"], p["gp"],
+                  round(p["ppg"], 1), round(p["apg"], 1), round(p["rpg"], 1),
+                  round(p["spg"], 1), round(p["bpg"], 1), round(p["fg3m"], 1),
+                  synced_at))
+            count += 1
+
         conn.commit()
-        print(f"[PlayerSync] Aggregated from player_game_stats → {updated} player_stats rows updated")
-        return {"success": True, "source": "player_game_stats", "count": updated, "synced_at": datetime.utcnow().isoformat()}
-    except Exception as e:
-        conn.rollback()
-        print(f"[PlayerSync] ERROR: {e}")
-        return {"success": False, "error": str(e)}
-    finally:
         conn.close()
+        print(f"[PlayerSync] ESPN sync done — {count} players upserted")
+        return {"success": True, "source": "ESPN stats API", "count": count,
+                "synced_at": synced_at.isoformat()}
+
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        result = await loop.run_in_executor(pool, _do_sync)
+    return result
 
 
 @app.post("/api/admin/cleanup-duplicate-players")
@@ -6085,77 +6157,79 @@ async def search_players(q: str = "", conference: str = "All",
                          limit: int = 15, season: str = "2026"):
     """
     Player search for MVP autocomplete.
-    Driven entirely by player_game_stats (real boxscore data).
-    player_stats is joined secondarily for player_id only.
+    Primary source: player_stats (ESPN full-season sync).
+    Supplemental:   player_game_stats recent averages via GREATEST().
     - q == "" → top players by composite MVP score
     - q >= 1 char → filter by name, still sorted by score
     """
     conn = get_db_conn()
     c    = conn.cursor()
 
-    params: list = [season]
+    # params[0] = season for the recent CTE
+    # params[1] = season for the main WHERE ps.season = %s
+    # optional name/conf params appended after
+    cte_params: list  = [season]
+    main_params: list = [season]
 
-    # Name filter on the aggregated name
     name_filter = ""
     if q.strip():
-        name_filter = "AND agg.player_name ILIKE %s"
-        params.append(f"%{q.strip()}%")
+        name_filter = "AND ps.player_name ILIKE %s"
+        main_params.append(f"%{q.strip()}%")
 
-    # Conference filter via the teams table using team_abbr from game stats
     conf_filter = ""
     if conference and conference not in ("All", ""):
-        conf_filter = """AND UPPER(agg.team_abbr) IN (
+        conf_filter = """AND UPPER(ps.team_abbreviation) IN (
             SELECT UPPER(abbreviation) FROM teams
             WHERE UPPER(conference) = UPPER(%s)
                OR UPPER(conference) LIKE UPPER(%s) || '%%'
         )"""
-        params.extend([conference, conference])
+        main_params.extend([conference, conference])
 
-    # Drive ranking from player_game_stats aggregates (real boxscore numbers).
-    # player_stats is only joined for player_id and conference logo.
-    # Exclude DNP rows (all zeros), require >= 5 games for a meaningful sample.
+    # Full-season data comes from player_stats (populated by ESPN sync).
+    # player_game_stats recent averages supplement via GREATEST so the list
+    # stays fresh even before the next sync.
     # MVP score: PTS + 1.2×REB + 1.5×AST + 2×STL + 2×BLK
     c.execute(f'''
-        WITH agg AS (
-            SELECT
-                player_name,
-                MAX(team_abbr)                                      AS team_abbr,
-                COUNT(DISTINCT espn_game_id)                        AS gp,
-                ROUND(AVG(points)::numeric,    1)                   AS ppg,
-                ROUND(AVG(assists)::numeric,   1)                   AS apg,
-                ROUND(AVG(rebounds)::numeric,  1)                   AS rpg,
-                ROUND(AVG(steals)::numeric,    1)                   AS spg,
-                ROUND(AVG(blocks)::numeric,    1)                   AS bpg
+        WITH recent AS (
+            SELECT LOWER(player_name) AS lname,
+                   ROUND(AVG(points)::numeric,   1) AS ppg,
+                   ROUND(AVG(assists)::numeric,  1) AS apg,
+                   ROUND(AVG(rebounds)::numeric, 1) AS rpg,
+                   ROUND(AVG(steals)::numeric,   1) AS spg,
+                   ROUND(AVG(blocks)::numeric,   1) AS bpg
             FROM player_game_stats
             WHERE season = %s
               AND (points > 0 OR assists > 0 OR rebounds > 0)
-            GROUP BY player_name
-            HAVING COUNT(DISTINCT espn_game_id) >= 5
+            GROUP BY LOWER(player_name)
         )
         SELECT
-            COALESCE(ps.player_id, 0)                               AS player_id,
-            agg.player_name,
-            COALESCE(ps.team_abbreviation, agg.team_abbr)           AS team,
-            agg.ppg, agg.apg, agg.rpg, agg.spg, agg.bpg,
-            (agg.ppg
-             + 1.2 * agg.rpg
-             + 1.5 * agg.apg
-             + 2.0 * agg.spg
-             + 2.0 * agg.bpg)                                       AS mvp_score,
+            ps.player_id,
+            ps.player_name,
+            ps.team_abbreviation                                      AS team,
+            GREATEST(COALESCE(ps.pts_per_game,0), COALESCE(r.ppg,0)) AS ppg,
+            GREATEST(COALESCE(ps.ast_per_game,0), COALESCE(r.apg,0)) AS apg,
+            GREATEST(COALESCE(ps.reb_per_game,0), COALESCE(r.rpg,0)) AS rpg,
+            GREATEST(COALESCE(ps.stl_per_game,0), COALESCE(r.spg,0)) AS spg,
+            GREATEST(COALESCE(ps.blk_per_game,0), COALESCE(r.bpg,0)) AS bpg,
+            (
+              GREATEST(COALESCE(ps.pts_per_game,0), COALESCE(r.ppg,0))
+            + 1.2 * GREATEST(COALESCE(ps.reb_per_game,0), COALESCE(r.rpg,0))
+            + 1.5 * GREATEST(COALESCE(ps.ast_per_game,0), COALESCE(r.apg,0))
+            + 2.0 * GREATEST(COALESCE(ps.stl_per_game,0), COALESCE(r.spg,0))
+            + 2.0 * GREATEST(COALESCE(ps.blk_per_game,0), COALESCE(r.bpg,0))
+            )                                                         AS mvp_score,
             t.logo_url,
             t.conference
-        FROM agg
-        LEFT JOIN player_stats ps
-            ON LOWER(ps.player_name) = LOWER(agg.player_name)
-           AND ps.season = %s
-        LEFT JOIN teams t
-            ON UPPER(t.abbreviation) = UPPER(COALESCE(ps.team_abbreviation, agg.team_abbr))
-        WHERE 1=1
+        FROM player_stats ps
+        LEFT JOIN recent r ON r.lname = LOWER(ps.player_name)
+        LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
+        WHERE ps.season = %s
+          AND ps.pts_per_game > 0
           {name_filter}
           {conf_filter}
-        ORDER BY mvp_score DESC NULLS LAST, agg.player_name ASC
+        ORDER BY mvp_score DESC NULLS LAST, ps.player_name ASC
         LIMIT %s
-    ''', params + [season, limit * 3])
+    ''', cte_params + main_params + [limit * 3])
 
     seen_norm: set = set()
     players = []
