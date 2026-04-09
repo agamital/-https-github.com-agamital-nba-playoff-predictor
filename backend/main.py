@@ -6089,23 +6089,19 @@ async def get_futures_page_data(season: str = "2026"):
 
 @app.get("/api/players/search")
 async def search_players(q: str = "", conference: str = "All",
-                         limit: int = 7, season: str = "2026"):
+                         limit: int = 15, season: str = "2026"):
     """
-    Debounced player search for MVP autocomplete.
-    Returns players sorted by PPG (star power), optionally filtered by conference.
-    Requires q >= 2 characters.
+    Player search for MVP autocomplete.
+    - q == "" → return top players by PPG (suggestion list on focus)
+    - q >= 1 char → filter by name ILIKE, still sorted by PPG
+    Optionally filtered by conference.
     """
-    if len(q) < 2:
-        return {"players": [], "total": 0}
-
     conn = get_db_conn()
     c    = conn.cursor()
 
-    # Conference filter: use subquery so it doesn't break when the LEFT JOIN
-    # finds no matching team row (LEFT JOIN + WHERE on nullable col silently
-    # drops every player whose abbreviation isn't in the teams table).
+    # Conference filter subquery
     conf_filter = ""
-    params: list = [season, f"%{q}%"]
+    params: list = [season]
     if conference and conference not in ("All", ""):
         conf_filter = """AND UPPER(ps.team_abbreviation) IN (
             SELECT UPPER(abbreviation) FROM teams
@@ -6113,6 +6109,12 @@ async def search_players(q: str = "", conference: str = "All",
                OR UPPER(conference) LIKE UPPER(%s) || '%%'
         )"""
         params.extend([conference, conference])
+
+    # Name filter — only when query has content
+    name_filter = ""
+    if q.strip():
+        name_filter = "AND ps.player_name ILIKE %s"
+        params.append(f"%{q.strip()}%")
 
     c.execute(f'''
         SELECT player_id, player_name, team_abbreviation, ppg, logo_url, conference
@@ -6124,8 +6126,8 @@ async def search_players(q: str = "", conference: str = "All",
             FROM player_stats ps
             LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
             WHERE ps.season = %s
-              AND ps.player_name ILIKE %s
               {conf_filter}
+              {name_filter}
             ORDER BY LOWER(ps.player_name), ps.pts_per_game DESC NULLS LAST
             LIMIT %s
         ) deduped

@@ -44,35 +44,50 @@ const LeaderNumberInput = ({ value, onChange, locked, placeholder }) => {
   );
 };
 
-// ── Smart MVP search input with conference-filtered dropdown ───────────────
+// ── Smart MVP search input — shows top-PPG suggestions on focus ───────────
 const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) => {
-  const [query, setQuery]   = useState(value || '');
-  const [open, setOpen]     = useState(false);
-  const containerRef        = useRef(null);
-  const debouncedQ          = useDebounce(query, 280);
+  const [query, setQuery] = useState(value || '');
+  const [open, setOpen]   = useState(false);
+  const containerRef      = useRef(null);
+  const debouncedQ        = useDebounce(query, 280);
 
   // Keep local query in sync when external value changes (loading saved picks)
   useEffect(() => {
     if (value !== undefined && value !== query) setQuery(value || '');
   }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data: searchData, isFetching } = useQuery({
+  // Fetch top PPG players (shown on focus even before typing)
+  const { data: topData, isFetching: topFetching } = useQuery({
+    queryKey: ['playerTopPPG', conference],
+    queryFn:  () => api.searchPlayers('', conference || 'All', 15),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  // Fetch name-filtered results when user types
+  const { data: searchData, isFetching: searchFetching } = useQuery({
     queryKey: ['playerSearch', debouncedQ, conference],
-    queryFn:  () => api.searchPlayers(debouncedQ, conference || 'All', 7),
-    enabled:  debouncedQ.length >= 2,
+    queryFn:  () => api.searchPlayers(debouncedQ, conference || 'All', 15),
+    enabled:  debouncedQ.length >= 1,
     staleTime: 5 * 60 * 1000,
     keepPreviousData: true,
   });
 
-  const players = searchData?.players ?? [];
+  const isFetching = query.length >= 1 ? searchFetching : topFetching;
+  const players    = query.length >= 1
+    ? (searchData?.players ?? [])
+    : (topData?.players ?? []);
 
-  // Close dropdown on outside click
+  // Close dropdown on outside click/touch
   useEffect(() => {
     const handler = (e) => {
       if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
     };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('touchstart', handler);
+    };
   }, []);
 
   const handleSelect = (playerName) => {
@@ -82,13 +97,13 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) =>
   };
 
   const handleInput = (e) => {
-    const v = e.target.value;
-    setQuery(v);
-    onChange(v);
+    setQuery(e.target.value);
+    onChange(e.target.value);
     setOpen(true);
   };
 
-  const showDropdown = open && debouncedQ.length >= 2;
+  const isSearchMode = query.length >= 1;
+  const showDropdown = open && !locked;
 
   return (
     <div ref={containerRef} className="relative">
@@ -98,31 +113,58 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) =>
           type="text"
           value={query}
           onChange={handleInput}
-          onFocus={() => debouncedQ.length >= 2 && setOpen(true)}
+          onFocus={() => !locked && setOpen(true)}
           disabled={locked}
-          placeholder={placeholder || 'Search player…'}
+          placeholder={placeholder || 'Search or pick a player…'}
           autoComplete="off"
           autoCorrect="off"
+          autoCapitalize="none"
           spellCheck={false}
-          className="w-full pl-9 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full pl-9 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         />
-        {isFetching && debouncedQ.length >= 2 && (
+        {isFetching && (
           <div className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
         )}
       </div>
 
       {/* Dropdown */}
       {showDropdown && (
-        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden"
+          style={{ maxHeight: 320, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+
+          {/* Header label */}
+          <div className="px-4 py-2 bg-slate-900/70 border-b border-slate-700/50 flex items-center justify-between">
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
+              {isSearchMode ? 'Search results' : 'Top players by PPG'}
+              {conference && conference !== 'All' ? ` · ${conference} only` : ''}
+            </span>
+            {!isSearchMode && <span className="text-[10px] text-slate-600 font-bold">Tap to select</span>}
+          </div>
+
           {isFetching && players.length === 0 ? (
-            <div className="px-4 py-3 text-slate-500 text-sm animate-pulse">Searching…</div>
+            <div className="px-4 py-4 text-slate-500 text-sm animate-pulse">Loading…</div>
+          ) : players.length === 0 ? (
+            <div className="px-4 py-4 text-slate-500 text-sm">
+              {isSearchMode ? `No players found for "${query}"` : 'No player data available yet'}
+            </div>
           ) : (
-            players.map((p) => (
+            players.map((p, idx) => (
               <button
                 key={p.player_id}
                 onMouseDown={(e) => { e.preventDefault(); handleSelect(p.name); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-700/70 transition-colors text-left"
+                onTouchEnd={(e) => { e.preventDefault(); handleSelect(p.name); }}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/70 active:bg-slate-700 transition-colors text-left border-b border-slate-700/30 last:border-0"
               >
+                {/* Rank badge for top-PPG mode */}
+                {!isSearchMode && (
+                  <span className={`w-5 h-5 shrink-0 flex items-center justify-center text-[10px] font-black rounded-full
+                    ${idx === 0 ? 'bg-yellow-500/20 text-yellow-400' :
+                      idx === 1 ? 'bg-slate-400/20 text-slate-300' :
+                      idx === 2 ? 'bg-amber-700/20 text-amber-600' :
+                      'text-slate-600'}`}>
+                    {idx + 1}
+                  </span>
+                )}
                 {p.logo_url ? (
                   <img src={p.logo_url} alt={p.team} className="w-5 h-5 shrink-0 object-contain" onError={e => e.target.style.display='none'} />
                 ) : (
@@ -130,17 +172,9 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) =>
                 )}
                 <span className="flex-1 text-sm font-semibold text-white truncate">{p.name}</span>
                 <span className="text-[10px] font-bold text-slate-400 shrink-0">{p.team}</span>
-                <span className="text-[10px] font-black text-orange-400 shrink-0 tabular-nums">{p.ppg} PPG</span>
+                <span className="text-[11px] font-black text-orange-400 shrink-0 tabular-nums">{p.ppg} PPG</span>
               </button>
             ))
-          )}
-          {!isFetching && players.length === 0 && debouncedQ.length >= 2 && (
-            <div className="px-4 py-3 text-slate-500 text-sm">No players found for "{debouncedQ}"</div>
-          )}
-          {conference && conference !== 'All' && (
-            <div className="px-4 py-2 bg-slate-900/60 border-t border-slate-700/50">
-              <span className="text-[10px] text-slate-600 font-bold">{conference} Conference players only · sorted by PPG</span>
-            </div>
           )}
         </div>
       )}
