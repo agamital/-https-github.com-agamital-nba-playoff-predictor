@@ -450,8 +450,8 @@ export const deleteAdminUser = async (adminUserId, userId) => {
 };
 
 export const toggleUserReminderOptOut = async (adminUserId, userId, optOut) => {
-  const response = await api.patch(`/api/admin/users/${userId}/reminder-opt-out`, null, {
-    params: { admin_user_id: adminUserId, opt_out: optOut },
+  const response = await api.patch(`/api/admin/users/${userId}`, null, {
+    params: { admin_user_id: adminUserId, reminder_opt_out: optOut },
   });
   return response.data;
 };

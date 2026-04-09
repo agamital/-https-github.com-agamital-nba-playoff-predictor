@@ -6445,10 +6445,11 @@ async def admin_list_users(admin_user_id: int):
 async def admin_update_user(
     user_id: int,
     admin_user_id: int,
-    username: Optional[str] = None,
-    points: Optional[int]   = None,
+    username: Optional[str]  = None,
+    points: Optional[int]    = None,
+    reminder_opt_out: Optional[bool] = None,
 ):
-    """Edit a user's username and/or points. Admin only."""
+    """Edit a user's username, points, and/or reminder opt-out. Admin only."""
     conn = get_db_conn()
     c = conn.cursor()
     try:
@@ -6460,6 +6461,9 @@ async def admin_update_user(
         if points is not None:
             updates.append("points = %s")
             values.append(points)
+        if reminder_opt_out is not None:
+            updates.append("reminder_opt_out = %s")
+            values.append(reminder_opt_out)
         if not updates:
             raise HTTPException(400, "Nothing to update")
         values.append(user_id)
@@ -6502,30 +6506,6 @@ async def admin_delete_user(user_id: int, admin_user_id: int):
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
-    finally:
-        conn.close()
-
-
-@app.patch("/api/admin/users/{user_id}/reminder-opt-out")
-async def admin_toggle_reminder_opt_out(user_id: int, admin_user_id: int, opt_out: bool):
-    """Toggle email reminder opt-out for a user. Admin only."""
-    conn = get_db_conn()
-    c = conn.cursor()
-    try:
-        _verify_admin(c, admin_user_id)
-        c.execute(
-            "UPDATE users SET reminder_opt_out = %s WHERE id = %s RETURNING id",
-            (opt_out, user_id)
-        )
-        if not c.fetchone():
-            raise HTTPException(404, "User not found")
-        conn.commit()
-        return {"message": "Updated", "reminder_opt_out": opt_out}
-    except HTTPException:
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(400, str(e))
     finally:
         conn.close()
 
