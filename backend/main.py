@@ -6271,13 +6271,22 @@ async def search_players(q: str = "", conference: str = "All",
         })
 
     # When Vegas weights are active, re-sort the full pool before slicing.
-    # This is done in Python (not SQL) so the weighting stays flexible.
     if vegas_weights:
         raw_players.sort(key=lambda p: p["weighted_score"], reverse=True)
+
+    # For MVP fields: cap at 3 players per team so one title-favourite team
+    # doesn't flood the entire suggestion list.
+    per_team_limit = 3 if mvp_type else None
+    team_counts: dict = {}
 
     players = []
     for p in raw_players:
         del p["weighted_score"]
+        if per_team_limit:
+            t = p["team"]
+            if team_counts.get(t, 0) >= per_team_limit:
+                continue
+            team_counts[t] = team_counts.get(t, 0) + 1
         players.append(p)
         if len(players) >= limit:
             break
