@@ -6297,7 +6297,7 @@ async def search_players(q: str = "", conference: str = "All",
           {conf_filter}
         ORDER BY mvp_score DESC NULLS LAST, m.pname ASC
         LIMIT %s
-    ''', [season, season] + name_params + conf_params + [limit * 3])
+    ''', [season, season] + name_params + conf_params + [500 if mvp_type else limit * 3])
 
     # Vegas team weights — compass for ordering, not raw probability display
     vegas_weights = _vegas_team_weights(mvp_type)
@@ -6309,31 +6309,35 @@ async def search_players(q: str = "", conference: str = "All",
         if norm in seen_norm:
             continue
         seen_norm.add(norm)
-        team       = (r[2] or "").upper()
+        team        = (r[2] or "").upper()
         stats_score = float(r[8] or 0)
-        # Apply Vegas weight: blend stats score with team title odds.
-        # If no weights (mvp_type not set), pure stats score is used.
+
         if vegas_weights:
-            w = vegas_weights.get(team, 0.01)   # unknown teams get tiny weight
-            weighted_score = stats_score * w * 30  # ×30 keeps magnitudes comparable
+            # Weight = team's normalized implied championship probability.
+            # Players on higher-odds teams float up even if stats are similar.
+            # Teams not in the Vegas list (non-contenders) get a floor of 0.005.
+            w = vegas_weights.get(team, 0.005)
+            weighted_score = stats_score * w
         else:
             weighted_score = stats_score
+
         raw_players.append({
-            "player_id":     r[0],
-            "name":          r[1],
-            "team":          team,
-            "ppg":           round(float(r[3] or 0), 1),
-            "apg":           round(float(r[4] or 0), 1),
-            "rpg":           round(float(r[5] or 0), 1),
-            "spg":           round(float(r[6] or 0), 1),
-            "bpg":           round(float(r[7] or 0), 1),
-            "mvp_score":     round(stats_score, 1),
+            "player_id":      r[0],
+            "name":           r[1],
+            "team":           team,
+            "ppg":            round(float(r[3] or 0), 1),
+            "apg":            round(float(r[4] or 0), 1),
+            "rpg":            round(float(r[5] or 0), 1),
+            "spg":            round(float(r[6] or 0), 1),
+            "bpg":            round(float(r[7] or 0), 1),
+            "mvp_score":      round(stats_score, 1),
             "weighted_score": weighted_score,
-            "logo_url":      r[9],
-            "conference":    r[10],
+            "logo_url":       r[9],
+            "conference":     r[10],
         })
 
-    # Re-sort by weighted score when Vegas odds are active
+    # When Vegas weights are active, re-sort the full pool before slicing.
+    # This is done in Python (not SQL) so the weighting stays flexible.
     if vegas_weights:
         raw_players.sort(key=lambda p: p["weighted_score"], reverse=True)
 
