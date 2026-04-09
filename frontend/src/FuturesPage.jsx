@@ -135,7 +135,7 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) =>
           {/* Header label */}
           <div className="px-4 py-2 bg-slate-900/70 border-b border-slate-700/50 flex items-center justify-between">
             <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
-              {isSearchMode ? 'Search results' : 'Top players by PPG'}
+              {isSearchMode ? 'Search results' : 'Top MVP candidates'}
               {conference && conference !== 'All' ? ` · ${conference} only` : ''}
             </span>
             {!isSearchMode && <span className="text-[10px] text-slate-600 font-bold">Tap to select</span>}
@@ -153,9 +153,9 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) =>
                 key={p.player_id}
                 onMouseDown={(e) => { e.preventDefault(); handleSelect(p.name); }}
                 onTouchEnd={(e) => { e.preventDefault(); handleSelect(p.name); }}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/70 active:bg-slate-700 transition-colors text-left border-b border-slate-700/30 last:border-0"
+                className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-slate-700/70 active:bg-slate-700 transition-colors text-left border-b border-slate-700/30 last:border-0"
               >
-                {/* Rank badge for top-PPG mode */}
+                {/* Rank badge */}
                 {!isSearchMode && (
                   <span className={`w-5 h-5 shrink-0 flex items-center justify-center text-[10px] font-black rounded-full
                     ${idx === 0 ? 'bg-yellow-500/20 text-yellow-400' :
@@ -170,9 +170,18 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) =>
                 ) : (
                   <span className="w-5 h-5 shrink-0 text-[9px] font-black text-slate-500 flex items-center justify-center">{p.team}</span>
                 )}
-                <span className="flex-1 text-sm font-semibold text-white truncate">{p.name}</span>
-                <span className="text-[10px] font-bold text-slate-400 shrink-0">{p.team}</span>
-                <span className="text-[11px] font-black text-orange-400 shrink-0 tabular-nums">{p.ppg} PPG</span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-semibold text-white truncate block">{p.name}</span>
+                  <span className="text-[10px] text-slate-500 tabular-nums">
+                    {p.ppg}pts · {p.rpg}reb · {p.apg}ast{p.spg > 0 ? ` · ${p.spg}stl` : ''}{p.bpg > 0 ? ` · ${p.bpg}blk` : ''}
+                  </span>
+                </div>
+                <div className="shrink-0 text-right">
+                  <span className="text-[10px] font-bold text-slate-500 block">{p.team}</span>
+                  {p.mvp_score > 0 && (
+                    <span className="text-[11px] font-black text-orange-400 tabular-nums">{p.mvp_score}⭐</span>
+                  )}
+                </div>
               </button>
             ))
           )}

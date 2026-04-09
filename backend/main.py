@@ -6121,39 +6121,52 @@ async def search_players(q: str = "", conference: str = "All",
         name_filter = "AND ps.player_name ILIKE %s"
         params.append(f"%{q.strip()}%")
 
-    # Use a CTE to compute PPG from actual game data (player_game_stats) as the
-    # primary source. This works even when pts_per_game in player_stats is 0
-    # (e.g. NBA API sync failed). Falls back to pts_per_game when no game data.
-    # DISTINCT ON deduplicates the full set before the outer ORDER BY by PPG.
+    # Sort by a composite MVP-impact score instead of raw PPG.
+    # Formula: PTS + 1.2×REB + 1.5×AST + 2×STL + 2×BLK
+    # This rewards all-around play — a guard with 10 APG competes with a 30-PPG scorer.
+    # Source priority: player_game_stats (actual game data) > player_stats (NBA API sync).
     c.execute(f'''
-        WITH game_ppg AS (
+        WITH game_avgs AS (
             SELECT LOWER(player_name) AS lname,
-                   ROUND(AVG(points)::numeric, 1) AS ppg
+                   ROUND(AVG(points)::numeric,   1) AS ppg,
+                   ROUND(AVG(assists)::numeric,  1) AS apg,
+                   ROUND(AVG(rebounds)::numeric, 1) AS rpg,
+                   ROUND(AVG(steals)::numeric,   1) AS spg,
+                   ROUND(AVG(blocks)::numeric,   1) AS bpg
             FROM player_game_stats
             WHERE season = %s
             GROUP BY LOWER(player_name)
         )
-        SELECT player_id, player_name, team_abbreviation, ppg, logo_url, conference
+        SELECT player_id, player_name, team_abbreviation,
+               ppg, apg, rpg, spg, bpg, mvp_score,
+               logo_url, conference
         FROM (
             SELECT DISTINCT ON (LOWER(ps.player_name))
                    ps.player_id, ps.player_name, ps.team_abbreviation,
-                   GREATEST(
-                       COALESCE(gp.ppg, 0),
-                       COALESCE(ps.pts_per_game, 0)
-                   ) AS ppg,
+                   GREATEST(COALESCE(ga.ppg, 0), COALESCE(ps.pts_per_game, 0)) AS ppg,
+                   GREATEST(COALESCE(ga.apg, 0), COALESCE(ps.ast_per_game, 0)) AS apg,
+                   GREATEST(COALESCE(ga.rpg, 0), COALESCE(ps.reb_per_game, 0)) AS rpg,
+                   GREATEST(COALESCE(ga.spg, 0), COALESCE(ps.stl_per_game, 0)) AS spg,
+                   GREATEST(COALESCE(ga.bpg, 0), COALESCE(ps.blk_per_game, 0)) AS bpg,
+                   (
+                       GREATEST(COALESCE(ga.ppg,0), COALESCE(ps.pts_per_game,0))
+                     + 1.2 * GREATEST(COALESCE(ga.rpg,0), COALESCE(ps.reb_per_game,0))
+                     + 1.5 * GREATEST(COALESCE(ga.apg,0), COALESCE(ps.ast_per_game,0))
+                     + 2.0 * GREATEST(COALESCE(ga.spg,0), COALESCE(ps.stl_per_game,0))
+                     + 2.0 * GREATEST(COALESCE(ga.bpg,0), COALESCE(ps.blk_per_game,0))
+                   ) AS mvp_score,
                    t.logo_url, t.conference
             FROM player_stats ps
-            LEFT JOIN game_ppg gp ON gp.lname = LOWER(ps.player_name)
+            LEFT JOIN game_avgs ga ON ga.lname = LOWER(ps.player_name)
             LEFT JOIN teams t ON UPPER(t.abbreviation) = UPPER(ps.team_abbreviation)
             WHERE ps.season = %s
               {conf_filter}
               {name_filter}
-            ORDER BY LOWER(ps.player_name),
-                     GREATEST(COALESCE(gp.ppg,0), COALESCE(ps.pts_per_game,0)) DESC NULLS LAST
+            ORDER BY LOWER(ps.player_name), ps.pts_per_game DESC NULLS LAST
         ) deduped
-        ORDER BY ppg DESC NULLS LAST, player_name ASC
+        ORDER BY mvp_score DESC NULLS LAST, player_name ASC
         LIMIT %s
-    ''', [season] + params + [limit * 3])   # extra rows for accent-dedup in Python
+    ''', [season] + params + [limit * 3])
 
     # Post-dedup by accent-normalized name (catches "Doncic" ↔ "Dončić" pairs
     # that DISTINCT ON LOWER() can't collapse).
@@ -6168,9 +6181,14 @@ async def search_players(q: str = "", conference: str = "All",
             "player_id":  r[0],
             "name":       r[1],
             "team":       r[2],
-            "ppg":        round(float(r[3]), 1),
-            "logo_url":   r[4],
-            "conference": r[5],
+            "ppg":        round(float(r[3] or 0), 1),
+            "apg":        round(float(r[4] or 0), 1),
+            "rpg":        round(float(r[5] or 0), 1),
+            "spg":        round(float(r[6] or 0), 1),
+            "bpg":        round(float(r[7] or 0), 1),
+            "mvp_score":  round(float(r[8] or 0), 1),
+            "logo_url":   r[9],
+            "conference": r[10],
         })
         if len(players) >= limit:
             break
