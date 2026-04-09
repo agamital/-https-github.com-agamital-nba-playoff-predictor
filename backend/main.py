@@ -3550,9 +3550,12 @@ async def admin_player_stats_sync():
                     blk_per_game      = EXCLUDED.blk_per_game,
                     fg3m_per_game     = EXCLUDED.fg3m_per_game,
                     updated_at        = EXCLUDED.updated_at
+            # Cap values — if ESPN returned season totals instead of per-game
+            # averages the numbers will be in the hundreds; discard them.
+            def _cap(v, mx): return round(v, 1) if v <= mx else 0.0
             ''', (pid, p["name"], p["team"], p["gp"],
-                  round(p["ppg"], 1), round(p["apg"], 1), round(p["rpg"], 1),
-                  round(p["spg"], 1), round(p["bpg"], 1), round(p["fg3m"], 1),
+                  _cap(p["ppg"], 60), _cap(p["apg"], 30), _cap(p["rpg"], 30),
+                  _cap(p["spg"], 10), _cap(p["bpg"], 10), _cap(p["fg3m"], 15),
                   synced_at))
             count += 1
 
@@ -6237,16 +6240,18 @@ async def search_players(q: str = "", conference: str = "All",
     c.execute(f'''
         WITH season AS (
             -- full-season averages from ESPN sync
+            -- Sanity cap: per-game stats > 60 means ESPN stored season totals,
+            -- not per-game averages (bug in parsing). Treat those rows as 0.
             SELECT
-                LOWER(player_name)        AS lname,
-                MAX(player_id)            AS player_id,
-                MAX(player_name)          AS player_name,
-                MAX(team_abbreviation)    AS team_abbr,
-                MAX(pts_per_game)         AS ppg,
-                MAX(ast_per_game)         AS apg,
-                MAX(reb_per_game)         AS rpg,
-                MAX(stl_per_game)         AS spg,
-                MAX(blk_per_game)         AS bpg
+                LOWER(player_name)                                        AS lname,
+                MAX(player_id)                                            AS player_id,
+                MAX(player_name)                                          AS player_name,
+                MAX(team_abbreviation)                                    AS team_abbr,
+                MAX(CASE WHEN pts_per_game <= 60 THEN pts_per_game ELSE 0 END) AS ppg,
+                MAX(CASE WHEN ast_per_game <= 30 THEN ast_per_game ELSE 0 END) AS apg,
+                MAX(CASE WHEN reb_per_game <= 30 THEN reb_per_game ELSE 0 END) AS rpg,
+                MAX(CASE WHEN stl_per_game <= 10 THEN stl_per_game ELSE 0 END) AS spg,
+                MAX(CASE WHEN blk_per_game <= 10 THEN blk_per_game ELSE 0 END) AS bpg
             FROM player_stats
             WHERE season = %s
             GROUP BY LOWER(player_name)
