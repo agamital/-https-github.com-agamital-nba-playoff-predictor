@@ -6270,26 +6270,43 @@ async def search_players(q: str = "", conference: str = "All",
             "conference":     r[10],
         })
 
-    # When Vegas weights are active, re-sort the full pool before slicing.
-    if vegas_weights:
-        raw_players.sort(key=lambda p: p["weighted_score"], reverse=True)
-
-    # For MVP fields: cap at 3 players per team so one title-favourite team
-    # doesn't flood the entire suggestion list.
-    per_team_limit = 3 if mvp_type else None
-    team_counts: dict = {}
-
-    players = []
     for p in raw_players:
         del p["weighted_score"]
-        if per_team_limit:
-            t = p["team"]
-            if team_counts.get(t, 0) >= per_team_limit:
-                continue
-            team_counts[t] = team_counts.get(t, 0) + 1
-        players.append(p)
-        if len(players) >= limit:
-            break
+
+    if vegas_weights:
+        # Round-robin by team so every team's best player appears before
+        # any team's 2nd player.
+        # Step 1: group by team, each group sorted by mvp_score desc
+        from collections import defaultdict
+        team_buckets: dict = defaultdict(list)
+        for p in raw_players:
+            team_buckets[p["team"]].append(p)
+        for bucket in team_buckets.values():
+            bucket.sort(key=lambda x: x["mvp_score"], reverse=True)
+
+        # Step 2: order teams by their Vegas weight (best odds first)
+        team_order = sorted(team_buckets.keys(),
+                            key=lambda t: vegas_weights.get(t, 0),
+                            reverse=True)
+
+        # Step 3: interleave — slot 0 of every team, then slot 1, then slot 2
+        players = []
+        slot = 0
+        while len(players) < limit:
+            added = False
+            for t in team_order:
+                bucket = team_buckets[t]
+                if slot < len(bucket):
+                    players.append(bucket[slot])
+                    added = True
+                    if len(players) >= limit:
+                        break
+            if not added:
+                break
+            slot += 1
+    else:
+        # No MVP type — pure stats order, no per-team cap
+        players = raw_players[:limit]
 
     conn.close()
     return {"players": players, "total": len(players)}
