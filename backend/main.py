@@ -3457,7 +3457,7 @@ async def admin_player_stats_sync():
             FROM (
                 SELECT
                     player_name,
-                    MAX(team_abbreviation)                           AS team,
+                    MAX(team_abbr)                                   AS team,
                     COUNT(*)                                         AS gp,
                     ROUND(AVG(points)::numeric,    1)                AS ppg,
                     ROUND(AVG(assists)::numeric,   1)                AS apg,
