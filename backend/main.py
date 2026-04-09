@@ -3550,12 +3550,10 @@ async def admin_player_stats_sync():
                     blk_per_game      = EXCLUDED.blk_per_game,
                     fg3m_per_game     = EXCLUDED.fg3m_per_game,
                     updated_at        = EXCLUDED.updated_at
-            # Cap values — if ESPN returned season totals instead of per-game
-            # averages the numbers will be in the hundreds; discard them.
-            def _cap(v, mx): return round(v, 1) if v <= mx else 0.0
             ''', (pid, p["name"], p["team"], p["gp"],
-                  _cap(p["ppg"], 60), _cap(p["apg"], 30), _cap(p["rpg"], 30),
-                  _cap(p["spg"], 10), _cap(p["bpg"], 10), _cap(p["fg3m"], 15),
+                  min(round(p["ppg"], 1), 60), min(round(p["apg"], 1), 30),
+                  min(round(p["rpg"], 1), 30), min(round(p["spg"], 1), 10),
+                  min(round(p["bpg"], 1), 10), min(round(p["fg3m"], 1), 15),
                   synced_at))
             count += 1
 
