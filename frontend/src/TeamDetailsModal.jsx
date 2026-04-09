@@ -21,8 +21,8 @@ const PlayerStatsModal = ({ player, onClose }) => {
   }, [player.id]);
 
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl overflow-y-auto overscroll-contain" style={{ maxHeight: 'min(85dvh, 85vh)', WebkitOverflowScrolling: 'touch' }} onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
             <img
@@ -92,21 +92,21 @@ const TeamDetailsModal = ({ team, onClose }) => {
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
-        <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg flex flex-col shadow-2xl" style={{ maxHeight: 'min(85dvh, 85vh)' }} onClick={e => e.stopPropagation()}>
           {/* Header */}
-          <div className="flex items-center gap-4 p-5 border-b border-slate-800">
+          <div className="flex items-center gap-4 p-5 border-b border-slate-800 shrink-0">
             <img src={team.logo_url} alt={team.name} className="w-14 h-14" onError={e => e.target.style.display = 'none'} />
             <div className="flex-1">
               <h2 className="text-xl font-black text-white">{team.name}</h2>
               <p className="text-sm text-slate-400">{team.conference} Conference{team.seed ? ` • Seed #${team.seed}` : ''}</p>
             </div>
-            <button onClick={onClose} className="w-9 h-9 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition-colors shrink-0">
+            <button onClick={onClose} className="w-11 h-11 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition-colors shrink-0">
               <X className="w-5 h-5" />
             </button>
           </div>
 
           {/* Roster */}
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto overscroll-contain p-4" style={{ WebkitOverflowScrolling: 'touch' }}>
             <p className="text-xs text-slate-500 uppercase font-bold tracking-wide mb-3">2024-25 Roster</p>
             {loading ? (
               <div className="flex items-center justify-center py-12">

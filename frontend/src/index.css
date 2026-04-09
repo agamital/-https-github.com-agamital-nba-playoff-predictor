@@ -6,6 +6,42 @@
   body {
     @apply bg-slate-950 text-white;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    /* Prevent Safari from auto-adjusting font sizes on orientation change */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  /* ── iOS input zoom prevention ───────────────────────────────────────────
+     iOS Safari zooms in whenever a focused input has font-size < 16px.
+     Force 16px on all inputs/textareas/selects to prevent this. ── */
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+    /* Remove iOS default inner shadow / appearance */
+    -webkit-appearance: none;
+    appearance: none;
+    border-radius: 0; /* reset iOS default rounded inputs */
+  }
+
+  /* But keep border-radius defined by Tailwind classes */
+  input.rounded-lg,
+  textarea.rounded-lg,
+  select.rounded-lg { border-radius: 0.5rem; }
+  input.rounded-xl,
+  textarea.rounded-xl,
+  select.rounded-xl { border-radius: 0.75rem; }
+  input[type="checkbox"],
+  input[type="radio"] {
+    -webkit-appearance: auto;
+    appearance: auto;
+    font-size: inherit !important;
+  }
+
+  /* Buttons: remove iOS default styling */
+  button {
+    -webkit-appearance: none;
+    appearance: none;
   }
 }
 
@@ -40,51 +76,97 @@
   display: inline-block;
 }
 
-/* iOS safe-area support (iPhone X+ home indicator) */
-.nav-safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-.pb-safe {
-  padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
-}
-
 /* ── iOS / Safari fixes ───────────────────────────────────────────────────── */
 
-/* Prevent grey flash on tap for all interactive elements on iOS */
+/* Remove grey flash on tap for ALL interactive elements */
 * {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Ensure buttons are tappable without 300ms delay on iOS */
-button, a, [role="button"] {
+/* Remove 300ms click delay — critical for buttons feeling responsive on iOS */
+button, a, [role="button"], input, select, textarea, label {
   touch-action: manipulation;
 }
 
-/* Smooth momentum scroll inside overflow containers on iOS */
-.overflow-y-auto, .overflow-x-auto {
+/* Smooth momentum scroll inside overflow containers */
+.overflow-y-auto,
+.overflow-x-auto,
+.overflow-y-scroll {
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
-/* Fix position:fixed viewport issues on iOS Safari (address bar shrink) */
-.fixed-bottom-sheet {
-  position: fixed;
-  /* Use dvh (dynamic viewport height) where supported, fall back to vh */
-  max-height: 84dvh;
-  max-height: 84vh; /* fallback */
-}
+/* ── Safe-area / notch support ────────────────────────────────────────────── */
 
-/* Top bar safe area for notched iPhones */
-.pt-safe {
-  padding-top: env(safe-area-inset-top, 0px);
-}
-
-/* Bottom nav: ensure taps register through safe area */
+/* iOS home indicator padding for fixed bottom elements */
 .nav-safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Fix 100vh on mobile Safari (doesn't account for address bar) */
+/* Main content: clears bottom nav + home indicator */
+.pb-safe {
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Top bar padding for Face ID notch area (when used as PWA) */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Dynamic viewport height — iOS Safari's address bar shrinks the viewport,
+   100dvh tracks the actual visible area (falls back to 100vh on older Safari) */
 .min-h-screen {
   min-height: 100vh;
   min-height: 100dvh;
+}
+.h-screen {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* ── Focus styles — visible but not jarring on iOS ───────────────────────── */
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  /* ring is handled by Tailwind focus: classes */
+}
+
+/* ── Minimum touch targets (Apple HIG: 44×44pt) ──────────────────────────── */
+
+/* Bottom nav and top bar interactive elements */
+.touch-target {
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Prevent text selection on interactive UI (feels native) ─────────────── */
+button,
+nav,
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── Scroll snapping helpers ─────────────────────────────────────────────── */
+.snap-x {
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+.snap-start {
+  scroll-snap-align: start;
+}
+
+/* ── Fix position:fixed bottom sheet on iOS Safari ───────────────────────── */
+/* iOS Safari shrinks the viewport when the address bar shows/hides,
+   causing fixed elements to jump. dvh anchors to the dynamic visible area. */
+.bottom-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: min(84dvh, 84vh);
 }

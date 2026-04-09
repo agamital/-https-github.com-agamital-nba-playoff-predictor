@@ -211,7 +211,8 @@ const BoxscoreModal = ({ game, onClose }) => {
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-14" onClick={onClose}>
       <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
       <div
-        className="relative bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[82vh] overflow-hidden flex flex-col shadow-2xl"
+        className="relative bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl flex flex-col shadow-2xl"
+        style={{ maxHeight: 'min(82dvh, 82vh)' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Modal header */}
@@ -231,14 +232,14 @@ const BoxscoreModal = ({ game, onClose }) => {
               </div>
               <TeamLogo abbr={homeAbbr} size="lg" />
             </div>
-            <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-1 shrink-0">
+            <button onClick={onClose} className="w-11 h-11 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 rounded-xl transition-colors shrink-0">
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
         {/* Modal body — single scrollable table */}
-        <div className="overflow-y-auto flex-1">
+        <div className="overflow-y-auto overscroll-contain flex-1" style={{ WebkitOverflowScrolling: 'touch' }}>
           {isLoading ? (
             <div className="p-10 text-center text-slate-400 text-sm animate-pulse">Loading boxscore…</div>
           ) : allTeams.length ? (

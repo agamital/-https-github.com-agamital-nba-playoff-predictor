@@ -356,6 +356,10 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
             minLength={3}
             pattern="[a-zA-Z0-9_]+"
             title="Letters, numbers and underscores only"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            inputMode="text"
             className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
             required
           />
@@ -381,6 +385,7 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
               value={passwords.current}
               onChange={e => setPasswords(p => ({ ...p, current: e.target.value }))}
               placeholder="Current password"
+              autoComplete="current-password"
               className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
               required
             />
@@ -390,6 +395,7 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
               onChange={e => setPasswords(p => ({ ...p, next: e.target.value }))}
               placeholder="New password"
               minLength={4}
+              autoComplete="new-password"
               className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
               required
             />
@@ -398,6 +404,7 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
               value={passwords.confirm}
               onChange={e => setPasswords(p => ({ ...p, confirm: e.target.value }))}
               placeholder="Confirm new password"
+              autoComplete="new-password"
               className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
               required
             />
