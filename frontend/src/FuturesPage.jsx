@@ -45,7 +45,7 @@ const LeaderNumberInput = ({ value, onChange, locked, placeholder }) => {
 };
 
 // ── Smart MVP search input — shows top-PPG suggestions on focus ───────────
-const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) => {
+const MvpSearchInput = ({ value, onChange, locked, placeholder, conference, mvpType = '' }) => {
   const [query, setQuery] = useState(value || '');
   const [open, setOpen]   = useState(false);
   const containerRef      = useRef(null);
@@ -56,17 +56,17 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference }) =>
     if (value !== undefined && value !== query) setQuery(value || '');
   }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch top PPG players (shown on focus even before typing)
+  // Fetch top players on focus — Vegas-weighted when mvpType is set
   const { data: topData, isFetching: topFetching } = useQuery({
-    queryKey: ['playerTopPPG', conference],
-    queryFn:  () => api.searchPlayers('', conference || 'All', 15),
+    queryKey: ['playerTopPPG', conference, mvpType],
+    queryFn:  () => api.searchPlayers('', conference || 'All', 15, '2026', mvpType),
     staleTime: 10 * 60 * 1000,
   });
 
   // Fetch name-filtered results when user types
   const { data: searchData, isFetching: searchFetching } = useQuery({
-    queryKey: ['playerSearch', debouncedQ, conference],
-    queryFn:  () => api.searchPlayers(debouncedQ, conference || 'All', 15),
+    queryKey: ['playerSearch', debouncedQ, conference, mvpType],
+    queryFn:  () => api.searchPlayers(debouncedQ, conference || 'All', 15, '2026', mvpType),
     enabled:  debouncedQ.length >= 1,
     staleTime: 5 * 60 * 1000,
     keepPreviousData: true,
@@ -492,15 +492,15 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
         </div>
 
         <Section title="Finals MVP" color="text-orange-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.finals_mvp} oddsMult={odds.finals_mvp}>
-          <MvpSearchInput value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Search any playoff player…" conference="All" />
+          <MvpSearchInput value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Search any playoff player…" conference="All" mvpType="finals" />
         </Section>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Section title="West Finals MVP" color="text-red-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_finals_mvp} oddsMult={odds.west_finals_mvp}>
-            <MvpSearchInput value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Search Western Conference players…" conference="West" />
+            <MvpSearchInput value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Search Western Conference players…" conference="West" mvpType="west" />
           </Section>
           <Section title="East Finals MVP" color="text-blue-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_finals_mvp} oddsMult={odds.east_finals_mvp}>
-            <MvpSearchInput value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Search Eastern Conference players…" conference="East" />
+            <MvpSearchInput value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Search Eastern Conference players…" conference="East" mvpType="east" />
           </Section>
         </div>
 

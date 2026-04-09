@@ -6152,15 +6152,63 @@ async def get_futures_page_data(season: str = "2026"):
     }
 
 
+# ── Vegas odds used as compass for MVP search ordering ───────────────────────
+# American odds → implied probability (normalized, overround removed).
+# Used to weight the stats-based mvp_score so that players on title-contending
+# teams bubble up even when their raw stats are similar to peers on weaker teams.
+
+def _vegas_team_weights(mvp_type: str) -> dict:
+    """
+    Return {TEAM_ABBR: weight} where weight = normalized implied probability.
+    mvp_type: "finals" uses championship odds,
+              "west"   uses West-team championship odds,
+              "east"   uses East-team championship odds.
+    All other values return an empty dict (no weighting applied).
+    Source: Vegas / Polymarket consensus pre-playoffs 2026.
+    """
+    # American championship odds per team
+    CHAMP_ODDS = {
+        "OKC": 115,   # West  +115  46.5%
+        "SAS": 550,   # West  +550  15.4%
+        "BOS": 600,   # East  +600  14.3%
+        "CLE": 950,   # East  +950   9.5%
+        "DEN": 1100,  # West +1100   8.3%
+        "DET": 1400,  # East +1400   6.7%
+        "NYK": 1700,  # East +1700   5.6%
+        "HOU": 4000,  # West +4000   2.4%
+    }
+    WEST_TEAMS = {"OKC", "SAS", "DEN", "HOU"}
+    EAST_TEAMS = {"BOS", "CLE", "DET", "NYK"}
+
+    if mvp_type == "west":
+        pool = {k: v for k, v in CHAMP_ODDS.items() if k in WEST_TEAMS}
+    elif mvp_type == "east":
+        pool = {k: v for k, v in CHAMP_ODDS.items() if k in EAST_TEAMS}
+    elif mvp_type == "finals":
+        pool = CHAMP_ODDS
+    else:
+        return {}
+
+    def impl(odds): return 100.0 / (odds + 100.0)
+    raw   = {k: impl(v) for k, v in pool.items()}
+    total = sum(raw.values()) or 1.0
+    return {k: v / total for k, v in raw.items()}   # normalized [0,1]
+
+
 @app.get("/api/players/search")
 async def search_players(q: str = "", conference: str = "All",
-                         limit: int = 15, season: str = "2026"):
+                         limit: int = 15, season: str = "2026",
+                         mvp_type: str = ""):
     """
     Player search for MVP autocomplete.
     Merges two sources: player_stats (ESPN full-season) + player_game_stats
     (synced boxscores). Uses GREATEST so full-season wins when available,
     falls back to recent game averages otherwise. Never returns empty results
     for a conference that has players in either source.
+
+    mvp_type: "finals" | "west" | "east" — applies Vegas team-odds weight
+              to the mvp_score so that players on title-contending teams
+              rank higher when stats are otherwise equal.
     """
     conn = get_db_conn()
     c    = conn.cursor()
@@ -6251,26 +6299,48 @@ async def search_players(q: str = "", conference: str = "All",
         LIMIT %s
     ''', [season, season] + name_params + conf_params + [limit * 3])
 
+    # Vegas team weights — compass for ordering, not raw probability display
+    vegas_weights = _vegas_team_weights(mvp_type)
+
     seen_norm: set = set()
-    players = []
+    raw_players = []
     for r in c.fetchall():
         norm = _normalize_name(r[1])
         if norm in seen_norm:
             continue
         seen_norm.add(norm)
-        players.append({
-            "player_id":  r[0],
-            "name":       r[1],
-            "team":       r[2],
-            "ppg":        round(float(r[3] or 0), 1),
-            "apg":        round(float(r[4] or 0), 1),
-            "rpg":        round(float(r[5] or 0), 1),
-            "spg":        round(float(r[6] or 0), 1),
-            "bpg":        round(float(r[7] or 0), 1),
-            "mvp_score":  round(float(r[8] or 0), 1),
-            "logo_url":   r[9],
-            "conference": r[10],
+        team       = (r[2] or "").upper()
+        stats_score = float(r[8] or 0)
+        # Apply Vegas weight: blend stats score with team title odds.
+        # If no weights (mvp_type not set), pure stats score is used.
+        if vegas_weights:
+            w = vegas_weights.get(team, 0.01)   # unknown teams get tiny weight
+            weighted_score = stats_score * w * 30  # ×30 keeps magnitudes comparable
+        else:
+            weighted_score = stats_score
+        raw_players.append({
+            "player_id":     r[0],
+            "name":          r[1],
+            "team":          team,
+            "ppg":           round(float(r[3] or 0), 1),
+            "apg":           round(float(r[4] or 0), 1),
+            "rpg":           round(float(r[5] or 0), 1),
+            "spg":           round(float(r[6] or 0), 1),
+            "bpg":           round(float(r[7] or 0), 1),
+            "mvp_score":     round(stats_score, 1),
+            "weighted_score": weighted_score,
+            "logo_url":      r[9],
+            "conference":    r[10],
         })
+
+    # Re-sort by weighted score when Vegas odds are active
+    if vegas_weights:
+        raw_players.sort(key=lambda p: p["weighted_score"], reverse=True)
+
+    players = []
+    for p in raw_players:
+        del p["weighted_score"]
+        players.append(p)
         if len(players) >= limit:
             break
 

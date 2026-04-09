@@ -473,9 +473,9 @@ export const getFuturesPageData = async (season = '2026') => {
 };
 
 // Player search — debounced, conference-filtered, sorted by PPG
-export const searchPlayers = async (q, conference = 'All', limit = 15, season = '2026') => {
+export const searchPlayers = async (q, conference = 'All', limit = 15, season = '2026', mvp_type = '') => {
   const response = await api.get('/api/players/search', {
-    params: { q, conference, limit, season },
+    params: { q, conference, limit, season, mvp_type },
   });
   return response.data;
 };
