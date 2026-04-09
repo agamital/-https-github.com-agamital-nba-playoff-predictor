@@ -487,12 +487,6 @@ export const syncPlayoffsFromApi = async (season = '2026') => {
   return response.data;
 };
 
-// Force-sync player stats (top 150 by PPG) from NBA API
-export const syncPlayerStats = async () => {
-  const response = await api.post('/api/admin/player-stats/sync');
-  return response.data;
-};
-
 export const triggerReminderJob = async () => {
   const response = await api.post('/api/admin/trigger-reminder');
   return response.data;
