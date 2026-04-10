@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Trophy, Lock, CheckCircle, Clock } from 'lucide-react';
 import * as api from './services/api';
 import CommunityInsights from './components/CommunityInsights';
@@ -19,6 +19,67 @@ const GAME_META = {
 const ACCENT_CLASSES = {
   purple: { badge: 'bg-purple-500/20 text-purple-400 border-purple-500/30', pick: 'bg-purple-500 hover:bg-purple-600' },
   rose:   { badge: 'bg-rose-500/20  text-rose-400  border-rose-500/30',   pick: 'bg-rose-500   hover:bg-rose-600'   },
+};
+
+// ── Countdown timer displayed in Asia/Jerusalem timezone ──────────────────────
+const JERUSALEM_TZ = 'Asia/Jerusalem';
+
+function formatJerusalemTime(isoUtc) {
+  if (!isoUtc) return null;
+  // Backend returns naive ISO string (no Z), treat as UTC
+  const utcStr = isoUtc.endsWith('Z') ? isoUtc : isoUtc + 'Z';
+  return new Date(utcStr).toLocaleString('en-IL', {
+    timeZone: JERUSALEM_TZ,
+    weekday: 'short',
+    month:   'short',
+    day:     'numeric',
+    hour:    '2-digit',
+    minute:  '2-digit',
+    hour12:  false,
+  });
+}
+
+function useCountdown(isoUtc) {
+  const getSecsLeft = () => {
+    if (!isoUtc) return null;
+    const utcStr = isoUtc.endsWith('Z') ? isoUtc : isoUtc + 'Z';
+    return Math.floor((new Date(utcStr) - Date.now()) / 1000);
+  };
+  const [secs, setSecs] = useState(getSecsLeft);
+
+  useEffect(() => {
+    if (!isoUtc) return;
+    const id = setInterval(() => setSecs(getSecsLeft()), 1000);
+    return () => clearInterval(id);
+  }, [isoUtc]);
+
+  return secs; // negative means game already started
+}
+
+const Countdown = ({ startTime }) => {
+  const secs = useCountdown(startTime);
+  if (secs === null) return null;
+
+  if (secs <= 0) {
+    return (
+      <div className="flex items-center gap-1.5 text-rose-400 text-xs font-bold">
+        <Lock className="w-3 h-3" /> Bets closed — game started
+      </div>
+    );
+  }
+
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const pad = n => String(n).padStart(2, '0');
+
+  const urgent = secs < 3600; // < 1 hour
+  return (
+    <div className={`flex items-center gap-1.5 text-xs font-mono font-bold ${urgent ? 'text-amber-400' : 'text-cyan-400'}`}>
+      <Clock className="w-3 h-3 shrink-0" />
+      <span>Bets close in {h > 0 ? `${h}h ` : ''}{pad(m)}m {pad(s)}s</span>
+    </div>
+  );
 };
 
 const PlayInPage = ({ currentUser }) => {
@@ -57,9 +118,14 @@ const PlayInPage = ({ currentUser }) => {
   };
 
   const GameCard = ({ game }) => {
-    const meta   = GAME_META[game.game_type] || { label: game.game_type, accent: 'purple', next: '' };
-    const accent = ACCENT_CLASSES[meta.accent] || ACCENT_CLASSES.purple;
+    const meta        = GAME_META[game.game_type] || { label: game.game_type, accent: 'purple', next: '' };
+    const accent      = ACCENT_CLASSES[meta.accent] || ACCENT_CLASSES.purple;
     const isCompleted = game.status === 'completed';
+
+    // Compute bet-lock from start_time — ticks client-side
+    const secsLeft    = useCountdown(game.start_time);
+    const betsClosed  = isCompleted || (secsLeft !== null && secsLeft <= 0);
+    const startLabel  = formatJerusalemTime(game.start_time);
 
     return (
       <Card className="p-6">
@@ -72,7 +138,19 @@ const PlayInPage = ({ currentUser }) => {
         </div>
 
         {/* Next-step hint */}
-        <p className="text-[10px] text-slate-600 mb-4">{meta.next}</p>
+        <p className="text-[10px] text-slate-600 mb-2">{meta.next}</p>
+
+        {/* Game time in Jerusalem + countdown */}
+        {!isCompleted && game.start_time && (
+          <div className="mb-3 space-y-1">
+            {startLabel && (
+              <p className="text-[11px] text-slate-500">
+                🕐 {startLabel} (Israel Time)
+              </p>
+            )}
+            <Countdown startTime={game.start_time} />
+          </div>
+        )}
 
         {/* Teams */}
         <div className="flex items-center justify-between mb-4">
@@ -108,6 +186,13 @@ const PlayInPage = ({ currentUser }) => {
 
         {/* Prediction buttons */}
         {!isCompleted && (() => {
+          if (betsClosed) {
+            return (
+              <div className="flex items-center justify-center py-3 bg-rose-900/20 border border-rose-500/30 rounded-lg text-rose-400 text-sm gap-2 mb-3">
+                <Lock className="w-4 h-4" /> Bets are closed
+              </div>
+            );
+          }
           // Higher seed = underdog
           const underdogId = game.team1.seed > game.team2.seed ? game.team1.id : game.team2.id;
           return currentUser ? (

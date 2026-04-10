@@ -347,8 +347,17 @@ def init_db():
         team2_id INTEGER NOT NULL,
         team2_seed INTEGER,
         winner_id INTEGER,
-        status TEXT DEFAULT 'active'
+        status TEXT DEFAULT 'active',
+        start_time TIMESTAMP
     )''')
+    # Add start_time to existing tables
+    c.execute('SAVEPOINT sp_playin_start_time')
+    try:
+        c.execute('ALTER TABLE playin_games ADD COLUMN IF NOT EXISTS start_time TIMESTAMP')
+        c.execute('RELEASE SAVEPOINT sp_playin_start_time')
+    except Exception as e:
+        print(f"init_db: playin_games.start_time migration: {e}")
+        c.execute('ROLLBACK TO SAVEPOINT sp_playin_start_time')
 
     c.execute('''CREATE TABLE IF NOT EXISTS playin_predictions (
         id SERIAL PRIMARY KEY,
@@ -2931,17 +2940,30 @@ def generate_matchups(force_conference=None):
         if len(teams) >= 10 and (need_playin or force_conference):
             c.execute('DELETE FROM playin_games WHERE season = %s AND conference = %s', ('2026', conf_full))
             for game_type, idx1, idx2 in [('7v8', 6, 7), ('9v10', 8, 9)]:
+                st = PLAYIN_SCHEDULE_UTC.get((conf_full, game_type))
                 c.execute('''INSERT INTO playin_games (season, conference, game_type, team1_id, team1_seed,
-                            team2_id, team2_seed, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''',
+                            team2_id, team2_seed, status, start_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)''',
                          ('2026', conf_full, game_type,
                           teams[idx1]['team_id'], teams[idx1]['conf_rank'],
-                          teams[idx2]['team_id'], teams[idx2]['conf_rank'], 'active'))
+                          teams[idx2]['team_id'], teams[idx2]['conf_rank'], 'active', st))
                 print(f"  -> Play-In {game_type}: #{teams[idx1]['conf_rank']} {teams[idx1]['team_name']} vs #{teams[idx2]['conf_rank']} {teams[idx2]['team_name']}")
             print(f"  Created {conf_full} play-in games")
 
     conn.commit()
     conn.close()
     print("generate_matchups complete")
+
+# Play-In game start times (UTC). Bets close when server time >= start_time.
+# Schedule: Tue Apr 15 & Wed Apr 16 (phase 1), Fri Apr 18 (elimination).
+# ET is UTC-4 (EDT); Jerusalem IDT is UTC+3 — display on frontend as +3.
+PLAYIN_SCHEDULE_UTC = {
+    ('Eastern', '7v8'):         '2026-04-15 23:30:00',  # Tue 7:30 PM ET
+    ('Western', '7v8'):         '2026-04-16 02:00:00',  # Tue 10:00 PM ET
+    ('Eastern', '9v10'):        '2026-04-16 23:30:00',  # Wed 7:30 PM ET
+    ('Western', '9v10'):        '2026-04-17 02:00:00',  # Wed 10:00 PM ET
+    ('Eastern', 'elimination'): '2026-04-18 23:30:00',  # Fri 7:30 PM ET
+    ('Western', 'elimination'): '2026-04-19 02:00:00',  # Fri 10:00 PM ET
+}
 
 _ADMIN_EMAILS = {"agamital@gmail.com"}
 
@@ -2953,6 +2975,20 @@ def ensure_admin_users():
         c.execute("UPDATE users SET role='admin' WHERE email=%s AND role != 'admin'", (email,))
         if c.rowcount:
             print(f"Promoted {email} to admin")
+    conn.commit()
+    conn.close()
+
+def _backfill_playin_start_times():
+    """Set start_time on any existing play-in game rows that have it as NULL."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT id, conference, game_type FROM playin_games WHERE start_time IS NULL")
+    rows = c.fetchall()
+    for row_id, conf, game_type in rows:
+        st = PLAYIN_SCHEDULE_UTC.get((conf, game_type))
+        if st:
+            c.execute("UPDATE playin_games SET start_time = %s WHERE id = %s", (st, row_id))
+            print(f"  Backfilled start_time={st} for playin_game id={row_id} ({conf} {game_type})")
     conn.commit()
     conn.close()
 
@@ -3052,6 +3088,12 @@ async def startup():
         ensure_admin_users()
     except Exception as e:
         print(f"ERROR ensure_admin_users: {e}")
+
+    # Backfill start_time for existing play-in games that don't have one yet
+    try:
+        _backfill_playin_start_times()
+    except Exception as e:
+        print(f"ERROR _backfill_playin_start_times: {e}")
 
     # Promote DB standings over hardcoded if available
     try:
@@ -4038,13 +4080,18 @@ async def api_playin(season: str = "2026"):
     conn = get_db_conn()
     c = conn.cursor()
 
-    c.execute('''SELECT p.*, t1.name, t1.abbreviation, t1.logo_url,
-                 t2.name, t2.abbreviation, t2.logo_url FROM playin_games p
+    c.execute('''SELECT p.id, p.season, p.conference, p.game_type,
+                 p.team1_id, p.team1_seed, p.team2_id, p.team2_seed,
+                 p.winner_id, p.status, p.start_time,
+                 t1.name, t1.abbreviation, t1.logo_url,
+                 t2.name, t2.abbreviation, t2.logo_url
+                 FROM playin_games p
                  JOIN teams t1 ON p.team1_id = t1.id
                  JOIN teams t2 ON p.team2_id = t2.id WHERE p.season = %s''', (season,))
 
     games = []
     for row in c.fetchall():
+        start_time = row[10]
         games.append({
             'id': row[0],
             'season': row[1],
@@ -4053,19 +4100,20 @@ async def api_playin(season: str = "2026"):
             'team1': {
                 'id': row[4],
                 'seed': row[5],
-                'name': row[10],
-                'abbreviation': row[11],
-                'logo_url': row[12]
+                'name': row[11],
+                'abbreviation': row[12],
+                'logo_url': row[13]
             },
             'team2': {
                 'id': row[6],
                 'seed': row[7],
-                'name': row[13],
-                'abbreviation': row[14],
-                'logo_url': row[15]
+                'name': row[14],
+                'abbreviation': row[15],
+                'logo_url': row[16]
             },
             'winner_id': row[8],
-            'status': row[9]
+            'status': row[9],
+            'start_time': start_time.isoformat() if start_time else None,
         })
 
     conn.close()
@@ -4093,8 +4141,22 @@ async def make_pred(prediction: Prediction, user_id: int):
 
 @app.post("/api/playin-predictions")
 async def playin_pred(game_id: int, predicted_winner_id: int, user_id: int):
+    from datetime import datetime, timezone
     conn = get_db_conn()
     c = conn.cursor()
+    # Check if bets are closed (game started)
+    c.execute("SELECT start_time, status FROM playin_games WHERE id = %s", (game_id,))
+    game_row = c.fetchone()
+    if game_row:
+        start_time, status = game_row
+        if status != 'active':
+            conn.close()
+            raise HTTPException(status_code=400, detail="Bets are closed — game is no longer active")
+        if start_time:
+            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+            if now_utc >= start_time:
+                conn.close()
+                raise HTTPException(status_code=400, detail="Bets are closed — game has already started")
     c.execute('''INSERT INTO playin_predictions (user_id, game_id, predicted_winner_id)
                  VALUES (%s, %s, %s) ON CONFLICT(user_id, game_id)
                  DO UPDATE SET predicted_winner_id = %s''',
@@ -4102,6 +4164,19 @@ async def playin_pred(game_id: int, predicted_winner_id: int, user_id: int):
     conn.commit()
     conn.close()
     return {"message": "Saved"}
+
+@app.post("/api/admin/playin/{game_id}/start-time")
+async def set_playin_start_time(game_id: int, start_time: str | None = None):
+    """Set or clear the start_time for a play-in game. Format: 'YYYY-MM-DD HH:MM:SS' (UTC)."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("UPDATE playin_games SET start_time = %s WHERE id = %s", (start_time, game_id))
+    if c.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Game not found")
+    conn.commit()
+    conn.close()
+    return {"message": "Start time updated", "game_id": game_id, "start_time": start_time}
 
 @app.get("/api/leaderboard")
 async def leaderboard(season: str = "2026"):
@@ -4957,10 +5032,11 @@ def _try_create_playin_game3(c, season):
         g9_t1 = g9[1]
         winner_9_seed = g9_t1_seed if g9_winner == g9_t1 else g9_t2_seed
 
+        elim_st = PLAYIN_SCHEDULE_UTC.get((conf, 'elimination'))
         c.execute('''INSERT INTO playin_games
-                     (season, conference, game_type, team1_id, team1_seed, team2_id, team2_seed, status)
-                     VALUES (%s, %s, 'elimination', %s, %s, %s, %s, 'active')''',
-                  (season, conf, loser_id, loser_seed, g9_winner, winner_9_seed))
+                     (season, conference, game_type, team1_id, team1_seed, team2_id, team2_seed, status, start_time)
+                     VALUES (%s, %s, 'elimination', %s, %s, %s, %s, 'active', %s)''',
+                  (season, conf, loser_id, loser_seed, g9_winner, winner_9_seed, elim_st))
         print(f'  -> Created {conf} Play-In Game 3: loser of 7v8 vs winner of 9v10')
 
 
