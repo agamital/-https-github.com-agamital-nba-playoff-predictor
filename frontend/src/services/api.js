@@ -241,10 +241,13 @@ export const getAdminSeries = async (season = '2026') => {
   return response.data;
 };
 
-export const setSeriesResult = async (seriesId, winnerTeamId, actualGames, manualOverride = false) => {
-  const response = await api.post(`/api/admin/series/${seriesId}/result`, null, {
-    params: { winner_team_id: winnerTeamId, actual_games: actualGames, manual_override: manualOverride }
-  });
+export const setSeriesResult = async (seriesId, winnerTeamId, actualGames, manualOverride = false, leaders = {}) => {
+  const params = { winner_team_id: winnerTeamId, actual_games: actualGames, manual_override: manualOverride };
+  // Only include leader params if explicitly provided (undefined = keep existing, '' = clear)
+  if (leaders.scorer   !== undefined) params.actual_leading_scorer    = leaders.scorer;
+  if (leaders.rebounder !== undefined) params.actual_leading_rebounder = leaders.rebounder;
+  if (leaders.assister  !== undefined) params.actual_leading_assister  = leaders.assister;
+  const response = await api.post(`/api/admin/series/${seriesId}/result`, null, { params });
   return response.data;
 };
 

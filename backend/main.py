@@ -4662,7 +4662,8 @@ def _recalculate_all_points(c):
     ), 0)''')
 
 
-def _try_advance_bracket(c, completed_series_id, season, round_name, conf, bracket_group, winner_team_id):
+def _try_advance_bracket(c, completed_series_id, season, round_name, conf, bracket_group,
+                         winner_team_id, winner_seed=None):
     """After a series completes, auto-create the next-round matchup if both bracket partners are done."""
     round_progression = {
         'First Round': 'Conference Semifinals',
@@ -4674,22 +4675,24 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
         return
 
     if next_round == 'NBA Finals':
-        c.execute('''SELECT winner_team_id FROM series
+        c.execute('''SELECT winner_team_id, home_team_id, away_team_id, home_seed, away_seed
+                     FROM series
                      WHERE season = %s AND round = 'Conference Finals' AND status = 'completed'
                      ORDER BY conference''', (season,))
         cf_winners = c.fetchall()
         if len(cf_winners) == 2:
             c.execute("SELECT id FROM series WHERE season = %s AND round = 'NBA Finals'", (season,))
             if not c.fetchone():
-                t1, t2 = cf_winners[0][0], cf_winners[1][0]
+                t1, t1_seed = cf_winners[0][0], (cf_winners[0][3] if cf_winners[0][1] == cf_winners[0][0] else cf_winners[0][4])
+                t2, t2_seed = cf_winners[1][0], (cf_winners[1][3] if cf_winners[1][1] == cf_winners[1][0] else cf_winners[1][4])
                 c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
-                             status, bracket_group)
-                             VALUES (%s, 'NBA Finals', 'Finals', %s, %s, 'active', 'A')''',
-                          (season, t1, t2))
+                             home_seed, away_seed, status, bracket_group)
+                             VALUES (%s, 'NBA Finals', 'Finals', %s, %s, %s, %s, 'active', 'A')''',
+                          (season, t1, t2, t1_seed, t2_seed))
         return
 
     # Find the partner series in the same bracket_group
-    c.execute('''SELECT id, winner_team_id FROM series
+    c.execute('''SELECT id, winner_team_id, home_team_id, away_team_id, home_seed, away_seed FROM series
                  WHERE season = %s AND round = %s AND conference = %s
                  AND bracket_group = %s AND status = 'completed' AND id != %s''',
               (season, round_name, conf, bracket_group, completed_series_id))
@@ -4697,14 +4700,17 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
 
     if partner:
         partner_winner_id = partner[1]
+        # Determine partner winner's seed
+        partner_seed = partner[4] if partner[2] == partner_winner_id else partner[5]
         c.execute('''SELECT id FROM series WHERE season = %s AND round = %s
                      AND conference = %s AND bracket_group = %s''',
                   (season, next_round, conf, bracket_group))
         if not c.fetchone():
             c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
-                         status, bracket_group)
-                         VALUES (%s, %s, %s, %s, %s, 'active', %s)''',
-                      (season, next_round, conf, winner_team_id, partner_winner_id, bracket_group))
+                         home_seed, away_seed, status, bracket_group)
+                         VALUES (%s, %s, %s, %s, %s, %s, %s, 'active', %s)''',
+                      (season, next_round, conf, winner_team_id, partner_winner_id,
+                       winner_seed, partner_seed, bracket_group))
 
 
 @app.post("/api/admin/series/{series_id}/result")
@@ -4736,15 +4742,22 @@ async def set_series_result(
     if current_status == 'completed':
         c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (series_id,))
 
-    # Mark series completed with manual_override flag and actual leaders
+    # Mark series completed with manual_override flag and actual leaders.
+    # Use COALESCE so that omitting a leader param preserves the existing DB value.
+    # Pass empty-string to explicitly clear a leader field.
     c.execute('''UPDATE series SET winner_team_id = %s, actual_games = %s, status = %s,
                  manual_override = %s,
-                 actual_leading_scorer = %s,
-                 actual_leading_rebounder = %s,
-                 actual_leading_assister = %s
+                 actual_leading_scorer    = CASE WHEN %s IS NULL THEN actual_leading_scorer
+                                                 WHEN %s = ''   THEN NULL ELSE %s END,
+                 actual_leading_rebounder = CASE WHEN %s IS NULL THEN actual_leading_rebounder
+                                                 WHEN %s = ''   THEN NULL ELSE %s END,
+                 actual_leading_assister  = CASE WHEN %s IS NULL THEN actual_leading_assister
+                                                 WHEN %s = ''   THEN NULL ELSE %s END
                  WHERE id = %s''',
               (winner_team_id, actual_games, 'completed', manual_override,
-               actual_leading_scorer, actual_leading_rebounder, actual_leading_assister,
+               actual_leading_scorer, actual_leading_scorer, actual_leading_scorer,
+               actual_leading_rebounder, actual_leading_rebounder, actual_leading_rebounder,
+               actual_leading_assister, actual_leading_assister, actual_leading_assister,
                series_id))
 
     # Score each prediction individually so underdog multipliers apply per pick
@@ -4778,7 +4791,8 @@ async def set_series_result(
                   (is_correct, pts, pred_id))
 
     _recalculate_all_points(c)
-    _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id)
+    winner_seed = home_seed if winner_team_id == home_team_id else away_seed
+    _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id, winner_seed)
 
     conn.commit()
     conn.close()
@@ -4818,13 +4832,15 @@ async def sync_and_advance(season: str = "2026"):
     conn = get_db_conn()
     c = conn.cursor()
 
-    c.execute('''SELECT id, round, conference, bracket_group, winner_team_id
+    c.execute('''SELECT id, round, conference, bracket_group, winner_team_id,
+                 home_team_id, home_seed, away_seed
                  FROM series WHERE season = %s AND status = 'completed' ''', (season,))
     completed = c.fetchall()
 
-    for series_id, round_name, conf, bracket_group, winner_team_id in completed:
+    for series_id, round_name, conf, bracket_group, winner_team_id, home_team_id, home_seed, away_seed in completed:
         try:
-            _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id)
+            winner_seed = home_seed if winner_team_id == home_team_id else away_seed
+            _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id, winner_seed)
         except Exception as e:
             print(f"sync_and_advance: failed to advance series {series_id}: {e}")
 
@@ -5629,15 +5645,20 @@ async def get_futures(user_id: int, season: str = "2026"):
     conn.close()
     if not row:
         return {"has_prediction": False}
+    # futures_predictions column order (SELECT f.*):
+    # 0:id 1:user_id 2:season 3:champion_team_id 4:west_champ_team_id 5:east_champ_team_id
+    # 6:finals_mvp 7:west_finals_mvp 8:east_finals_mvp 9:locked 10:predicted_at
+    # 11:is_correct_champion 12:is_correct_west 13:is_correct_east 14:points_earned
+    # Then joined: 15-17=champion_team, 18-20=west_champ_team, 21-23=east_champ_team
     return {
         "has_prediction": True,
-        "champion_team_id": row[2],
-        "west_champ_team_id": row[3],
-        "east_champ_team_id": row[4],
-        "finals_mvp": row[5],
-        "west_finals_mvp": row[6],
-        "east_finals_mvp": row[7],
-        "locked": bool(row[8]),
+        "champion_team_id": row[3],
+        "west_champ_team_id": row[4],
+        "east_champ_team_id": row[5],
+        "finals_mvp": row[6],
+        "west_finals_mvp": row[7],
+        "east_finals_mvp": row[8],
+        "locked": bool(row[9]),
         "points_earned": row[14],
         "champion_team": {"name": row[15], "abbreviation": row[16], "logo_url": row[17]} if row[15] else None,
         "west_champ_team": {"name": row[18], "abbreviation": row[19], "logo_url": row[20]} if row[18] else None,

@@ -21,10 +21,10 @@ SCORING RULES SUMMARY
 
    Round multipliers (applied to all pts):
      First Round              ×1.0
-     Conference Semifinals    ×1.0
-     Conference Finals        ×1.5
+     Conference Semifinals    ×1.5
+     Conference Finals        ×2.0
      NBA Finals (winner)      ×2.5  ← "Correct Champion" bonus
-     NBA Finals (games)       ×2.0
+     NBA Finals (games)       ×2.5
 
    First-Round underdog multipliers (applied on top of round mult):
      1 vs 8  ->×2.0

@@ -73,6 +73,9 @@ const SeriesStatusBadge = ({ series }) => {
 const SeriesCard = ({ series, onSave, onToggleLock, onReset }) => {
   const [winnerId, setWinnerId] = useState(series.winner_team_id || null);
   const [games, setGames] = useState(series.actual_games || null);
+  const [scorer, setScorer] = useState(series.leading_scorer || '');
+  const [rebounder, setRebounder] = useState(series.leading_rebounder || '');
+  const [assister, setAssister] = useState(series.leading_assister || '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [locking, setLocking] = useState(false);
@@ -92,7 +95,12 @@ const SeriesCard = ({ series, onSave, onToggleLock, onReset }) => {
     setConfirmOpen(false);
     setSaving(true);
     try {
-      await onSave(series.id, winnerId, games, isCompleted /* manual_override if re-saving */);
+      const leaders = {
+        scorer:    scorer    !== '' ? scorer    : undefined,
+        rebounder: rebounder !== '' ? rebounder : undefined,
+        assister:  assister  !== '' ? assister  : undefined,
+      };
+      await onSave(series.id, winnerId, games, isCompleted /* manual_override if re-saving */, leaders);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally {
@@ -170,6 +178,24 @@ const SeriesCard = ({ series, onSave, onToggleLock, onReset }) => {
               className={`px-4 py-2 rounded-lg border-2 font-bold text-sm transition-all ${
                 games === g ? 'border-orange-500 bg-orange-500/20 text-white' : 'border-slate-700 bg-slate-800/50 text-slate-300 hover:border-slate-500'
               }`}>{g}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <p className="text-xs text-slate-400 mb-2 uppercase font-bold">Series Leaders <span className="text-slate-600 normal-case font-normal">(+10 pts each — leave blank to keep existing)</span></p>
+        <div className="grid grid-cols-3 gap-2">
+          {[['scorer', 'Points', scorer, setScorer], ['rebounder', 'Rebounds', rebounder, setRebounder], ['assister', 'Assists', assister, setAssister]].map(([key, label, val, setter]) => (
+            <div key={key}>
+              <p className="text-[10px] text-slate-600 mb-1 font-bold uppercase">{label}</p>
+              <input
+                type="text"
+                value={val}
+                onChange={e => setter(e.target.value)}
+                placeholder="Player name"
+                className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-xs placeholder-slate-600 focus:outline-none focus:border-orange-500"
+              />
+            </div>
           ))}
         </div>
       </div>
@@ -1759,8 +1785,8 @@ const AdminPage = ({ currentUser }) => {
     }
   };
 
-  const handleSeriesResult = async (seriesId, winnerTeamId, actualGames, manualOverride = false) => {
-    await api.setSeriesResult(seriesId, winnerTeamId, actualGames, manualOverride);
+  const handleSeriesResult = async (seriesId, winnerTeamId, actualGames, manualOverride = false, leaders = {}) => {
+    await api.setSeriesResult(seriesId, winnerTeamId, actualGames, manualOverride, leaders);
     const updated = await api.getAdminSeries();
     setSeries(updated);
     addToast(manualOverride ? 'Result overridden — scores recalculated' : 'Result set — scores updated', 'success');
