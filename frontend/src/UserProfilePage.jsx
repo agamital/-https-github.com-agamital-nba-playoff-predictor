@@ -121,9 +121,10 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
   }
 
   const isOwnProfile = currentUser?.username === profile.username;
-  const playoff = predictions?.playoff_predictions || [];
-  const playin  = predictions?.playin_predictions  || [];
-  const futures = predictions?.futures_prediction;
+  const playoff  = predictions?.playoff_predictions || [];
+  const playin   = predictions?.playin_predictions  || [];
+  const futures  = predictions?.futures_prediction;
+  const leaders  = predictions?.leaders_prediction  || null;
   const correctCount = playoff.filter(p => p.is_correct === 1).length;
 
   // Risk / underdog metrics
@@ -369,6 +370,50 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
         </div>
       )}
 
+      {/* ── Playoff Leaders Picks ── */}
+      {leaders && (
+        <div className="mb-8">
+          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+            <BarChart2 className="w-5 h-5 text-cyan-400" />
+            Playoff Leaders Picks
+            {leaders.points_earned > 0 && (
+              <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
+                +{leaders.points_earned} pts
+              </span>
+            )}
+          </h2>
+          <Card className="p-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {[
+                { key: 'top_scorer',   label: 'Top Scorer (PPG)',   correct: leaders.is_correct_scorer },
+                { key: 'top_assists',  label: 'Top Assists (APG)',  correct: leaders.is_correct_assists },
+                { key: 'top_rebounds', label: 'Top Rebounds (RPG)', correct: leaders.is_correct_rebounds },
+                { key: 'top_threes',   label: 'Top 3-Pointers',     correct: leaders.is_correct_threes },
+                { key: 'top_steals',   label: 'Top Steals (SPG)',   correct: leaders.is_correct_steals },
+                { key: 'top_blocks',   label: 'Top Blocks (BPG)',   correct: leaders.is_correct_blocks },
+              ].map(({ key, label, correct }) => {
+                const val = leaders[key];
+                const border = correct === 1 ? 'border-green-500/40 bg-green-500/5'
+                             : correct === 0 ? 'border-red-500/40 bg-red-500/5'
+                             : 'border-slate-700/60';
+                return (
+                  <div key={key} className={`rounded-xl border p-3 ${border}`}>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">{label}</p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-lg font-black text-white">
+                        {val != null ? val : <span className="text-slate-600 text-sm italic">—</span>}
+                      </span>
+                      {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400" />}
+                      {correct === 0 && <XCircle    className="w-4 h-4 text-red-400" />}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      )}
+
       {predsLoading && (
         <div className="space-y-3 mb-8">
           {[1, 2, 3, 4].map(i => (
@@ -383,7 +428,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
         </div>
       )}
 
-      {!predsLoading && !futures && playoff.length === 0 && playin.length === 0 && predictions !== null && (
+      {!predsLoading && !futures && !leaders && playoff.length === 0 && playin.length === 0 && predictions !== null && (
         <Card className="p-12 text-center">
           <Trophy className="w-14 h-14 text-slate-700 mx-auto mb-4" />
           <p className="text-slate-400 font-bold">No predictions yet</p>

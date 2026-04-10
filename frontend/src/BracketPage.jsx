@@ -1,9 +1,66 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info } from 'lucide-react';
+import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info, Clock, Lock } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS, PLAYIN_UNDERDOG_PTS } from './scoringConstants';
 import CommunityInsights from './components/CommunityInsights';
+
+// ── Play-In countdown timers (Israel/Jerusalem time, UTC+3) ───────────────────
+const PLAYIN_START_TIMES = {
+  'Eastern_7v8':         '2026-04-15T23:30:00Z',  // Tue 7:30 PM ET → Wed 02:30 IDT
+  'Western_7v8':         '2026-04-16T02:00:00Z',  // Tue 10:00 PM ET → Wed 05:00 IDT
+  'Eastern_9v10':        '2026-04-16T23:30:00Z',  // Wed 7:30 PM ET → Thu 02:30 IDT
+  'Western_9v10':        '2026-04-17T02:00:00Z',  // Wed 10:00 PM ET → Thu 05:00 IDT
+  'Eastern_elimination': '2026-04-18T23:30:00Z',  // Fri 7:30 PM ET → Sat 02:30 IDT
+  'Western_elimination': '2026-04-19T02:00:00Z',  // Fri 10:00 PM ET → Sat 05:00 IDT
+};
+
+function getPlayInStartZ(game) {
+  if (!game) return null;
+  if (game.start_time) return game.start_time.endsWith('Z') ? game.start_time : game.start_time + 'Z';
+  return PLAYIN_START_TIMES[`${game.conference}_${game.game_type}`] || null;
+}
+
+function usePlayInCountdown(startZ) {
+  const calc = () => startZ ? Math.floor((new Date(startZ) - Date.now()) / 1000) : null;
+  const [secs, setSecs] = useState(calc);
+  useEffect(() => {
+    if (!startZ) return;
+    const id = setInterval(() => setSecs(calc()), 1000);
+    return () => clearInterval(id);
+  }, [startZ]);
+  return secs;
+}
+
+function PlayInTimeLabel({ startZ }) {
+  if (!startZ) return null;
+  const label = new Date(startZ).toLocaleString('en-IL', {
+    timeZone: 'Asia/Jerusalem', weekday: 'short', month: 'short',
+    day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  return <span className="text-[10px] text-slate-500">🕐 {label} IL</span>;
+}
+
+function PlayInCountdown({ startZ }) {
+  const secs = usePlayInCountdown(startZ);
+  if (secs === null) return null;
+  if (secs <= 0) return (
+    <span className="flex items-center gap-1 text-[10px] font-bold text-rose-400">
+      <Lock className="w-2.5 h-2.5" /> Bets closed
+    </span>
+  );
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const pad = n => String(n).padStart(2, '0');
+  const urgent = secs < 7200;
+  return (
+    <span className={`flex items-center gap-1 text-[10px] font-mono font-bold ${urgent ? 'text-amber-400' : 'text-cyan-400'}`}>
+      <Clock className="w-2.5 h-2.5 shrink-0" />
+      {h > 0 ? `${h}h ` : ''}{pad(m)}m {pad(s)}s
+    </span>
+  );
+}
 
 // Strip diacritics/accents for dedup — matches backend _normalize_name().
 // 'Luka Dončić' → 'luka doncic'
@@ -451,10 +508,12 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
           const game = games.find(g => g.game_type === type);
           const pick = game ? picks[game.id] : null;
           const seedTeam = seedBySlot[type];
+          const gameStartZ = game ? getPlayInStartZ(game) : null;
           return (
             <div key={type} style={{ height: slotH, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
               <p className="text-[10px] text-slate-400 font-black uppercase tracking-wide">{gLabel}</p>
               <p className="text-[9px] text-slate-600 font-bold uppercase tracking-wider">{sublabel}</p>
+              {gameStartZ && game?.status !== 'completed' && <PlayInCountdown startZ={gameStartZ} />}
               {seedTeam && <SeedBadge team={seedTeam} seed={type === 'elimination' ? 1 : 2} />}
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
                 <PlayInCard game={game} pick={pick} onTeamClick={onTeamClick} />
@@ -587,12 +646,22 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
     );
   };
 
+  const startZ = getPlayInStartZ(game);
+  const piSecs = usePlayInCountdown(startZ);
+  const betsClosed = game.status === 'completed' || (piSecs !== null && piSecs <= 0);
+
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-2">
       <div className="flex items-center justify-between mb-1">
         <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Play-In</span>
         <span className="text-[10px] font-bold text-slate-500">Fav <span className="text-slate-400 font-black">+{PLAYIN_PTS}</span> · Underdog <span className="text-amber-400 font-black">+{PLAYIN_UNDERDOG_PTS}</span></span>
       </div>
+      {game.status !== 'completed' && startZ && (
+        <div className="flex items-center justify-between px-1">
+          <PlayInTimeLabel startZ={startZ} />
+          <PlayInCountdown startZ={startZ} />
+        </div>
+      )}
       {teamBtn(team1, p1, () => onTeamClick(game, team1?.id))}
       <div className="text-center text-xs text-slate-600 font-bold">VS</div>
       {teamBtn(team2, p2, () => onTeamClick(game, team2?.id))}
