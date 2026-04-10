@@ -24,16 +24,23 @@ const ACCENT_CLASSES = {
 const PlayInPage = ({ currentUser }) => {
   const [games, setGames]     = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
-  useEffect(() => { loadGames(); }, []);
+  useEffect(() => {
+    loadGames();
+    // Poll every 60 s so Game 3 appears automatically after Games 1 & 2 complete
+    const interval = setInterval(loadGames, 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const loadGames = async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const data = await api.getPlayInGames('2026');
       setGames(data);
     } catch (err) {
-      console.error('Error loading play-in games:', err);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -202,6 +209,13 @@ const PlayInPage = ({ currentUser }) => {
       {loading ? (
         <div className="text-center py-12">
           <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent" />
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center py-16 gap-4">
+          <p className="text-slate-400">Failed to load play-in games.</p>
+          <button onClick={loadGames} className="px-6 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl transition-colors">
+            Try Again
+          </button>
         </div>
       ) : games.length > 0 ? (
         <div className="space-y-10">

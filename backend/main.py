@@ -4723,6 +4723,9 @@ async def set_series_result(
     actual_leading_rebounder: str | None = None,
     actual_leading_assister: str | None = None,
 ):
+    if actual_games < 4 or actual_games > 7:
+        raise HTTPException(status_code=400, detail="actual_games must be between 4 and 7")
+
     conn = get_db_conn()
     c = conn.cursor()
 

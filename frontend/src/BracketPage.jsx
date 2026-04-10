@@ -831,14 +831,16 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const [saveError, setSaveError]     = useState('');
 
   // ── Cached data queries ──────────────────────────────────────────────────────
-  const { data: series = [],    isLoading: l1 } = useQuery({ queryKey: ['series', '2026'],    queryFn: () => api.getSeries('2026') });
-  const { data: playInGames = [], isLoading: l2 } = useQuery({ queryKey: ['playin', '2026'],  queryFn: () => api.getPlayInGames('2026') });
-  const { data: allTeams = [],  isLoading: l3 } = useQuery({ queryKey: ['teams'],             queryFn: () => api.getTeams() });
-  const { data: standingsRaw,   isLoading: l4 } = useQuery({ queryKey: ['standings'],         queryFn: () => api.getStandings() });
+  const { data: series = [],    isLoading: l1, isError: e1, refetch: r1 } = useQuery({ queryKey: ['series', '2026'],    queryFn: () => api.getSeries('2026') });
+  const { data: playInGames = [], isLoading: l2, isError: e2, refetch: r2 } = useQuery({ queryKey: ['playin', '2026'],  queryFn: () => api.getPlayInGames('2026') });
+  const { data: allTeams = [],  isLoading: l3, isError: e3, refetch: r3 } = useQuery({ queryKey: ['teams'],             queryFn: () => api.getTeams() });
+  const { data: standingsRaw,   isLoading: l4, isError: e4, refetch: r4 } = useQuery({ queryKey: ['standings'],         queryFn: () => api.getStandings() });
   const { data: globalStats }                   = useQuery({ queryKey: ['globalStats', '2026'], queryFn: () => api.getGlobalStats('2026'), staleTime: 10 * 60 * 1000 });
 
   const standings = standingsRaw || { eastern: [], western: [] };
   const loading   = l1 || l2 || l3 || l4;
+  const hasError  = e1 || e2 || e3 || e4;
+  const refetchAll = () => { r1(); r2(); r3(); r4(); };
 
   const communityMap = useMemo(() => {
     const map = {};
@@ -965,6 +967,19 @@ const BracketPage = ({ currentUser, onNavigate }) => {
         <Trophy className="w-16 h-16 text-orange-400 mx-auto mb-4 opacity-60" />
         <h2 className="text-3xl font-black text-white mb-3">Login to Make Picks</h2>
         <p className="text-slate-400">Sign in to predict the 2026 NBA Playoffs</p>
+      </div>
+    );
+  }
+
+  if (hasError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-4">
+        <p className="text-slate-400 text-lg">Failed to load bracket data.</p>
+        <button
+          onClick={refetchAll}
+          className="px-6 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl transition-colors">
+          Try Again
+        </button>
       </div>
     );
   }

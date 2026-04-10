@@ -190,12 +190,10 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
     setError('');
     try {
       const redirectTo = import.meta.env.VITE_APP_URL || window.location.origin;
-      console.log('[Google OAuth] redirectTo:', redirectTo);
       const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo },
       });
-      console.log('[Google OAuth] result:', { data, oauthError });
       if (oauthError) {
         throw new Error(oauthError.message || oauthError.toString() || 'OAuth error');
       }
@@ -1923,7 +1921,6 @@ function App() {
           const email = session.user.email;
           const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || '';
           const avatarUrl = session.user.user_metadata?.avatar_url || session.user.user_metadata?.picture || '';
-          console.log('[Google OAuth] syncing user:', email, name);
           const user = await api.loginWithGoogle(email, name, avatarUrl);
           setCurrentUser(user);
           localStorage.setItem('nba_user', JSON.stringify(user));
