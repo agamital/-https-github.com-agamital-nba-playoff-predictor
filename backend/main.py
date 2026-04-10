@@ -123,8 +123,9 @@ _RAPIDAPI_PRIMARY_BOXSCORE_URL    = (
 _RAPIDAPI_URL  = "https://nba-api-free-data.p.rapidapi.com/nba-league-standings?year=2026"
 _RAPIDAPI_SCOREBOARD_BY_DATE_URL = "https://nba-api-free-data.p.rapidapi.com/nba-scoreboard-by-date"
 
-# ESPN public summary API — no key needed, returns full boxscore (kept as tertiary)
-_ESPN_BOXSCORE_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
+# ESPN public APIs — no key needed
+_ESPN_BOXSCORE_URL    = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
+_ESPN_SCOREBOARD_URL2 = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 
 # ── Fallback: direct stats.nba.com request (used when RAPIDAPI_KEY not set) ──
 _NBA_STANDINGS_URL = (
@@ -2438,8 +2439,45 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
                 })
             scoreboard_source = "secondary_api"
         except Exception as e:
-            summary['errors'].append(f"Scoreboard fetch failed (both APIs): {e}")
-            return summary
+            print(f"[Boxscore] Secondary scoreboard failed: {e} — trying ESPN direct")
+            # ── Step 1c: ESPN public scoreboard — no API key required ──────────
+            try:
+                print(f"[Boxscore] Step 1c: scoreboard via ESPN public API ({date_fmt})")
+                resp_espn = _http.get(
+                    _ESPN_SCOREBOARD_URL2,
+                    params={"dates": date_fmt},
+                    timeout=12,
+                )
+                resp_espn.raise_for_status()
+                espn_data   = resp_espn.json()
+                espn_events = espn_data.get("events") or []
+                for ev in espn_events:
+                    comps  = ev.get("competitions") or [{}]
+                    comp   = comps[0]
+                    teams  = comp.get("competitors") or []
+                    home_c = next((c for c in teams if c.get("homeAway") == "home"), {})
+                    away_c = next((c for c in teams if c.get("homeAway") == "away"), {})
+                    def _tm_espn(c):
+                        t = c.get("team") or {}
+                        return {"id": t.get("id"), "abbr": t.get("abbreviation"),
+                                "name": t.get("displayName") or t.get("name"),
+                                "score": c.get("score"), "winner": bool(c.get("winner"))}
+                    stype_e = (ev.get("status") or {}).get("type") or {}
+                    normalized_events.append({
+                        "id":        str(ev.get("id", "")),
+                        "completed": bool(stype_e.get("completed")),
+                        "status":    stype_e.get("description") or stype_e.get("name"),
+                        "clock":     (ev.get("status") or {}).get("displayClock"),
+                        "period":    (ev.get("status") or {}).get("period"),
+                        "home":      _tm_espn(home_c),
+                        "away":      _tm_espn(away_c),
+                        "broadcast": comp.get("broadcast") or "",
+                    })
+                scoreboard_source = "espn_direct"
+                print(f"[Boxscore] ESPN direct: {len(espn_events)} events")
+            except Exception as e2:
+                summary['errors'].append(f"Scoreboard fetch failed (all 3 sources): {e2}")
+                return summary
 
     _FINAL_STATUSES = {"final", "status_final", "game over", "f/ot", "f/2ot"}
 
