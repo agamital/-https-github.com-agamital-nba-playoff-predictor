@@ -18,7 +18,7 @@ function useDebounce(value, delay) {
 // ── Numeric input for leader stat predictions ──────────────────────────────
 const LeaderNumberInput = ({ value, onChange, locked, placeholder }) => {
   const handleChange = (e) => {
-    const raw = e.target.value;
+    const raw = e.target.value.replace(/[^0-9]/g, '');
     if (raw === '') { onChange(''); return; }
     const n = parseInt(raw, 10);
     if (Number.isFinite(n) && n > 0) onChange(n);
@@ -26,15 +26,14 @@ const LeaderNumberInput = ({ value, onChange, locked, placeholder }) => {
   return (
     <div className="relative">
       <input
-        type="number"
+        type="text"
         inputMode="numeric"
-        min="1"
-        step="1"
+        pattern="[0-9]*"
         value={value || ''}
         onChange={handleChange}
         disabled={locked}
         placeholder={placeholder || 'e.g. 550'}
-        className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       />
       {value > 0 && (
         <p className="mt-1.5 text-xs text-cyan-400 font-bold flex items-center gap-1">✓ Predicted: {value}</p>
@@ -350,6 +349,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
   const locked       = globalLocked || (futuresData?.locked || false);
   const loading      = pageLoading;
 
+  const leadersLocked = pageData?.leaders_locked ?? false;
   const champOdds = teams.find(t => t.id === champion)?.odds_championship ?? null;
   const westOdds  = westTeams.find(t => t.id === westChamp)?.odds_conference ?? null;
   const eastOdds  = eastTeams.find(t => t.id === eastChamp)?.odds_conference ?? null;
@@ -376,7 +376,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
   };
 
   const handleSaveLeaders = async () => {
-    if (!currentUser || locked) return;
+    if (!currentUser || leadersLocked) return;
     setLeadersSaving(true);
     try {
       await api.saveLeadersPrediction(currentUser.user_id, leaders);
@@ -577,7 +577,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                   <LeaderNumberInput
                     value={leaders[cat.key]}
                     onChange={v => setLeaders(prev => ({ ...prev, [cat.key]: v }))}
-                    locked={locked}
+                    locked={leadersLocked}
                     placeholder={cat.example}
                   />
 
@@ -620,7 +620,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
             })}
           </div>
 
-          {!locked && (
+          {!leadersLocked && (
             <button
               onClick={handleSaveLeaders}
               disabled={leadersSaving || !hasAnyLeaderPick}

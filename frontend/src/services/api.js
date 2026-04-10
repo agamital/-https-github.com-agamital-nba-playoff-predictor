@@ -308,6 +308,16 @@ export const setFuturesLock = async (locked) => {
   return response.data;
 };
 
+export const getLeadersLockStatus = async () => {
+  const response = await api.get('/api/leaders/lock-status');
+  return response.data;
+};
+
+export const setLeadersLock = async (locked) => {
+  const response = await api.post('/api/admin/leaders/lock', null, { params: { locked } });
+  return response.data;
+};
+
 export const getFuturesLeaderboard = async (season = '2026') => {
   const response = await api.get(`/api/futures/leaderboard?season=${season}`);
   return response.data;

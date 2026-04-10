@@ -5565,9 +5565,37 @@ def _get_futures_lock() -> bool:
     return row is not None and row[0] == '1'
 
 
+def _get_leaders_lock() -> bool:
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT value FROM site_settings WHERE key = 'leaders_locked'")
+    row = c.fetchone()
+    conn.close()
+    return row is not None and row[0] == '1'
+
+
 @app.get("/api/futures/lock-status")
 async def futures_lock_status():
     return {"locked": _get_futures_lock()}
+
+
+@app.get("/api/leaders/lock-status")
+async def leaders_lock_status():
+    return {"locked": _get_leaders_lock()}
+
+
+@app.post("/api/admin/leaders/lock")
+async def admin_leaders_lock(locked: bool):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO site_settings (key, value) VALUES ('leaders_locked', %s) "
+        "ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+        ('1' if locked else '0',)
+    )
+    conn.commit()
+    conn.close()
+    return {"locked": locked, "message": f"Leaders picks {'locked' if locked else 'unlocked'}"}
 
 
 @app.post("/api/admin/futures/lock")
@@ -6070,17 +6098,19 @@ async def get_futures_page_data(season: str = "2026"):
             for row in c.fetchall() if row[1]}
 
     # ── Lock status ───────────────────────────────────────────────────────────
-    c.execute("SELECT value FROM site_settings WHERE key = 'futures_locked'")
-    lock_row = c.fetchone()
-    locked   = bool(lock_row and lock_row[0] == '1')
+    c.execute("SELECT key, value FROM site_settings WHERE key IN ('futures_locked', 'leaders_locked')")
+    lock_rows = {row[0]: row[1] for row in c.fetchall()}
+    locked         = lock_rows.get('futures_locked', '0') == '1'
+    leaders_locked = lock_rows.get('leaders_locked', '0') == '1'
 
     conn.close()
     return {
-        'teams':      all_teams,
-        'west_teams': west_teams,
-        'east_teams': east_teams,
-        'odds':       odds,
-        'locked':     locked,
+        'teams':          all_teams,
+        'west_teams':     west_teams,
+        'east_teams':     east_teams,
+        'odds':           odds,
+        'locked':         locked,
+        'leaders_locked': leaders_locked,
     }
 
 
@@ -6960,8 +6990,8 @@ async def save_leaders(user_id: int, season: str = "2026",
                        top_scorer: Optional[int] = None, top_assists: Optional[int] = None,
                        top_rebounds: Optional[int] = None, top_threes: Optional[int] = None,
                        top_steals: Optional[int] = None, top_blocks: Optional[int] = None):
-    if _get_futures_lock():
-        raise HTTPException(400, "Predictions are locked")
+    if _get_leaders_lock():
+        raise HTTPException(400, "Leaders predictions are locked")
     # Validate: all provided values must be positive integers
     for val in (top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks):
         if val is not None and val <= 0:

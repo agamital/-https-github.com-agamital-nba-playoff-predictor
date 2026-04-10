@@ -397,10 +397,10 @@ const FuturesLockCard = () => {
   };
 
   return (
-    <Card className="p-5 mb-4">
+    <Card className="p-5 mb-2">
       <div className="flex items-center gap-2 mb-3">
         {locked ? <Lock className="w-5 h-5 text-red-400" /> : <Unlock className="w-5 h-5 text-green-400" />}
-        <h2 className="text-lg font-black text-white">Futures &amp; Leaders Lock</h2>
+        <h2 className="text-lg font-black text-white">Futures Lock</h2>
         {locked !== null && (
           <span className={`ml-auto px-2 py-0.5 rounded-full text-xs font-black ${locked ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
             {locked ? 'LOCKED' : 'OPEN'}
@@ -408,7 +408,7 @@ const FuturesLockCard = () => {
         )}
       </div>
       <p className="text-xs text-slate-400 mb-4">
-        {locked ? 'Users cannot edit their futures or leaders picks.' : 'Users can still edit their futures and leaders picks.'}
+        {locked ? 'Users cannot edit champion, conference, and MVP picks.' : 'Users can edit champion, conference, and MVP picks.'}
       </p>
       <button onClick={toggle} disabled={busy || locked === null}
         className={`px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 ${
@@ -416,7 +416,53 @@ const FuturesLockCard = () => {
             ? 'bg-green-500/20 border border-green-500/40 text-green-400 hover:bg-green-500/30'
             : 'bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30'
         }`}>
-        {busy ? 'Updating…' : locked ? '🔓 Unlock Futures & Leaders' : '🔒 Lock Futures & Leaders'}
+        {busy ? 'Updating…' : locked ? '🔓 Unlock Futures' : '🔒 Lock Futures'}
+      </button>
+    </Card>
+  );
+};
+
+const LeadersLockCard = () => {
+  const [locked, setLocked] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.getLeadersLockStatus().then(s => setLocked(s.locked)).catch(() => {});
+  }, []);
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const res = await api.setLeadersLock(!locked);
+      setLocked(res.locked);
+    } catch (e) {
+      alert('Error: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="p-5 mb-4">
+      <div className="flex items-center gap-2 mb-3">
+        {locked ? <Lock className="w-5 h-5 text-red-400" /> : <Unlock className="w-5 h-5 text-green-400" />}
+        <h2 className="text-lg font-black text-white">Playoff Leaders Lock</h2>
+        {locked !== null && (
+          <span className={`ml-auto px-2 py-0.5 rounded-full text-xs font-black ${locked ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
+            {locked ? 'LOCKED' : 'OPEN'}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-slate-400 mb-4">
+        {locked ? 'Users cannot edit Playoff Leaders picks (most pts/ast/reb etc).' : 'Users can edit Playoff Leaders picks.'}
+      </p>
+      <button onClick={toggle} disabled={busy || locked === null}
+        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 ${
+          locked
+            ? 'bg-green-500/20 border border-green-500/40 text-green-400 hover:bg-green-500/30'
+            : 'bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30'
+        }`}>
+        {busy ? 'Updating…' : locked ? '🔓 Unlock Leaders' : '🔒 Lock Leaders'}
       </button>
     </Card>
   );
@@ -1871,6 +1917,7 @@ const AdminPage = ({ currentUser }) => {
       <ReminderCard addToast={addToast} />
       <StandingsSyncCard addToast={addToast} onPlayinRefreshed={setPlayin} />
       <FuturesLockCard />
+      <LeadersLockCard />
       <TeamOddsCard addToast={addToast} />
       <OddsCard />
       <FuturesResultsCard teams={allTeams} />
