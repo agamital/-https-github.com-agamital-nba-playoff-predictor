@@ -1750,6 +1750,82 @@ const StandingsSyncCard = ({ addToast, onPlayinRefreshed }) => {
   );
 };
 
+const BoxscoreSyncCard = ({ addToast }) => {
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const [date, setDate]       = useState(yesterday);
+  const [syncing, setSyncing] = useState(false);
+  const [result, setResult]   = useState(null);
+
+  const run = async () => {
+    setSyncing(true);
+    setResult(null);
+    try {
+      const res = await api.syncBoxscores(date);
+      setResult(res);
+      if (res.skipped) {
+        addToast(`Skipped — ${res.skip_reason}`, 'error');
+      } else {
+        addToast(`Boxscore sync done — ${res.games_processed} games, ${res.players_upserted} players`, 'success');
+      }
+    } catch (e) {
+      const msg = e.response?.data?.detail || e.message;
+      setResult({ errors: [msg] });
+      addToast('Sync error: ' + msg, 'error');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 mb-4">
+      <div className="mb-3">
+        <h3 className="text-white font-bold text-base flex items-center gap-2">
+          <Database className="w-4 h-4 text-orange-400" /> Boxscore Sync
+        </h3>
+        <p className="text-slate-400 text-xs mt-0.5">
+          Fetch per-game player stats for a date. Falls back to ESPN when RapidAPI quota is exceeded.
+        </p>
+      </div>
+      <div className="flex gap-2 items-center">
+        <input
+          type="date"
+          value={date}
+          onChange={e => setDate(e.target.value)}
+          className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:border-orange-500"
+        />
+        <button
+          onClick={run}
+          disabled={syncing || !date}
+          className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white transition-colors flex items-center gap-2"
+        >
+          <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+          {syncing ? 'Syncing…' : 'Sync'}
+        </button>
+      </div>
+      {result && (
+        <div className="mt-3 space-y-1.5">
+          <div className={`px-3 py-2 rounded-lg border text-xs font-bold flex items-center gap-2 ${
+            result.skipped || (result.errors?.length && !result.games_processed)
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+              : 'bg-green-500/10 border-green-500/30 text-green-400'
+          }`}>
+            {result.skipped
+              ? <><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Skipped: {result.skip_reason}</>
+              : <><CheckCircle className="w-3.5 h-3.5 shrink-0" />
+                  {result.games_found} found · {result.games_processed} processed · {result.players_upserted} players upserted</>
+            }
+          </div>
+          {result.errors?.length > 0 && (
+            <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono break-all space-y-0.5">
+              {result.errors.map((err, i) => <div key={i}>{err}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AdminPage = ({ currentUser }) => {
   const [series, setSeries] = useState([]);
   const [playin, setPlayin] = useState([]);
@@ -1913,27 +1989,28 @@ const AdminPage = ({ currentUser }) => {
   const roundOrder = ['First Round', 'Conference Semifinals', 'Conference Finals', 'NBA Finals'];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto px-4 py-6 sm:py-8">
       <Toast toasts={toasts} dismiss={dismissToast} />
 
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-8">
         <div>
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-4xl font-black text-white">Admin Panel</h1>
-            <span className="px-3 py-1 rounded-full bg-orange-500/20 border border-orange-500/30 text-orange-400 text-xs font-bold uppercase">Admin</span>
+          <div className="flex items-center gap-2 sm:gap-3 mb-1">
+            <h1 className="text-2xl sm:text-4xl font-black text-white">Admin Panel</h1>
+            <span className="px-2 sm:px-3 py-1 rounded-full bg-orange-500/20 border border-orange-500/30 text-orange-400 text-xs font-bold uppercase">Admin</span>
           </div>
-          <p className="text-slate-400">Set results — scores update automatically</p>
+          <p className="text-slate-400 text-sm">Set results — scores update automatically</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 self-start sm:self-auto">
           <button onClick={handleSyncAndAdvance}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30 font-bold text-sm transition-all"
+            className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30 font-bold text-xs sm:text-sm transition-all"
             title="Re-run bracket advancement for all completed series and recalculate all points">
             <Zap className="w-4 h-4" />
-            Sync &amp; Advance
+            <span className="hidden sm:inline">Sync &amp; Advance</span>
+            <span className="sm:hidden">Advance</span>
           </button>
-          <button onClick={load} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800/50 transition-all">
+          <button onClick={load} className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800/50 transition-all text-xs sm:text-sm font-bold">
             <RefreshCw className="w-4 h-4" />
-            Refresh
+            <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
       </div>
@@ -1942,6 +2019,7 @@ const AdminPage = ({ currentUser }) => {
       <PlayerStatsSyncCard addToast={addToast} />
       <ReminderCard addToast={addToast} />
       <StandingsSyncCard addToast={addToast} onPlayinRefreshed={setPlayin} />
+      <BoxscoreSyncCard addToast={addToast} />
       <FuturesLockCard />
       <LeadersLockCard />
       <TeamOddsCard addToast={addToast} />
@@ -1965,14 +2043,14 @@ const AdminPage = ({ currentUser }) => {
             const gameOrder = { '7v8': 0, '9v10': 1, 'elimination': 2 };
             return (
               <div className="mb-10">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                    <Trophy className="w-6 h-6 text-purple-400" /> Play-In Games
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
+                  <h2 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+                    <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-purple-400" /> Play-In Games
                   </h2>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button onClick={handleSyncPlayinFromApi}
                       disabled={syncingFromApi}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/20 border border-blue-500/40 text-blue-300 hover:bg-blue-500/30 font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-500/20 border border-blue-500/40 text-blue-300 hover:bg-blue-500/30 font-bold text-xs sm:text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                       title="Fetch finished Play-In results from RapidAPI and auto-promote winners in the bracket">
                       {syncingFromApi
                         ? <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1980,7 +2058,7 @@ const AdminPage = ({ currentUser }) => {
                       {syncingFromApi ? 'Syncing…' : 'Sync from API'}
                     </button>
                     <button onClick={handleSyncPlayin}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 font-bold text-sm transition-all"
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 font-bold text-xs sm:text-sm transition-all"
                       title="Re-run play-in progressions: create Game 3, advance R1 seeds, recalculate points">
                       <Zap className="w-4 h-4" />
                       Sync Play-In
@@ -2011,14 +2089,14 @@ const AdminPage = ({ currentUser }) => {
 
           {/* Playoff Series header with API sync button — rendered once above all rounds */}
           {roundOrder.some(r => seriesByRound[r]?.length) && (
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                <Trophy className="w-6 h-6 text-orange-400" /> Playoff Series
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-6">
+              <h2 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+                <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-orange-400" /> Playoff Series
               </h2>
               <button
                 onClick={handleSyncPlayoffsFromApi}
                 disabled={syncingPlayoffsFromApi}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/20 border border-blue-500/40 text-blue-300 hover:bg-blue-500/30 font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="self-start sm:self-auto flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg bg-blue-500/20 border border-blue-500/40 text-blue-300 hover:bg-blue-500/30 font-bold text-xs sm:text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Fetch finished Playoff game results from RapidAPI and update series scores">
                 {syncingPlayoffsFromApi
                   ? <RefreshCw className="w-4 h-4 animate-spin" />
@@ -2033,10 +2111,10 @@ const AdminPage = ({ currentUser }) => {
             if (!roundSeries?.length) return null;
             return (
               <div key={round} className="mb-10">
-                <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
-                  <Trophy className="w-6 h-6 text-orange-400" />
+                <h2 className="text-lg sm:text-2xl font-bold text-white mb-4 flex items-center gap-2 flex-wrap">
+                  <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-orange-400" />
                   {round}
-                  <span className="text-sm text-slate-500 font-normal ml-1">
+                  <span className="text-xs sm:text-sm text-slate-500 font-normal">
                     (×{{'First Round':1,'Conference Semifinals':2,'Conference Finals':3,'NBA Finals':4}[round]} pts multiplier)
                   </span>
                 </h2>
