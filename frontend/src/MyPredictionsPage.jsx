@@ -333,26 +333,26 @@ const MyPredictionsPage = ({ currentUser }) => {
           )}
 
           {/* ── Playoff Leaders Prediction ── */}
-          {predictions.leaders_prediction && (
-            <div className="mb-8">
-              <h2 className="text-xl md:text-2xl font-bold text-white mb-4 flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-cyan-400" />
-                Playoff Leaders Picks
-                {predictions.leaders_prediction.points_earned > 0 && (
-                  <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
-                    +{predictions.leaders_prediction.points_earned} pts
-                  </span>
-                )}
-              </h2>
+          <div className="mb-8">
+            <h2 className="text-xl md:text-2xl font-bold text-white mb-4 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-cyan-400" />
+              Playoff Leaders Picks
+              {predictions.leaders_prediction?.points_earned > 0 && (
+                <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
+                  +{predictions.leaders_prediction.points_earned} pts
+                </span>
+              )}
+            </h2>
+            {predictions.leaders_prediction ? (
               <Card className="p-4">
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {[
-                    { key: 'top_scorer',   label: 'Top Scorer (PPG)',    correct: predictions.leaders_prediction.is_correct_scorer },
-                    { key: 'top_assists',  label: 'Top Assists (APG)',   correct: predictions.leaders_prediction.is_correct_assists },
-                    { key: 'top_rebounds', label: 'Top Rebounds (RPG)',  correct: predictions.leaders_prediction.is_correct_rebounds },
-                    { key: 'top_threes',   label: 'Top 3-Pointers',      correct: predictions.leaders_prediction.is_correct_threes },
-                    { key: 'top_steals',   label: 'Top Steals (SPG)',    correct: predictions.leaders_prediction.is_correct_steals },
-                    { key: 'top_blocks',   label: 'Top Blocks (BPG)',    correct: predictions.leaders_prediction.is_correct_blocks },
+                    { key: 'top_scorer',   label: 'Top Scorer (PPG)',   correct: predictions.leaders_prediction.is_correct_scorer },
+                    { key: 'top_assists',  label: 'Top Assists (APG)',  correct: predictions.leaders_prediction.is_correct_assists },
+                    { key: 'top_rebounds', label: 'Top Rebounds (RPG)', correct: predictions.leaders_prediction.is_correct_rebounds },
+                    { key: 'top_threes',   label: 'Top 3-Pointers',     correct: predictions.leaders_prediction.is_correct_threes },
+                    { key: 'top_steals',   label: 'Top Steals (SPG)',   correct: predictions.leaders_prediction.is_correct_steals },
+                    { key: 'top_blocks',   label: 'Top Blocks (BPG)',   correct: predictions.leaders_prediction.is_correct_blocks },
                   ].map(({ key, label, correct }) => {
                     const val = predictions.leaders_prediction[key];
                     const borderCls = correct === 1 ? 'border-green-500/40 bg-green-500/5'
@@ -362,7 +362,9 @@ const MyPredictionsPage = ({ currentUser }) => {
                       <div key={key} className={`rounded-xl border p-3 ${borderCls}`}>
                         <p className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">{label}</p>
                         <div className="flex items-center justify-between">
-                          <span className="text-lg font-black text-white">{val ?? <span className="text-slate-600 text-sm italic">—</span>}</span>
+                          <span className="text-lg font-black text-white">
+                            {val != null ? val : <span className="text-slate-600 text-sm italic">—</span>}
+                          </span>
                           {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400" />}
                           {correct === 0 && <XCircle className="w-4 h-4 text-red-400" />}
                         </div>
@@ -371,8 +373,14 @@ const MyPredictionsPage = ({ currentUser }) => {
                   })}
                 </div>
               </Card>
-            </div>
-          )}
+            ) : (
+              <Card className="p-6 text-center">
+                <BarChart3 className="w-10 h-10 text-slate-700 mx-auto mb-3" />
+                <p className="text-slate-400 font-bold mb-1">No leaders picks yet</p>
+                <p className="text-slate-600 text-sm">Go to the Playoff page → Playoff Leaders section to enter your stat predictions.</p>
+              </Card>
+            )}
+          </div>
 
           {/* ── Playoff Predictions ── */}
           {predictions.playoff_predictions.length > 0 && (

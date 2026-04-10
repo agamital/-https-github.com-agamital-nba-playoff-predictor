@@ -24,11 +24,29 @@ const ACCENT_CLASSES = {
 // ── Countdown timer displayed in Asia/Jerusalem timezone ──────────────────────
 const JERUSALEM_TZ = 'Asia/Jerusalem';
 
-function formatJerusalemTime(isoUtc) {
-  if (!isoUtc) return null;
-  // Backend returns naive ISO string (no Z), treat as UTC
-  const utcStr = isoUtc.endsWith('Z') ? isoUtc : isoUtc + 'Z';
-  return new Date(utcStr).toLocaleString('en-IL', {
+// Fallback schedule (UTC) in case DB hasn't backfilled start_time yet.
+// Key = `${conference}_${game_type}`
+const FALLBACK_START_TIMES = {
+  'Eastern_7v8':         '2026-04-15T23:30:00Z',
+  'Western_7v8':         '2026-04-16T02:00:00Z',
+  'Eastern_9v10':        '2026-04-16T23:30:00Z',
+  'Western_9v10':        '2026-04-17T02:00:00Z',
+  'Eastern_elimination': '2026-04-18T23:30:00Z',
+  'Western_elimination': '2026-04-19T02:00:00Z',
+};
+
+function resolveStartTime(game) {
+  if (game.start_time) {
+    // Backend returns naive ISO (no Z) — force UTC
+    return game.start_time.endsWith('Z') ? game.start_time : game.start_time + 'Z';
+  }
+  // Fall back to hardcoded schedule if DB column not set yet
+  return FALLBACK_START_TIMES[`${game.conference}_${game.game_type}`] || null;
+}
+
+function formatJerusalemTime(isoUtcZ) {
+  if (!isoUtcZ) return null;
+  return new Date(isoUtcZ).toLocaleString('en-IL', {
     timeZone: JERUSALEM_TZ,
     weekday: 'short',
     month:   'short',
@@ -39,19 +57,18 @@ function formatJerusalemTime(isoUtc) {
   });
 }
 
-function useCountdown(isoUtc) {
+function useCountdown(isoUtcZ) {
   const getSecsLeft = () => {
-    if (!isoUtc) return null;
-    const utcStr = isoUtc.endsWith('Z') ? isoUtc : isoUtc + 'Z';
-    return Math.floor((new Date(utcStr) - Date.now()) / 1000);
+    if (!isoUtcZ) return null;
+    return Math.floor((new Date(isoUtcZ) - Date.now()) / 1000);
   };
   const [secs, setSecs] = useState(getSecsLeft);
 
   useEffect(() => {
-    if (!isoUtc) return;
+    if (!isoUtcZ) return;
     const id = setInterval(() => setSecs(getSecsLeft()), 1000);
     return () => clearInterval(id);
-  }, [isoUtc]);
+  }, [isoUtcZ]);
 
   return secs; // negative means game already started
 }
@@ -91,9 +108,10 @@ const GameCard = ({ game, currentUser, onPrediction }) => {
   const accent      = ACCENT_CLASSES[meta.accent] || ACCENT_CLASSES.purple;
   const isCompleted = game.status === 'completed';
 
-  const secsLeft   = useCountdown(game.start_time);
+  const startTimeZ = resolveStartTime(game);
+  const secsLeft   = useCountdown(startTimeZ);
   const betsClosed = isCompleted || (secsLeft !== null && secsLeft <= 0);
-  const startLabel = formatJerusalemTime(game.start_time);
+  const startLabel = formatJerusalemTime(startTimeZ);
 
   return (
     <Card className="p-6">
@@ -105,10 +123,10 @@ const GameCard = ({ game, currentUser, onPrediction }) => {
       </div>
       <p className="text-[10px] text-slate-600 mb-2">{meta.next}</p>
 
-      {!isCompleted && game.start_time && (
+      {!isCompleted && startTimeZ && (
         <div className="mb-3 space-y-1">
           {startLabel && <p className="text-[11px] text-slate-500">🕐 {startLabel} (Israel Time)</p>}
-          <Countdown startTime={game.start_time} />
+          <Countdown startTime={startTimeZ} />
         </div>
       )}
 

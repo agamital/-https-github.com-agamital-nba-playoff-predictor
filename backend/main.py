@@ -2812,14 +2812,15 @@ def refresh_playin_matchups(season: str = '2026') -> dict:
                 row = c.fetchone()
 
                 if row is None:
-                    # No row yet — insert it
+                    # No row yet — insert it (include start_time from schedule)
+                    st = PLAYIN_SCHEDULE_UTC.get((conf_full, game_type))
                     c.execute(
                         """INSERT INTO playin_games
                                (season, conference, game_type,
-                                team1_id, team1_seed, team2_id, team2_seed, status)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, 'active')""",
+                                team1_id, team1_seed, team2_id, team2_seed, status, start_time)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, 'active', %s)""",
                         (season, conf_full, game_type,
-                         t1['team_id'], s1, t2['team_id'], s2)
+                         t1['team_id'], s1, t2['team_id'], s2, st)
                     )
                     msg = f"{conf_full} {game_type}: inserted #{s1} {t1['team_name']} vs #{s2} {t2['team_name']}"
                     print(f"[PlayinRefresh] {msg}")
