@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, CheckCircle, XCircle, Clock, Star, Users, BarChart2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Trophy, CheckCircle, XCircle, Clock, Star, Users, BarChart2, ChevronDown, ChevronUp, RefreshCw, BarChart3 } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className }) => (
@@ -77,7 +77,7 @@ const PickBar = ({ label, color, items, icon: Icon }) => {
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 const MyPredictionsPage = ({ currentUser }) => {
-  const [predictions, setPredictions] = useState({ playoff_predictions: [], playin_predictions: [], futures_prediction: null, total_predictions: 0 });
+  const [predictions, setPredictions] = useState({ playoff_predictions: [], playin_predictions: [], futures_prediction: null, leaders_prediction: null, total_predictions: 0 });
   const [community, setCommunity] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showCommunity, setShowCommunity] = useState(false);
@@ -115,9 +115,15 @@ const MyPredictionsPage = ({ currentUser }) => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl md:text-4xl font-black text-white mb-2">My Predictions</h1>
-        <p className="text-slate-400 text-sm">Track all your playoff picks</p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl md:text-4xl font-black text-white mb-2">My Predictions</h1>
+          <p className="text-slate-400 text-sm">Track all your playoff picks</p>
+        </div>
+        <button onClick={loadPredictions} disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 shrink-0">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+        </button>
       </div>
 
       {loading ? (
@@ -323,6 +329,48 @@ const MyPredictionsPage = ({ currentUser }) => {
                   </Card>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* ── Playoff Leaders Prediction ── */}
+          {predictions.leaders_prediction && (
+            <div className="mb-8">
+              <h2 className="text-xl md:text-2xl font-bold text-white mb-4 flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-cyan-400" />
+                Playoff Leaders Picks
+                {predictions.leaders_prediction.points_earned > 0 && (
+                  <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
+                    +{predictions.leaders_prediction.points_earned} pts
+                  </span>
+                )}
+              </h2>
+              <Card className="p-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {[
+                    { key: 'top_scorer',   label: 'Top Scorer (PPG)',    correct: predictions.leaders_prediction.is_correct_scorer },
+                    { key: 'top_assists',  label: 'Top Assists (APG)',   correct: predictions.leaders_prediction.is_correct_assists },
+                    { key: 'top_rebounds', label: 'Top Rebounds (RPG)',  correct: predictions.leaders_prediction.is_correct_rebounds },
+                    { key: 'top_threes',   label: 'Top 3-Pointers',      correct: predictions.leaders_prediction.is_correct_threes },
+                    { key: 'top_steals',   label: 'Top Steals (SPG)',    correct: predictions.leaders_prediction.is_correct_steals },
+                    { key: 'top_blocks',   label: 'Top Blocks (BPG)',    correct: predictions.leaders_prediction.is_correct_blocks },
+                  ].map(({ key, label, correct }) => {
+                    const val = predictions.leaders_prediction[key];
+                    const borderCls = correct === 1 ? 'border-green-500/40 bg-green-500/5'
+                                    : correct === 0 ? 'border-red-500/40 bg-red-500/5'
+                                    : 'border-slate-700/60';
+                    return (
+                      <div key={key} className={`rounded-xl border p-3 ${borderCls}`}>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">{label}</p>
+                        <div className="flex items-center justify-between">
+                          <span className="text-lg font-black text-white">{val ?? <span className="text-slate-600 text-sm italic">—</span>}</span>
+                          {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400" />}
+                          {correct === 0 && <XCircle className="w-4 h-4 text-red-400" />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
             </div>
           )}
 

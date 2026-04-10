@@ -4656,12 +4656,39 @@ async def my_predictions(user_id: int, season: str = "2026"):
             'points_earned':       frow[14] or 0,
         }
 
+    # Get leaders prediction
+    c.execute('''SELECT top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks,
+                 is_correct_scorer, is_correct_assists, is_correct_rebounds,
+                 is_correct_threes, is_correct_steals, is_correct_blocks,
+                 points_earned, predicted_at
+                 FROM leaders_predictions WHERE user_id = %s AND season = %s''', (user_id, season))
+    lrow = c.fetchone()
+    leaders_pred = None
+    if lrow:
+        leaders_pred = {
+            'top_scorer':    lrow[0],
+            'top_assists':   lrow[1],
+            'top_rebounds':  lrow[2],
+            'top_threes':    lrow[3],
+            'top_steals':    lrow[4],
+            'top_blocks':    lrow[5],
+            'is_correct_scorer':   lrow[6],
+            'is_correct_assists':  lrow[7],
+            'is_correct_rebounds': lrow[8],
+            'is_correct_threes':   lrow[9],
+            'is_correct_steals':   lrow[10],
+            'is_correct_blocks':   lrow[11],
+            'points_earned': lrow[12] or 0,
+            'predicted_at':  lrow[13],
+        }
+
     conn.close()
 
     return {
         'playoff_predictions': playoff_preds,
         'playin_predictions': playin_preds,
         'futures_prediction': futures_pred,
+        'leaders_prediction': leaders_pred,
         'total_predictions': len(playoff_preds) + len(playin_preds)
     }
 
