@@ -1534,6 +1534,8 @@ const StandingsSyncCard = ({ addToast, onPlayinRefreshed }) => {
     if (!source) return null;
     const cfg = {
       rapidapi:      { label: 'RapidAPI ✓',           icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
+      primary_api:   { label: 'Primary API ✓',        icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
+      espn_direct:   { label: 'ESPN Direct ✓',        icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
       nba_api:       { label: 'stats.nba.com',         icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
       browser_push:  { label: 'Browser Push',          icon: Wifi,          cls: 'bg-green-500/20 text-green-400 border-green-500/30' },
       database:      { label: 'Database Cache',        icon: Database,      cls: 'bg-blue-500/20  text-blue-400  border-blue-500/30'  },
@@ -1738,11 +1740,10 @@ const StandingsSyncCard = ({ addToast, onPlayinRefreshed }) => {
           </div>
 
           <p className="text-[10px] text-slate-600 leading-relaxed">
-            <strong className="text-slate-500">Test Connection</strong> — checks if the server can reach NBA API directly.<br />
-            <strong className="text-slate-500">Sync via RapidAPI</strong> — server calls RapidAPI (not IP-blocked), saves to DB.<br />
-            <strong className="text-slate-500">Fetch via Browser</strong> — YOUR browser fetches the data, then sends it to the server.
-            Use this if the server is IP-blocked. Requires browser CORS access to stats.nba.com.<br />
-            <strong className="text-slate-500">Sync Player Stats</strong> — populates the player_stats table used by MVP autocomplete search.
+            <strong className="text-slate-500">Sync via RapidAPI</strong> — server tries 4 sources in order: RapidAPI Primary → Secondary → ESPN Direct (no key) → stats.nba.com. ESPN Direct usually works even when others fail.<br />
+            <strong className="text-slate-500">Fetch via Browser</strong> — YOUR browser fetches stats.nba.com and pushes data to the server. Use this only if server sync fails completely.<br />
+            <strong className="text-slate-500">Auto-sync schedule</strong> — standings sync runs at 03:00, 04:00, 06:00, 09:00 UTC (06:00, 07:00, 09:00, 12:00 IDT).<br />
+            <strong className="text-slate-500">Sync Player Stats</strong> — populates player_stats for MVP autocomplete search.
           </p>
         </div>
       )}

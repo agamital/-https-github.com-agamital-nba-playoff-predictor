@@ -127,6 +127,7 @@ _RAPIDAPI_SCOREBOARD_BY_DATE_URL = "https://nba-api-free-data.p.rapidapi.com/nba
 # ESPN public APIs — no key needed
 _ESPN_BOXSCORE_URL    = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
 _ESPN_SCOREBOARD_URL2 = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+_ESPN_STANDINGS_URL   = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/standings"
 
 # ── Fallback: direct stats.nba.com request (used when RAPIDAPI_KEY not set) ──
 _NBA_STANDINGS_URL = (
@@ -925,6 +926,91 @@ def _fetch_standings_from_primary_api() -> list:
     e1 = next((t for t in standings if t["conference"] == "East" and t["conf_rank"] == 1), None)
     w1 = next((t for t in standings if t["conference"] == "West" and t["conf_rank"] == 1), None)
     print(f"[Primary] ✓ {len(standings)} teams — "
+          f"#1 East: {e1['team_name'] if e1 else '?'}  "
+          f"#1 West: {w1['team_name'] if w1 else '?'}")
+    return standings
+
+
+def _fetch_standings_from_espn_direct() -> list:
+    """
+    Fetch NBA standings from ESPN's free public API — no API key required.
+    Same response format as _fetch_standings_from_primary_api() (ESPN-backed).
+    Returns list of team dicts; raises on failure.
+    """
+    import requests as _http
+
+    print(f"[ESPN-Direct] GET {_ESPN_STANDINGS_URL}")
+    resp = _http.get(_ESPN_STANDINGS_URL, timeout=15)
+    print(f"[ESPN-Direct] HTTP {resp.status_code}")
+    resp.raise_for_status()
+    data = resp.json()
+
+    def _safe_int(v, d=0):
+        try: return int(v or d)
+        except: return d
+
+    def _safe_float(v, d=0.0):
+        try: return float(v or d)
+        except: return d
+
+    standings = []
+    for conf_block in data.get("children", []):
+        conf_abbr = conf_block.get("abbreviation", "")
+        if "east" in conf_abbr.lower():
+            conf = "East"
+        elif "west" in conf_abbr.lower():
+            conf = "West"
+        else:
+            continue
+
+        entries = conf_block.get("standings", {}).get("entries", [])
+        for entry in entries:
+            team_obj  = entry.get("team", {})
+            team_name = (team_obj.get("displayName") or
+                         f"{team_obj.get('location','')} {team_obj.get('name','')}".strip())
+            abbr      = team_obj.get("abbreviation", "")
+
+            stats_map = {
+                s["name"].lower(): s.get("value")
+                for s in entry.get("stats", [])
+                if s.get("name")
+            }
+
+            wins    = _safe_int(stats_map.get("wins"))
+            losses  = _safe_int(stats_map.get("losses"))
+            win_pct = _safe_float(stats_map.get("winpercent"))
+            gb_raw  = stats_map.get("gamesbehind", "0")
+            gb      = 0.0 if str(gb_raw) in ("-", "", "None") else _safe_float(gb_raw)
+            seed    = _safe_int(stats_map.get("playoffseed") or
+                                stats_map.get("seed") or
+                                stats_map.get("conferencerank"), 99)
+
+            if win_pct == 0.0 and (wins + losses) > 0:
+                win_pct = round(wins / (wins + losses), 3)
+
+            team_id = _APINBA_NAME_TO_ID.get(team_name) or _APINBA_NAME_TO_ID.get(abbr, 0)
+
+            standings.append({
+                "team_id":      team_id,
+                "team_name":    team_name,
+                "conference":   conf,
+                "wins":         wins,
+                "losses":       losses,
+                "win_pct":      win_pct,
+                "conf_rank":    seed,
+                "playoff_rank": seed,
+                "games_back":   gb,
+            })
+
+    bad = [t for t in standings if any(kw in t["team_name"].lower() for kw in _ALLSTAR_KEYWORDS)]
+    if bad:
+        raise ValueError(f"ESPN direct returned bad data: '{bad[0]['team_name']}'")
+    if len(standings) < 20:
+        raise ValueError(f"ESPN direct: only {len(standings)} teams parsed (expected 30)")
+
+    e1 = next((t for t in standings if t["conference"] == "East" and t["conf_rank"] == 1), None)
+    w1 = next((t for t in standings if t["conference"] == "West" and t["conf_rank"] == 1), None)
+    print(f"[ESPN-Direct] ✓ {len(standings)} teams — "
           f"#1 East: {e1['team_name'] if e1 else '?'}  "
           f"#1 West: {w1['team_name'] if w1 else '?'}")
     return standings
@@ -1937,6 +2023,17 @@ def _standings_sync_job():
                 print(f"[Standings] Secondary API failed ({type(_rapid_err).__name__}: "
                       f"{str(_rapid_err)[:200]}) — falling back to stats.nba.com")
                 print(f"[Standings] Secondary traceback:\n{_tb.format_exc()}")
+
+    # ── Source 3: ESPN public API (no key, same format as Primary) ──
+    if fresh is None:
+        try:
+            print("[Standings] Trying ESPN public API (no key required)")
+            fresh       = _fetch_standings_from_espn_direct()
+            used_source = "espn_direct"
+            print("[Standings] ✓ Source: ESPN direct")
+        except Exception as _espn_err:
+            print(f"[Standings] ESPN direct failed ({type(_espn_err).__name__}: "
+                  f"{str(_espn_err)[:200]}) — trying stats.nba.com")
 
     if fresh is None:
         try:
@@ -3272,6 +3369,21 @@ async def startup():
     # APScheduler cron jobs
     global _scheduler
     _scheduler = BackgroundScheduler(timezone='UTC', daemon=True)
+
+    # ── 1a) Standings-only syncs — 03:00, 06:00, 09:00 UTC (Jerusalem morning) ─
+    # Extra syncs during play-in week so the leaderboard is fresh when users
+    # wake up in Israel (06:00–12:00 IDT = 03:00–09:00 UTC).
+    for _hr in (3, 6, 9):
+        _scheduler.add_job(
+            _standings_sync_job,
+            CronTrigger.from_crontab(f'0 {_hr} * * *'),
+            id=f'standings_sync_{_hr:02d}00',
+            replace_existing=True,
+            misfire_grace_time=600,
+            max_instances=1,
+        )
+    print("[Scheduler] Added standings-only syncs at 03:00, 06:00, 09:00 UTC "
+          "(06:00, 09:00, 12:00 IDT)")
 
     # ── 1) Daily full-chain sync — 04:00 UTC (1x/day) ───────────────────────
     # Replaces the old hourly + 15-min jobs.  Runs the complete sequence once

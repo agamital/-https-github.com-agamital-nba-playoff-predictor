@@ -16,6 +16,14 @@ const api = axios.create({
   },
 });
 
+// Separate instance for long-running admin calls (standings sync tries 4 sources
+// sequentially — each can take up to 15 s — so we need a generous timeout).
+const adminApi = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 60000,
+  headers: { 'Content-Type': 'application/json' },
+});
+
 // Teams
 export const getTeams = async (conference = null, playoffOnly = false) => {
   const params = {};
@@ -181,19 +189,19 @@ export const getStandings = async (forceRefresh = false) => {
 };
 
 export const adminSyncStandings = async () => {
-  const response = await api.post('/api/admin/standings/sync');
+  const response = await adminApi.post('/api/admin/standings/sync');
   return response.data;
 };
 
 // Push browser-fetched NBA API data to the backend (bypasses server IP block)
 export const pushStandingsFromBrowser = async (resultSets) => {
-  const response = await api.post('/api/admin/standings/push', { resultSets });
+  const response = await adminApi.post('/api/admin/standings/push', { resultSets });
   return response.data;
 };
 
 // Quick server-side connection test — returns #1 East team name
 export const testStandingsConnection = async () => {
-  const response = await api.get('/api/admin/standings/test');
+  const response = await adminApi.get('/api/admin/standings/test');
   return response.data;
 };
 
@@ -520,7 +528,7 @@ export const sendTestEmail = async (to) => {
 export const syncBoxscores = async (date = null, season = '2026') => {
   const params = { season };
   if (date) params.date = date;
-  const response = await api.post('/api/admin/boxscore/sync', null, { params });
+  const response = await adminApi.post('/api/admin/boxscore/sync', null, { params });
   return response.data;
 };
 
