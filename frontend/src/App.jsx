@@ -1848,8 +1848,17 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
   );
 };
 
+// Pages that require extra state to render correctly — fall back to home on refresh
+const _STATEFUL_PAGES = new Set(['user-predictions']);
+
+function _pageFromHash() {
+  const h = window.location.hash.slice(1);
+  if (!h || _STATEFUL_PAGES.has(h)) return 'home';
+  return h;
+}
+
 function App() {
-  const [currentPage, setCurrentPage] = useState('home');
+  const [currentPage, setCurrentPage] = useState(_pageFromHash);
   const [currentUser, setCurrentUser] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
@@ -1895,6 +1904,13 @@ function App() {
     const { outcome } = await installPrompt.userChoice;
     if (outcome === 'accepted') setInstallPrompt(null);
   };
+
+  // Sync state when user hits browser back/forward or manually edits the hash
+  useEffect(() => {
+    const onHashChange = () => setCurrentPage(_pageFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   useEffect(() => {
     // Clear any stale OneSignal operation-queue entries that could cause a
@@ -1968,6 +1984,8 @@ function App() {
     setMobileMenuOpen(false);
     if (page === 'profile' && opts.username) setProfileUsername(opts.username);
     if (page !== 'user-predictions') setSelectedUser(null);
+    // Persist current page in URL hash so refresh returns to same page
+    window.location.hash = page === 'home' ? '' : page;
   };
 
   const handleUserClick = (user) => {
@@ -2015,7 +2033,7 @@ function App() {
       {/* ── DESKTOP SIDEBAR ── */}
       <aside className="hidden md:fixed md:inset-y-0 md:flex md:w-64 md:flex-col z-40">
         <div className="flex flex-col flex-grow pt-5 bg-slate-900/50 backdrop-blur-xl border-r border-blue-500/20">
-          <div className="flex items-center px-4 mb-8">
+          <button onClick={() => navigate('home')} className="flex items-center px-4 mb-8 active:opacity-70 transition-opacity">
             <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center mr-3 shrink-0">
               <Trophy className="w-7 h-7 text-white" />
             </div>
@@ -2023,7 +2041,7 @@ function App() {
               <h1 className="text-xl font-black text-white">NBA PLAYOFF</h1>
               <p className="text-xs font-bold text-orange-400">PREDICTOR 2026</p>
             </div>
-          </div>
+          </button>
           <nav className="flex-1 px-2 space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -2109,7 +2127,10 @@ function App() {
       {/* ── MOBILE TOP BAR (brand only, no hamburger) ── */}
       <div className="md:hidden sticky top-0 z-50 bg-slate-900/95 backdrop-blur-xl border-b border-blue-500/20 pt-safe">
         <div className="flex items-center justify-between px-4" style={{ minHeight: 56 }}>
-          <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('home')}
+            className="flex items-center gap-2 active:opacity-70 transition-opacity"
+          >
             <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg flex items-center justify-center shrink-0">
               <Trophy className="w-5 h-5 text-white" />
             </div>
@@ -2117,7 +2138,7 @@ function App() {
               <h1 className="text-base font-black text-white leading-none">NBA PLAYOFF</h1>
               <p className="text-[10px] font-bold text-orange-400">PREDICTOR 2026</p>
             </div>
-          </div>
+          </button>
           {currentUser && (
             <div className="flex items-center gap-1">
               <BellButton userId={currentUser?.user_id} onNavigate={navigate} />
