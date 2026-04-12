@@ -10,7 +10,8 @@ const Card = ({ children, className }) => (
 
 // Simple toast — renders at top-right; auto-dismisses after 3 s
 const Toast = ({ toasts, dismiss }) => (
-  <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
+  <div className="fixed top-[env(safe-area-inset-top,1rem)] right-4 z-[100] flex flex-col gap-2 pointer-events-none max-w-[calc(100vw-2rem)]"
+       style={{ top: 'max(env(safe-area-inset-top, 0px) + 0.5rem, 1rem)' }}>
     {toasts.map(t => (
       <div key={t.id}
         className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border text-sm font-bold pointer-events-auto
@@ -18,8 +19,8 @@ const Toast = ({ toasts, dismiss }) => (
             ? 'bg-green-950/95 border-green-500/40 text-green-300'
             : 'bg-red-950/95 border-red-500/40 text-red-300'}`}>
         {t.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> : <X className="w-4 h-4 shrink-0" />}
-        <span className="flex-1">{t.message}</span>
-        <button onClick={() => dismiss(t.id)} className="opacity-60 hover:opacity-100 transition-opacity ml-1">
+        <span className="flex-1 break-words min-w-0">{t.message}</span>
+        <button onClick={() => dismiss(t.id)} className="opacity-60 hover:opacity-100 transition-opacity ml-1 shrink-0">
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -184,8 +185,8 @@ const SeriesCard = ({ series, onSave, onToggleLock, onReset }) => {
 
       <div className="mb-4">
         <p className="text-xs text-slate-400 mb-2 uppercase font-bold">Series Leaders <span className="text-slate-600 normal-case font-normal">(+10 pts each — leave blank to keep existing)</span></p>
-        <div className="grid grid-cols-3 gap-2">
-          {[['scorer', 'Points', scorer, setScorer], ['rebounder', 'Rebounds', rebounder, setRebounder], ['assister', 'Assists', assister, setAssister]].map(([key, label, val, setter]) => (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {[['scorer', 'Points Leader', scorer, setScorer], ['rebounder', 'Rebounds Leader', rebounder, setRebounder], ['assister', 'Assists Leader', assister, setAssister]].map(([key, label, val, setter]) => (
             <div key={key}>
               <p className="text-[10px] text-slate-600 mb-1 font-bold uppercase">{label}</p>
               <input
@@ -662,7 +663,7 @@ const TeamOddsCard = ({ addToast }) => {
             Example: OKC × 1.35 → 270 pts if they win championship. Hit <strong>Save</strong> per row or <strong>Save All</strong> at the bottom.
           </p>
 
-          {/* Column headers */}
+          {/* Column headers — shown on sm+ only */}
           <div className="hidden sm:grid grid-cols-[2rem_3rem_1fr_1fr_5rem] gap-2 mb-2 px-1">
             <span />
             <span />
@@ -683,53 +684,94 @@ const TeamOddsCard = ({ addToast }) => {
                     const isSaving = savingId === t.team_id;
                     const wasSaved = savedIds.has(t.team_id);
                     return (
-                      <div key={t.team_id} className={`flex items-center gap-2 p-1.5 rounded-lg transition-colors ${wasSaved ? 'bg-green-500/5 border border-green-500/20' : ''}`}>
-                        {/* Logo */}
-                        <img src={t.logo_url} alt={t.abbreviation} className="w-6 h-6 shrink-0"
-                             onError={e => e.target.style.display='none'} />
-                        {/* Abbrev */}
-                        <span className="text-sm text-slate-300 w-10 font-bold shrink-0">{t.abbreviation}</span>
-
-                        {/* Championship odds */}
-                        <div className="flex items-center gap-1 flex-1">
-                          <input
-                            type="number" min="0.01" max="100" step="0.01"
-                            value={vals.champ}
-                            onChange={e => handleChange(t.team_id, 'champ', e.target.value)}
-                            className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-amber-500 transition-colors"
-                          />
-                          <span className="text-[10px] text-amber-400 font-bold w-12 text-right shrink-0">
-                            {preview(vals.champ, 200)}
-                          </span>
+                      <div key={t.team_id} className={`p-1.5 rounded-lg transition-colors ${wasSaved ? 'bg-green-500/5 border border-green-500/20' : ''}`}>
+                        {/* Mobile layout: team name + save button on top row, inputs below */}
+                        <div className="flex items-center gap-2 mb-1.5 sm:hidden">
+                          <img src={t.logo_url} alt={t.abbreviation} className="w-6 h-6 shrink-0"
+                               onError={e => e.target.style.display='none'} />
+                          <span className="text-sm text-slate-300 font-bold flex-1">{t.abbreviation}</span>
+                          <button
+                            onClick={() => handleSaveOne(t.team_id)}
+                            disabled={isSaving || savingId === 'all'}
+                            className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                              wasSaved
+                                ? 'bg-green-500/20 border border-green-500/40 text-green-400'
+                                : isSaving
+                                ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                                : 'bg-slate-800 border border-slate-700 text-slate-300'
+                            }`}
+                          >
+                            {wasSaved ? '✓' : isSaving ? '…' : 'Save'}
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 sm:hidden">
+                          <div>
+                            <p className="text-[10px] text-amber-400/70 font-black uppercase mb-1">Champ ×200</p>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number" min="0.01" max="100" step="0.01"
+                                value={vals.champ}
+                                onChange={e => handleChange(t.team_id, 'champ', e.target.value)}
+                                className="flex-1 min-w-0 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-amber-500"
+                              />
+                              <span className="text-[10px] text-amber-400 font-bold shrink-0">{preview(vals.champ, 200)}</span>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-cyan-400/70 font-black uppercase mb-1">Conf ×100</p>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number" min="0.01" max="100" step="0.01"
+                                value={vals.conf}
+                                onChange={e => handleChange(t.team_id, 'conf', e.target.value)}
+                                className="flex-1 min-w-0 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-cyan-500"
+                              />
+                              <span className="text-[10px] text-cyan-400 font-bold shrink-0">{preview(vals.conf, 100)}</span>
+                            </div>
+                          </div>
                         </div>
 
-                        {/* Conference odds */}
-                        <div className="flex items-center gap-1 flex-1">
-                          <input
-                            type="number" min="0.01" max="100" step="0.01"
-                            value={vals.conf}
-                            onChange={e => handleChange(t.team_id, 'conf', e.target.value)}
-                            className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-cyan-500 transition-colors"
-                          />
-                          <span className="text-[10px] text-cyan-400 font-bold w-12 text-right shrink-0">
-                            {preview(vals.conf, 100)}
-                          </span>
+                        {/* Desktop layout: single row */}
+                        <div className="hidden sm:flex items-center gap-2">
+                          <img src={t.logo_url} alt={t.abbreviation} className="w-6 h-6 shrink-0"
+                               onError={e => e.target.style.display='none'} />
+                          <span className="text-sm text-slate-300 w-10 font-bold shrink-0">{t.abbreviation}</span>
+                          <div className="flex items-center gap-1 flex-1">
+                            <input
+                              type="number" min="0.01" max="100" step="0.01"
+                              value={vals.champ}
+                              onChange={e => handleChange(t.team_id, 'champ', e.target.value)}
+                              className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-amber-500 transition-colors"
+                            />
+                            <span className="text-[10px] text-amber-400 font-bold w-12 text-right shrink-0">
+                              {preview(vals.champ, 200)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 flex-1">
+                            <input
+                              type="number" min="0.01" max="100" step="0.01"
+                              value={vals.conf}
+                              onChange={e => handleChange(t.team_id, 'conf', e.target.value)}
+                              className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white text-sm text-center focus:outline-none focus:border-cyan-500 transition-colors"
+                            />
+                            <span className="text-[10px] text-cyan-400 font-bold w-12 text-right shrink-0">
+                              {preview(vals.conf, 100)}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleSaveOne(t.team_id)}
+                            disabled={isSaving || savingId === 'all'}
+                            className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                              wasSaved
+                                ? 'bg-green-500/20 border border-green-500/40 text-green-400'
+                                : isSaving
+                                ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                                : 'bg-slate-800 hover:bg-amber-500 hover:text-white border border-slate-700 hover:border-amber-500 text-slate-300 transition-colors'
+                            }`}
+                          >
+                            {wasSaved ? '✓' : isSaving ? '…' : 'Save'}
+                          </button>
                         </div>
-
-                        {/* Per-row save button */}
-                        <button
-                          onClick={() => handleSaveOne(t.team_id)}
-                          disabled={isSaving || savingId === 'all'}
-                          className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                            wasSaved
-                              ? 'bg-green-500/20 border border-green-500/40 text-green-400'
-                              : isSaving
-                              ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-                              : 'bg-slate-800 hover:bg-amber-500 hover:text-white border border-slate-700 hover:border-amber-500 text-slate-300 transition-colors'
-                          }`}
-                        >
-                          {wasSaved ? '✓' : isSaving ? '…' : 'Save'}
-                        </button>
                       </div>
                     );
                   })}

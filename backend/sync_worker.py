@@ -5,8 +5,8 @@ Use this when deploying as a Railway "Worker" service (no web port needed).
 Set the start command to:  python sync_worker.py
 
 The script sleeps until 04:00 UTC, runs the full sync chain once, then sleeps
-until the next 04:00 UTC.  It stops automatically after _STANDINGS_SYNC_CUTOFF
-(April 20 2026).
+until the next 04:00 UTC.  After _STANDINGS_CUTOFF the standings step is skipped
+automatically (main.py guards it), but boxscores + playoff results keep running.
 """
 
 import time
@@ -15,11 +15,12 @@ import os
 from datetime import datetime, timedelta
 
 # ---------------------------------------------------------------------------
-# Cutoff: stop syncing after end-of-day April 20 2026.
-# Keep in sync with main.py:_STANDINGS_SYNC_CUTOFF.
+# Standings cutoff: regular season ended April 12 2026.
+# main.py:_standings_sync_job() self-skips after this date — no code change needed here.
+# The worker itself keeps running indefinitely for boxscores + playoff results.
 # ---------------------------------------------------------------------------
-_CUTOFF          = datetime(2026, 4, 21, 0, 0, 0)   # exclusive — stops ON April 21
-_DAILY_SYNC_HOUR = 4                                  # 04:00 UTC
+_STANDINGS_CUTOFF = datetime(2026, 4, 13, 0, 0, 0)  # exclusive — standings stop ON April 13
+_DAILY_SYNC_HOUR  = 4                                 # 04:00 UTC
 
 # Ensure the backend package is importable when run directly
 sys.path.insert(0, os.path.dirname(__file__))
@@ -40,13 +41,11 @@ def _seconds_until_next_04utc() -> float:
 
 
 def run():
-    print(f"[Worker] Daily Auto-Sync worker started — fires at 04:00 UTC until {_CUTOFF.date()}")
+    print(f"[Worker] Daily Auto-Sync worker started — fires at 04:00 UTC "
+          f"(standings skip after {_STANDINGS_CUTOFF.date()}, boxscores run indefinitely)")
 
     while True:
         now = datetime.utcnow()
-        if now >= _CUTOFF:
-            print(f"[Worker] Regular season ended ({_CUTOFF.date()}). Static mode — worker exiting.")
-            sys.exit(0)
 
         # ── Sleep until 04:00 UTC ────────────────────────────────────────
         sleep_sec = _seconds_until_next_04utc()

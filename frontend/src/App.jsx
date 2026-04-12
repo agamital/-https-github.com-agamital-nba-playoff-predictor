@@ -2121,6 +2121,19 @@ function App() {
           {currentUser && (
             <div className="flex items-center gap-1">
               <BellButton userId={currentUser?.user_id} onNavigate={navigate} />
+              {currentUser.role === 'admin' && (
+                <button
+                  onClick={() => navigate('admin')}
+                  className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors active:opacity-70 ${
+                    currentPage === 'admin'
+                      ? 'bg-orange-500/20 text-orange-400'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Admin Panel"
+                >
+                  <Shield className="w-5 h-5" />
+                </button>
+              )}
               <button
                 onClick={() => navigate('account')}
                 className="flex items-center gap-2 active:opacity-70 transition-opacity px-1"

@@ -29,7 +29,7 @@ _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 
 # Sync runs once daily (04:00 UTC) until end-of-day April 20 2026 (last regular-season day).
 # After this the app enters Static Mode: DB snapshot is served forever, no API calls.
-_STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 21, 0, 0, 0)   # exclusive — stops ON April 21
+_STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 13, 0, 0, 0)   # exclusive — regular season ended Apr 12; stops standings ON April 13
 
 # ── Player name normalization (accent / diacritic stripping) ─────────────────
 import unicodedata as _ud
@@ -452,6 +452,14 @@ def init_db():
 
     # Add bracket_group to series for progressive bracket unlocking
     c.execute("ALTER TABLE series ADD COLUMN IF NOT EXISTS bracket_group TEXT DEFAULT 'A'")
+
+    # Performance indexes — idempotent, safe to run every startup
+    c.execute("CREATE INDEX IF NOT EXISTS idx_series_season ON series(season)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_series_season_status ON series(season, status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_predictions_series ON predictions(series_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_futures_user_season ON futures_predictions(user_id, season)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_leaders_user_season ON leaders_predictions(user_id, season)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_playin_season ON playin_games(season)")
 
     conn.commit()
     conn.close()
@@ -1039,6 +1047,7 @@ def _fetch_scoreboard_primary(date_str: str) -> list:
         "month": target.strftime("%m"),
         "day":   target.strftime("%d"),
     }
+    params["limit"] = 20   # prevent default page-size of 5 from truncating heavy days
     print(f"[Primary] GET /nbascoreboard {date_str}")
     resp = _http.get(_RAPIDAPI_PRIMARY_SCOREBOARD_URL, headers=headers,
                      params=params, timeout=12)
@@ -2629,7 +2638,7 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
                 print(f"[Boxscore] Step 1c: scoreboard via ESPN public API ({date_fmt})")
                 resp_espn = _http.get(
                     _ESPN_SCOREBOARD_URL2,
-                    params={"dates": date_fmt},
+                    params={"dates": date_fmt, "limit": 20},
                     timeout=12,
                 )
                 resp_espn.raise_for_status()
@@ -4285,122 +4294,150 @@ async def google_auth(email: str, name: str = "", avatar_url: str = ""):
 
 @app.get("/api/series")
 async def api_series(season: str = "2026"):
-    conn = get_db_conn()
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
 
-    # CRITICAL: Column order must match team table structure!
-    c.execute('''SELECT
-                 s.id, s.season, s.round, s.conference,
-                 s.home_team_id, s.home_seed, s.home_wins,
-                 s.away_team_id, s.away_seed, s.away_wins,
-                 s.winner_team_id, s.status, s.actual_games,
-                 ht.name, ht.abbreviation, ht.logo_url,
-                 at.name, at.abbreviation, at.logo_url,
-                 s.actual_leading_scorer, s.actual_leading_rebounder,
-                 s.actual_leading_assister
-                 FROM series s
-                 JOIN teams ht ON s.home_team_id = ht.id
-                 JOIN teams at ON s.away_team_id = at.id
-                 WHERE s.season = %s''', (season,))
+        # CRITICAL: Column order must match team table structure!
+        c.execute('''SELECT
+                     s.id, s.season, s.round, s.conference,
+                     s.home_team_id, s.home_seed, s.home_wins,
+                     s.away_team_id, s.away_seed, s.away_wins,
+                     s.winner_team_id, s.status, s.actual_games,
+                     ht.name, ht.abbreviation, ht.logo_url,
+                     at.name, at.abbreviation, at.logo_url,
+                     s.actual_leading_scorer, s.actual_leading_rebounder,
+                     s.actual_leading_assister
+                     FROM series s
+                     JOIN teams ht ON s.home_team_id = ht.id
+                     JOIN teams at ON s.away_team_id = at.id
+                     WHERE s.season = %s''', (season,))
 
-    series = []
-    for row in c.fetchall():
-        series.append({
-            'id': row[0],
-            'season': row[1],
-            'round': row[2],
-            'conference': row[3],
-            'home_team': {
-                'id': row[4],
-                'seed': row[5],
-                'name': row[13],
-                'abbreviation': row[14],
-                'logo_url': row[15]
-            },
-            'away_team': {
-                'id': row[7],
-                'seed': row[8],
-                'name': row[16],
-                'abbreviation': row[17],
-                'logo_url': row[18]
-            },
-            'home_wins': row[6],
-            'away_wins': row[9],
-            'winner_team_id': row[10],
-            'status': row[11],
-            'actual_games': row[12],
-            # Provisional during active series, final once completed
-            'leading_scorer':    row[19],
-            'leading_rebounder': row[20],
-            'leading_assister':  row[21],
-        })
+        series = []
+        for row in c.fetchall():
+            series.append({
+                'id': row[0],
+                'season': row[1],
+                'round': row[2],
+                'conference': row[3],
+                'home_team': {
+                    'id': row[4],
+                    'seed': row[5],
+                    'name': row[13],
+                    'abbreviation': row[14],
+                    'logo_url': row[15]
+                },
+                'away_team': {
+                    'id': row[7],
+                    'seed': row[8],
+                    'name': row[16],
+                    'abbreviation': row[17],
+                    'logo_url': row[18]
+                },
+                'home_wins': row[6],
+                'away_wins': row[9],
+                'winner_team_id': row[10],
+                'status': row[11],
+                'actual_games': row[12],
+                # Provisional during active series, final once completed
+                'leading_scorer':    row[19],
+                'leading_rebounder': row[20],
+                'leading_assister':  row[21],
+            })
 
-    conn.close()
-    return series
+        return series
+    except Exception as e:
+        print(f"api_series error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load series")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 @app.get("/api/playin-games")
 async def api_playin(season: str = "2026"):
-    conn = get_db_conn()
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
 
-    c.execute('''SELECT p.id, p.season, p.conference, p.game_type,
-                 p.team1_id, p.team1_seed, p.team2_id, p.team2_seed,
-                 p.winner_id, p.status, p.start_time,
-                 t1.name, t1.abbreviation, t1.logo_url,
-                 t2.name, t2.abbreviation, t2.logo_url
-                 FROM playin_games p
-                 JOIN teams t1 ON p.team1_id = t1.id
-                 JOIN teams t2 ON p.team2_id = t2.id WHERE p.season = %s''', (season,))
+        c.execute('''SELECT p.id, p.season, p.conference, p.game_type,
+                     p.team1_id, p.team1_seed, p.team2_id, p.team2_seed,
+                     p.winner_id, p.status, p.start_time,
+                     t1.name, t1.abbreviation, t1.logo_url,
+                     t2.name, t2.abbreviation, t2.logo_url
+                     FROM playin_games p
+                     JOIN teams t1 ON p.team1_id = t1.id
+                     JOIN teams t2 ON p.team2_id = t2.id WHERE p.season = %s''', (season,))
 
-    games = []
-    for row in c.fetchall():
-        start_time = row[10]
-        games.append({
-            'id': row[0],
-            'season': row[1],
-            'conference': row[2],
-            'game_type': row[3],
-            'team1': {
-                'id': row[4],
-                'seed': row[5],
-                'name': row[11],
-                'abbreviation': row[12],
-                'logo_url': row[13]
-            },
-            'team2': {
-                'id': row[6],
-                'seed': row[7],
-                'name': row[14],
-                'abbreviation': row[15],
-                'logo_url': row[16]
-            },
-            'winner_id': row[8],
-            'status': row[9],
-            'start_time': start_time.isoformat() if start_time else None,
-        })
+        games = []
+        for row in c.fetchall():
+            start_time = row[10]
+            games.append({
+                'id': row[0],
+                'season': row[1],
+                'conference': row[2],
+                'game_type': row[3],
+                'team1': {
+                    'id': row[4],
+                    'seed': row[5],
+                    'name': row[11],
+                    'abbreviation': row[12],
+                    'logo_url': row[13]
+                },
+                'team2': {
+                    'id': row[6],
+                    'seed': row[7],
+                    'name': row[14],
+                    'abbreviation': row[15],
+                    'logo_url': row[16]
+                },
+                'winner_id': row[8],
+                'status': row[9],
+                'start_time': start_time.isoformat() if start_time else None,
+            })
 
-    conn.close()
-    return games
+        return games
+    except Exception as e:
+        print(f"api_playin error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load play-in games")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 @app.post("/api/predictions")
 async def make_pred(prediction: Prediction, user_id: int):
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute('''INSERT INTO predictions
-                     (user_id, series_id, predicted_winner_id, predicted_games,
-                      leading_scorer, leading_rebounder, leading_assister)
-                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-                 ON CONFLICT(user_id, series_id) DO UPDATE SET
-                     predicted_winner_id = EXCLUDED.predicted_winner_id,
-                     predicted_games     = EXCLUDED.predicted_games,
-                     leading_scorer      = EXCLUDED.leading_scorer,
-                     leading_rebounder   = EXCLUDED.leading_rebounder,
-                     leading_assister    = EXCLUDED.leading_assister''',
-              (user_id, prediction.series_id, prediction.predicted_winner_id, prediction.predicted_games,
-               prediction.leading_scorer, prediction.leading_rebounder, prediction.leading_assister))
-    conn.commit()
-    conn.close()
-    return {"message": "Saved"}
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        # Reject predictions on locked or completed series
+        c.execute("SELECT status FROM series WHERE id = %s", (prediction.series_id,))
+        series_row = c.fetchone()
+        if not series_row:
+            raise HTTPException(status_code=404, detail="Series not found")
+        if series_row[0] != 'active':
+            raise HTTPException(status_code=400, detail="Predictions are closed for this series")
+        c.execute('''INSERT INTO predictions
+                         (user_id, series_id, predicted_winner_id, predicted_games,
+                          leading_scorer, leading_rebounder, leading_assister)
+                     VALUES (%s, %s, %s, %s, %s, %s, %s)
+                     ON CONFLICT(user_id, series_id) DO UPDATE SET
+                         predicted_winner_id = EXCLUDED.predicted_winner_id,
+                         predicted_games     = EXCLUDED.predicted_games,
+                         leading_scorer      = EXCLUDED.leading_scorer,
+                         leading_rebounder   = EXCLUDED.leading_rebounder,
+                         leading_assister    = EXCLUDED.leading_assister''',
+                  (user_id, prediction.series_id, prediction.predicted_winner_id, prediction.predicted_games,
+                   prediction.leading_scorer, prediction.leading_rebounder, prediction.leading_assister))
+        conn.commit()
+        return {"message": "Saved"}
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 @app.post("/api/playin-predictions")
 async def playin_pred(game_id: int, predicted_winner_id: int, user_id: int):
@@ -4684,26 +4721,34 @@ async def playin_picks(game_id: int):
 @app.get("/api/dashboard")
 async def dashboard(user_id: int, season: str = "2026"):
     """Lightweight dashboard counts — avoids fetching full prediction/series data."""
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute(
-        '''SELECT
-             (SELECT COUNT(*) FROM predictions p
-              JOIN series s ON p.series_id = s.id
-              WHERE p.user_id = %s AND s.season = %s) AS series_predicted,
-             (SELECT COUNT(*) FROM series WHERE season = %s) AS total_series,
-             (SELECT COUNT(*) FROM futures_predictions WHERE user_id = %s AND season = %s) AS futures_done,
-             (SELECT COUNT(*) FROM leaders_predictions WHERE user_id = %s AND season = %s) AS leaders_done''',
-        (user_id, season, season, user_id, season, user_id, season)
-    )
-    row = c.fetchone()
-    conn.close()
-    return {
-        'series_predicted': row[0] or 0,
-        'total_series':     row[1] or 0,
-        'futures_done':     (row[2] or 0) > 0,
-        'leaders_done':     (row[3] or 0) > 0,
-    }
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute(
+            '''SELECT
+                 (SELECT COUNT(*) FROM predictions p
+                  JOIN series s ON p.series_id = s.id
+                  WHERE p.user_id = %s AND s.season = %s) AS series_predicted,
+                 (SELECT COUNT(*) FROM series WHERE season = %s) AS total_series,
+                 (SELECT COUNT(*) FROM futures_predictions WHERE user_id = %s AND season = %s) AS futures_done,
+                 (SELECT COUNT(*) FROM leaders_predictions WHERE user_id = %s AND season = %s) AS leaders_done''',
+            (user_id, season, season, user_id, season, user_id, season)
+        )
+        row = c.fetchone()
+        return {
+            'series_predicted': row[0] or 0,
+            'total_series':     row[1] or 0,
+            'futures_done':     (row[2] or 0) > 0,
+            'leaders_done':     (row[3] or 0) > 0,
+        }
+    except Exception as e:
+        print(f"dashboard error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load dashboard")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 @app.get("/api/notifications/summary")
 async def notifications_summary(user_id: int, season: str = "2026"):
@@ -4823,137 +4868,144 @@ async def notifications_summary(user_id: int, season: str = "2026"):
 @app.get("/api/my-predictions")
 async def my_predictions(user_id: int, season: str = "2026"):
     """Get all predictions for a user"""
-    conn = get_db_conn()
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
 
-    # Get playoff predictions
-    c.execute('''
-        SELECT p.id, p.user_id, p.series_id, p.predicted_winner_id,
-               p.predicted_at, p.is_correct, p.points_earned, p.predicted_games,
-               p.leading_scorer, p.leading_rebounder, p.leading_assister,
-               s.round, s.conference,
-               ht.name, ht.abbreviation, ht.logo_url,
-               at.name, at.abbreviation, at.logo_url,
-               wt.name, wt.abbreviation, wt.logo_url
-        FROM predictions p
-        JOIN series s ON p.series_id = s.id
-        JOIN teams ht ON s.home_team_id = ht.id
-        JOIN teams at ON s.away_team_id = at.id
-        LEFT JOIN teams wt ON p.predicted_winner_id = wt.id
-        WHERE p.user_id = %s AND s.season = %s
-    ''', (user_id, season))
+        # Get playoff predictions
+        c.execute('''
+            SELECT p.id, p.user_id, p.series_id, p.predicted_winner_id,
+                   p.predicted_at, p.is_correct, p.points_earned, p.predicted_games,
+                   p.leading_scorer, p.leading_rebounder, p.leading_assister,
+                   s.round, s.conference,
+                   ht.name, ht.abbreviation, ht.logo_url,
+                   at.name, at.abbreviation, at.logo_url,
+                   wt.name, wt.abbreviation, wt.logo_url
+            FROM predictions p
+            JOIN series s ON p.series_id = s.id
+            JOIN teams ht ON s.home_team_id = ht.id
+            JOIN teams at ON s.away_team_id = at.id
+            LEFT JOIN teams wt ON p.predicted_winner_id = wt.id
+            WHERE p.user_id = %s AND s.season = %s
+        ''', (user_id, season))
 
-    playoff_preds = []
-    for row in c.fetchall():
-        playoff_preds.append({
-            'id': row[0],
-            'series_id': row[2],
-            'predicted_games': row[7],
-            'leading_scorer': row[8],
-            'leading_rebounder': row[9],
-            'leading_assister': row[10],
-            'round': row[11],
-            'conference': row[12],
-            'home_team': {'name': row[13], 'abbreviation': row[14], 'logo_url': row[15]},
-            'away_team': {'name': row[16], 'abbreviation': row[17], 'logo_url': row[18]},
-            'predicted_winner': {'name': row[19], 'abbreviation': row[20], 'logo_url': row[21]},
-            'predicted_at': row[4],
-            'is_correct': row[5],
-            'points_earned': row[6]
-        })
+        playoff_preds = []
+        for row in c.fetchall():
+            playoff_preds.append({
+                'id': row[0],
+                'series_id': row[2],
+                'predicted_games': row[7],
+                'leading_scorer': row[8],
+                'leading_rebounder': row[9],
+                'leading_assister': row[10],
+                'round': row[11],
+                'conference': row[12],
+                'home_team': {'name': row[13], 'abbreviation': row[14], 'logo_url': row[15]},
+                'away_team': {'name': row[16], 'abbreviation': row[17], 'logo_url': row[18]},
+                'predicted_winner': {'name': row[19], 'abbreviation': row[20], 'logo_url': row[21]},
+                'predicted_at': row[4],
+                'is_correct': row[5],
+                'points_earned': row[6]
+            })
 
-    # Get play-in predictions
-    c.execute('''
-        SELECT pp.*, pg.game_type, pg.conference,
-               t1.name, t1.abbreviation, t1.logo_url,
-               t2.name, t2.abbreviation, t2.logo_url,
-               wt.name, wt.abbreviation, wt.logo_url
-        FROM playin_predictions pp
-        JOIN playin_games pg ON pp.game_id = pg.id
-        JOIN teams t1 ON pg.team1_id = t1.id
-        JOIN teams t2 ON pg.team2_id = t2.id
-        LEFT JOIN teams wt ON pp.predicted_winner_id = wt.id
-        WHERE pp.user_id = %s AND pg.season = %s
-    ''', (user_id, season))
+        # Get play-in predictions
+        c.execute('''
+            SELECT pp.*, pg.game_type, pg.conference,
+                   t1.name, t1.abbreviation, t1.logo_url,
+                   t2.name, t2.abbreviation, t2.logo_url,
+                   wt.name, wt.abbreviation, wt.logo_url
+            FROM playin_predictions pp
+            JOIN playin_games pg ON pp.game_id = pg.id
+            JOIN teams t1 ON pg.team1_id = t1.id
+            JOIN teams t2 ON pg.team2_id = t2.id
+            LEFT JOIN teams wt ON pp.predicted_winner_id = wt.id
+            WHERE pp.user_id = %s AND pg.season = %s
+        ''', (user_id, season))
 
-    playin_preds = []
-    for row in c.fetchall():
-        playin_preds.append({
-            'id': row[0],
-            'game_id': row[2],
-            'game_type': row[7],
-            'conference': row[8],
-            'team1': {'name': row[9], 'abbreviation': row[10], 'logo_url': row[11]},
-            'team2': {'name': row[12], 'abbreviation': row[13], 'logo_url': row[14]},
-            'predicted_winner': {'name': row[15], 'abbreviation': row[16], 'logo_url': row[17]},
-            'predicted_at': row[4]
-        })
+        playin_preds = []
+        for row in c.fetchall():
+            playin_preds.append({
+                'id': row[0],
+                'game_id': row[2],
+                'game_type': row[7],
+                'conference': row[8],
+                'team1': {'name': row[9], 'abbreviation': row[10], 'logo_url': row[11]},
+                'team2': {'name': row[12], 'abbreviation': row[13], 'logo_url': row[14]},
+                'predicted_winner': {'name': row[15], 'abbreviation': row[16], 'logo_url': row[17]},
+                'predicted_at': row[4]
+            })
 
-    # Get futures prediction
-    c.execute('''
-        SELECT f.*,
-               tc.name, tc.abbreviation, tc.logo_url,
-               tw.name, tw.abbreviation, tw.logo_url,
-               te.name, te.abbreviation, te.logo_url
-        FROM futures_predictions f
-        LEFT JOIN teams tc ON f.champion_team_id = tc.id
-        LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
-        LEFT JOIN teams te ON f.east_champ_team_id = te.id
-        WHERE f.user_id = %s AND f.season = %s
-    ''', (user_id, season))
-    frow = c.fetchone()
-    futures_pred = None
-    if frow:
-        futures_pred = {
-            'champion_team':   {'name': frow[15], 'abbreviation': frow[16], 'logo_url': frow[17]} if frow[15] else None,
-            'west_champ_team': {'name': frow[18], 'abbreviation': frow[19], 'logo_url': frow[20]} if frow[18] else None,
-            'east_champ_team': {'name': frow[21], 'abbreviation': frow[22], 'logo_url': frow[23]} if frow[21] else None,
-            'finals_mvp':      frow[6],
-            'west_finals_mvp': frow[7],
-            'east_finals_mvp': frow[8],
-            'locked':          bool(frow[9]),
-            'predicted_at':    frow[10],
-            'is_correct_champion': frow[11],
-            'is_correct_west':     frow[12],
-            'is_correct_east':     frow[13],
-            'points_earned':       frow[14] or 0,
+        # Get futures prediction
+        c.execute('''
+            SELECT f.*,
+                   tc.name, tc.abbreviation, tc.logo_url,
+                   tw.name, tw.abbreviation, tw.logo_url,
+                   te.name, te.abbreviation, te.logo_url
+            FROM futures_predictions f
+            LEFT JOIN teams tc ON f.champion_team_id = tc.id
+            LEFT JOIN teams tw ON f.west_champ_team_id = tw.id
+            LEFT JOIN teams te ON f.east_champ_team_id = te.id
+            WHERE f.user_id = %s AND f.season = %s
+        ''', (user_id, season))
+        frow = c.fetchone()
+        futures_pred = None
+        if frow:
+            futures_pred = {
+                'champion_team':   {'name': frow[15], 'abbreviation': frow[16], 'logo_url': frow[17]} if frow[15] else None,
+                'west_champ_team': {'name': frow[18], 'abbreviation': frow[19], 'logo_url': frow[20]} if frow[18] else None,
+                'east_champ_team': {'name': frow[21], 'abbreviation': frow[22], 'logo_url': frow[23]} if frow[21] else None,
+                'finals_mvp':      frow[6],
+                'west_finals_mvp': frow[7],
+                'east_finals_mvp': frow[8],
+                'locked':          bool(frow[9]),
+                'predicted_at':    frow[10],
+                'is_correct_champion': frow[11],
+                'is_correct_west':     frow[12],
+                'is_correct_east':     frow[13],
+                'points_earned':       frow[14] or 0,
+            }
+
+        # Get leaders prediction
+        c.execute('''SELECT top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks,
+                     is_correct_scorer, is_correct_assists, is_correct_rebounds,
+                     is_correct_threes, is_correct_steals, is_correct_blocks,
+                     points_earned, predicted_at
+                     FROM leaders_predictions WHERE user_id = %s AND season = %s''', (user_id, season))
+        lrow = c.fetchone()
+        leaders_pred = None
+        if lrow:
+            leaders_pred = {
+                'top_scorer':    lrow[0],
+                'top_assists':   lrow[1],
+                'top_rebounds':  lrow[2],
+                'top_threes':    lrow[3],
+                'top_steals':    lrow[4],
+                'top_blocks':    lrow[5],
+                'is_correct_scorer':   lrow[6],
+                'is_correct_assists':  lrow[7],
+                'is_correct_rebounds': lrow[8],
+                'is_correct_threes':   lrow[9],
+                'is_correct_steals':   lrow[10],
+                'is_correct_blocks':   lrow[11],
+                'points_earned': lrow[12] or 0,
+                'predicted_at':  lrow[13],
+            }
+
+        return {
+            'playoff_predictions': playoff_preds,
+            'playin_predictions': playin_preds,
+            'futures_prediction': futures_pred,
+            'leaders_prediction': leaders_pred,
+            'total_predictions': len(playoff_preds) + len(playin_preds)
         }
-
-    # Get leaders prediction
-    c.execute('''SELECT top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks,
-                 is_correct_scorer, is_correct_assists, is_correct_rebounds,
-                 is_correct_threes, is_correct_steals, is_correct_blocks,
-                 points_earned, predicted_at
-                 FROM leaders_predictions WHERE user_id = %s AND season = %s''', (user_id, season))
-    lrow = c.fetchone()
-    leaders_pred = None
-    if lrow:
-        leaders_pred = {
-            'top_scorer':    lrow[0],
-            'top_assists':   lrow[1],
-            'top_rebounds':  lrow[2],
-            'top_threes':    lrow[3],
-            'top_steals':    lrow[4],
-            'top_blocks':    lrow[5],
-            'is_correct_scorer':   lrow[6],
-            'is_correct_assists':  lrow[7],
-            'is_correct_rebounds': lrow[8],
-            'is_correct_threes':   lrow[9],
-            'is_correct_steals':   lrow[10],
-            'is_correct_blocks':   lrow[11],
-            'points_earned': lrow[12] or 0,
-            'predicted_at':  lrow[13],
-        }
-
-    conn.close()
-
-    return {
-        'playoff_predictions': playoff_preds,
-        'playin_predictions': playin_preds,
-        'futures_prediction': futures_pred,
-        'leaders_prediction': leaders_pred,
-        'total_predictions': len(playoff_preds) + len(playin_preds)
-    }
+    except Exception as e:
+        print(f"my_predictions error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load predictions")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 @app.post("/api/admin/regenerate-matchups")
 async def admin_regenerate_matchups(conference: str = None, season: str = '2026'):
@@ -4970,49 +5022,61 @@ async def admin_regenerate_matchups(conference: str = None, season: str = '2026'
 
 @app.get("/api/admin/series")
 async def admin_get_series(season: str = "2026"):
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute('''SELECT s.id, s.round, s.conference, s.status, s.winner_team_id, s.actual_games,
-                 ht.id, ht.name, ht.abbreviation, ht.logo_url,
-                 at.id, at.name, at.abbreviation, at.logo_url,
-                 wt.name, wt.abbreviation,
-                 COUNT(p.id),
-                 COALESCE(s.manual_override, FALSE),
-                 CASE
-                   WHEN s.round = 'First Round' THEN
-                     EXISTS(SELECT 1 FROM series ns WHERE ns.season = s.season
-                            AND ns.round = 'Conference Semifinals'
-                            AND ns.conference = s.conference AND ns.bracket_group = s.bracket_group)
-                   WHEN s.round = 'Conference Semifinals' THEN
-                     EXISTS(SELECT 1 FROM series ns WHERE ns.season = s.season
-                            AND ns.round = 'Conference Finals'
-                            AND ns.conference = s.conference AND ns.bracket_group = s.bracket_group)
-                   WHEN s.round = 'Conference Finals' THEN
-                     EXISTS(SELECT 1 FROM series ns WHERE ns.season = s.season
-                            AND ns.round = 'NBA Finals')
-                   ELSE FALSE
-                 END
-                 FROM series s
-                 JOIN teams ht ON s.home_team_id = ht.id
-                 JOIN teams at ON s.away_team_id = at.id
-                 LEFT JOIN teams wt ON s.winner_team_id = wt.id
-                 LEFT JOIN predictions p ON s.id = p.series_id
-                 WHERE s.season = %s GROUP BY s.id, ht.id, ht.name, ht.abbreviation, ht.logo_url,
-                 at.id, at.name, at.abbreviation, at.logo_url, wt.name, wt.abbreviation''', (season,))
-    result = []
-    for row in c.fetchall():
-        result.append({
-            'id': row[0], 'round': row[1], 'conference': row[2],
-            'status': row[3], 'winner_team_id': row[4], 'actual_games': row[5],
-            'home_team': {'id': row[6], 'name': row[7], 'abbreviation': row[8], 'logo_url': row[9]},
-            'away_team': {'id': row[10], 'name': row[11], 'abbreviation': row[12], 'logo_url': row[13]},
-            'winner_name': row[14], 'winner_abbreviation': row[15],
-            'prediction_count': row[16],
-            'manual_override': row[17],
-            'is_advanced': row[18],
-        })
-    conn.close()
-    return result
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute('''SELECT s.id, s.round, s.conference, s.status, s.winner_team_id, s.actual_games,
+                     ht.id, ht.name, ht.abbreviation, ht.logo_url,
+                     at.id, at.name, at.abbreviation, at.logo_url,
+                     wt.name, wt.abbreviation,
+                     COUNT(p.id),
+                     COALESCE(s.manual_override, FALSE),
+                     CASE
+                       WHEN s.round = 'First Round' THEN
+                         EXISTS(SELECT 1 FROM series ns WHERE ns.season = s.season
+                                AND ns.round = 'Conference Semifinals'
+                                AND ns.conference = s.conference AND ns.bracket_group = s.bracket_group)
+                       WHEN s.round = 'Conference Semifinals' THEN
+                         EXISTS(SELECT 1 FROM series ns WHERE ns.season = s.season
+                                AND ns.round = 'Conference Finals'
+                                AND ns.conference = s.conference AND ns.bracket_group = s.bracket_group)
+                       WHEN s.round = 'Conference Finals' THEN
+                         EXISTS(SELECT 1 FROM series ns WHERE ns.season = s.season
+                                AND ns.round = 'NBA Finals')
+                       ELSE FALSE
+                     END,
+                     s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister
+                     FROM series s
+                     JOIN teams ht ON s.home_team_id = ht.id
+                     JOIN teams at ON s.away_team_id = at.id
+                     LEFT JOIN teams wt ON s.winner_team_id = wt.id
+                     LEFT JOIN predictions p ON s.id = p.series_id
+                     WHERE s.season = %s GROUP BY s.id, ht.id, ht.name, ht.abbreviation, ht.logo_url,
+                     at.id, at.name, at.abbreviation, at.logo_url, wt.name, wt.abbreviation''', (season,))
+        result = []
+        for row in c.fetchall():
+            result.append({
+                'id': row[0], 'round': row[1], 'conference': row[2],
+                'status': row[3], 'winner_team_id': row[4], 'actual_games': row[5],
+                'home_team': {'id': row[6], 'name': row[7], 'abbreviation': row[8], 'logo_url': row[9]},
+                'away_team': {'id': row[10], 'name': row[11], 'abbreviation': row[12], 'logo_url': row[13]},
+                'winner_name': row[14], 'winner_abbreviation': row[15],
+                'prediction_count': row[16],
+                'manual_override': row[17],
+                'is_advanced': row[18],
+                'leading_scorer':    row[19],
+                'leading_rebounder': row[20],
+                'leading_assister':  row[21],
+            })
+        return result
+    except Exception as e:
+        print(f"admin_get_series error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load admin series")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 def _recalculate_all_points(c):
     """Recalculate all user points from all prediction sources."""
@@ -5091,107 +5155,131 @@ async def set_series_result(
     if actual_games < 4 or actual_games > 7:
         raise HTTPException(status_code=400, detail="actual_games must be between 4 and 7")
 
-    conn = get_db_conn()
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
 
-    c.execute('''SELECT round, conference, season, bracket_group,
-                 home_team_id, away_team_id, home_seed, away_seed, status
-                 FROM series WHERE id = %s''', (series_id,))
-    series_row = c.fetchone()
-    if not series_row:
-        conn.close()
-        raise HTTPException(404, "Series not found")
-    round_name, conf, season, bracket_group = series_row[:4]
-    home_team_id, away_team_id = series_row[4], series_row[5]
-    home_seed, away_seed = series_row[6], series_row[7]
-    current_status = series_row[8]
+        c.execute('''SELECT round, conference, season, bracket_group,
+                     home_team_id, away_team_id, home_seed, away_seed, status,
+                     actual_leading_scorer, actual_leading_rebounder, actual_leading_assister
+                     FROM series WHERE id = %s''', (series_id,))
+        series_row = c.fetchone()
+        if not series_row:
+            raise HTTPException(404, "Series not found")
+        round_name, conf, season, bracket_group = series_row[:4]
+        home_team_id, away_team_id = series_row[4], series_row[5]
+        home_seed, away_seed = series_row[6], series_row[7]
+        current_status = series_row[8]
+        # Resolve effective leaders: use passed param if provided, else keep existing DB value
+        eff_scorer    = actual_leading_scorer    if actual_leading_scorer    is not None else series_row[9]
+        eff_rebounder = actual_leading_rebounder if actual_leading_rebounder is not None else series_row[10]
+        eff_assister  = actual_leading_assister  if actual_leading_assister  is not None else series_row[11]
+        # Treat empty-string as explicit clear
+        if actual_leading_scorer    == '': eff_scorer    = None
+        if actual_leading_rebounder == '': eff_rebounder = None
+        if actual_leading_assister  == '': eff_assister  = None
 
-    # If already completed, zero out old prediction scores before re-scoring
-    if current_status == 'completed':
-        c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (series_id,))
+        # If already completed, zero out old prediction scores before re-scoring
+        if current_status == 'completed':
+            c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (series_id,))
 
-    # Mark series completed with manual_override flag and actual leaders.
-    # Use COALESCE so that omitting a leader param preserves the existing DB value.
-    # Pass empty-string to explicitly clear a leader field.
-    c.execute('''UPDATE series SET winner_team_id = %s, actual_games = %s, status = %s,
-                 manual_override = %s,
-                 actual_leading_scorer    = CASE WHEN %s IS NULL THEN actual_leading_scorer
-                                                 WHEN %s = ''   THEN NULL ELSE %s END,
-                 actual_leading_rebounder = CASE WHEN %s IS NULL THEN actual_leading_rebounder
-                                                 WHEN %s = ''   THEN NULL ELSE %s END,
-                 actual_leading_assister  = CASE WHEN %s IS NULL THEN actual_leading_assister
-                                                 WHEN %s = ''   THEN NULL ELSE %s END
-                 WHERE id = %s''',
-              (winner_team_id, actual_games, 'completed', manual_override,
-               actual_leading_scorer, actual_leading_scorer, actual_leading_scorer,
-               actual_leading_rebounder, actual_leading_rebounder, actual_leading_rebounder,
-               actual_leading_assister, actual_leading_assister, actual_leading_assister,
-               series_id))
+        # Mark series completed with manual_override flag and resolved actual leaders
+        c.execute('''UPDATE series SET winner_team_id = %s, actual_games = %s, status = %s,
+                     manual_override = %s,
+                     actual_leading_scorer    = %s,
+                     actual_leading_rebounder = %s,
+                     actual_leading_assister  = %s
+                     WHERE id = %s''',
+                  (winner_team_id, actual_games, 'completed', manual_override,
+                   eff_scorer, eff_rebounder, eff_assister, series_id))
 
-    # Score each prediction individually so underdog multipliers apply per pick
-    c.execute('''SELECT id, predicted_winner_id, predicted_games,
-                        leading_scorer, leading_rebounder, leading_assister
-                 FROM predictions WHERE series_id = %s''', (series_id,))
-    for pred_id, pred_winner_id, pred_games, pred_scorer, pred_rebounder, pred_assister in c.fetchall():
-        winner_correct = (pred_winner_id == winner_team_id)
-        games_correct  = (pred_games == actual_games)
-        games_diff     = abs(pred_games - actual_games) if pred_games is not None else None
+        # Score each prediction individually so underdog multipliers apply per pick
+        c.execute('''SELECT id, predicted_winner_id, predicted_games,
+                            leading_scorer, leading_rebounder, leading_assister
+                     FROM predictions WHERE series_id = %s''', (series_id,))
+        for pred_id, pred_winner_id, pred_games, pred_scorer, pred_rebounder, pred_assister in c.fetchall():
+            winner_correct = (pred_winner_id == winner_team_id)
+            games_correct  = (pred_games == actual_games)
+            games_diff     = abs(pred_games - actual_games) if pred_games is not None else None
 
-        if pred_winner_id == home_team_id:
-            pred_seed = home_seed
-        elif pred_winner_id == away_team_id:
-            pred_seed = away_seed
-        else:
-            pred_seed = None
+            if pred_winner_id == home_team_id:
+                pred_seed = home_seed
+            elif pred_winner_id == away_team_id:
+                pred_seed = away_seed
+            else:
+                pred_seed = None
 
-        pts = calculate_series_points(
-            round_name, home_seed, away_seed, pred_seed,
-            winner_correct=winner_correct, games_correct=games_correct,
-            games_diff=games_diff,
-        )
-        # Add series leader bonus
-        pts += calculate_series_leader_points(
-            {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
-            {"scorer": actual_leading_scorer, "rebounder": actual_leading_rebounder, "assister": actual_leading_assister},
-        )
-        is_correct = 1 if winner_correct else 0
-        c.execute('UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s',
-                  (is_correct, pts, pred_id))
+            pts = calculate_series_points(
+                round_name, home_seed, away_seed, pred_seed,
+                winner_correct=winner_correct, games_correct=games_correct,
+                games_diff=games_diff,
+            )
+            # Add series leader bonus — uses resolved effective leaders so existing names score correctly
+            pts += calculate_series_leader_points(
+                {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
+                {"scorer": eff_scorer, "rebounder": eff_rebounder, "assister": eff_assister},
+            )
+            is_correct = 1 if winner_correct else 0
+            c.execute('UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s',
+                      (is_correct, pts, pred_id))
 
-    _recalculate_all_points(c)
-    winner_seed = home_seed if winner_team_id == home_team_id else away_seed
-    _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id, winner_seed)
+        _recalculate_all_points(c)
+        winner_seed = home_seed if winner_team_id == home_team_id else away_seed
+        _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id, winner_seed)
 
-    conn.commit()
-    conn.close()
-    return {"message": "Result set and scores updated", "manual_override": manual_override}
+        conn.commit()
+        return {"message": "Result set and scores updated", "manual_override": manual_override}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        print(f"set_series_result error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to set result: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 
 @app.delete("/api/admin/series/{series_id}/result")
 async def reset_series_result(series_id: int):
     """Reset a completed series back to active — zeros out prediction scores and recalculates all points."""
-    conn = get_db_conn()
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
 
-    c.execute("SELECT status FROM series WHERE id = %s", (series_id,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(404, "Series not found")
+        c.execute("SELECT status FROM series WHERE id = %s", (series_id,))
+        row = c.fetchone()
+        if not row:
+            raise HTTPException(404, "Series not found")
 
-    # Zero out prediction scores for this series
-    c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (series_id,))
+        # Zero out prediction scores for this series
+        c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (series_id,))
 
-    # Reset series to active
-    c.execute('''UPDATE series SET winner_team_id = NULL, actual_games = NULL,
-                 actual_leading_scorer = NULL, actual_leading_rebounder = NULL,
-                 actual_leading_assister = NULL,
-                 status = 'active', manual_override = FALSE WHERE id = %s''', (series_id,))
+        # Reset series to active
+        c.execute('''UPDATE series SET winner_team_id = NULL, actual_games = NULL,
+                     actual_leading_scorer = NULL, actual_leading_rebounder = NULL,
+                     actual_leading_assister = NULL,
+                     status = 'active', manual_override = FALSE WHERE id = %s''', (series_id,))
 
-    _recalculate_all_points(c)
-    conn.commit()
-    conn.close()
-    return {"message": "Series result reset — scores recalculated"}
+        _recalculate_all_points(c)
+        conn.commit()
+        return {"message": "Series result reset — scores recalculated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        raise HTTPException(status_code=500, detail=f"Failed to reset series: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 
 @app.post("/api/admin/sync-and-advance")
@@ -5696,7 +5784,7 @@ async def get_games_with_performers(date: str | None = None, season: str = "2026
                     _RAPIDAPI_SCOREBOARD_BY_DATE_URL,
                     headers={"x-rapidapi-key": _RAPIDAPI_KEY,
                              "x-rapidapi-host": _RAPIDAPI_HOST_SECONDARY},
-                    params={"date": date_fmt},
+                    params={"date": date_fmt, "limit": 20},
                     timeout=10,
                 )
                 resp.raise_for_status()
@@ -5936,7 +6024,45 @@ async def get_today_games(date: str | None = None):
                     "away":      _team(away),
                 })
         except Exception as sec_err:
-            raise HTTPException(502, f"All scoreboard sources failed: {sec_err}")
+            # ── Source 3: ESPN public scoreboard — no API key needed ──────────
+            try:
+                print(f"[today-games] Secondary failed ({sec_err}); trying ESPN direct")
+                date_fmt2 = date.replace('-', '')
+                resp_espn = _http.get(
+                    _ESPN_SCOREBOARD_URL2,
+                    params={"dates": date_fmt2, "limit": 20},
+                    timeout=12,
+                )
+                resp_espn.raise_for_status()
+                espn_data = resp_espn.json()
+                source = "espn_direct"
+                for ev in (espn_data.get("events") or []):
+                    comps = ev.get("competitions") or [{}]
+                    comp  = comps[0]
+                    teams = comp.get("competitors") or []
+                    home_c = next((c for c in teams if c.get("homeAway") == "home"), {})
+                    away_c = next((c for c in teams if c.get("homeAway") == "away"), {})
+                    stype = (ev.get("status") or {}).get("type") or {}
+                    def _te(c):
+                        t = c.get("team") or {}
+                        return {"id": t.get("id"), "name": t.get("displayName") or t.get("name"),
+                                "abbr": t.get("abbreviation"), "score": c.get("score"),
+                                "winner": bool(c.get("winner"))}
+                    games.append({
+                        "id":        str(ev.get("id", "")),
+                        "name":      ev.get("name") or ev.get("shortName"),
+                        "date":      ev.get("date"),
+                        "status":    stype.get("description") or stype.get("name"),
+                        "completed": bool(stype.get("completed")),
+                        "clock":     (ev.get("status") or {}).get("displayClock"),
+                        "period":    (ev.get("status") or {}).get("period"),
+                        "broadcast": comp.get("broadcast") or "",
+                        "venue":     ((comp.get("venue") or {}).get("fullName") or ""),
+                        "home":      _te(home_c),
+                        "away":      _te(away_c),
+                    })
+            except Exception as espn_err:
+                raise HTTPException(502, f"All scoreboard sources failed: {espn_err}")
 
     return {"date": date, "games": games, "count": len(games), "source": source}
 
