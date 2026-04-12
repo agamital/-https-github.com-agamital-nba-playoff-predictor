@@ -314,6 +314,7 @@ const RecentGamesSection = () => {
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
   const today     = new Date().toISOString().split('T')[0];
   const [selectedGame, setSelectedGame] = useState(null);
+  const qc = useQueryClient();
 
   const { data: gwpData, isLoading: gwpLoading } = useQuery({
     queryKey: ['gamesWithPerformers', yesterday],
@@ -323,12 +324,17 @@ const RecentGamesSection = () => {
     refetchOnWindowFocus: true,
   });
 
-  const { data: todayData, isLoading: todayLoading } = useQuery({
+  const { data: todayData, isLoading: todayLoading, refetch: refetchToday } = useQuery({
     queryKey: ['todayGames', today],
     queryFn:  () => api.getTodayGames(today),
     staleTime: 0,
     refetchOnMount: true,
-    refetchInterval: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
+    refetchInterval: (data) => {
+      // Poll every 45s when any game is live, otherwise every 3 min
+      const hasLive = (data?.games ?? []).some(g => !g.completed && g.period > 0);
+      return hasLive ? 45 * 1000 : 3 * 60 * 1000;
+    },
   });
 
   const yesterdayGames = gwpData?.games  ?? [];
@@ -399,10 +405,17 @@ const RecentGamesSection = () => {
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Clock className="w-4 h-4 text-slate-400" />
-              <h3 className="text-sm font-black text-white">
+              <h3 className="text-sm font-black text-white flex-1">
                 Today's Games — {fmtDate(today)}
               </h3>
-              {todayLoading && <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
+              <button
+                onClick={() => { qc.invalidateQueries({ queryKey: ['todayGames'] }); refetchToday(); }}
+                disabled={todayLoading}
+                className="flex items-center justify-center w-7 h-7 rounded-lg text-slate-500 hover:text-orange-400 transition-colors disabled:opacity-40"
+                title="Refresh live scores"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${todayLoading ? 'animate-spin text-orange-400' : ''}`} />
+              </button>
             </div>
 
             {todayLoading ? (
@@ -465,6 +478,10 @@ const StandingsPage = () => {
   const syncedSince = useTimeSince(lastSynced);
 
   const loadStandings = useCallback(async (force = false) => {
+    // Always blast-refresh live scores immediately
+    qc.invalidateQueries({ queryKey: ['todayGames'] });
+    qc.invalidateQueries({ queryKey: ['gamesWithPerformers'] });
+
     if (!force) { qc.invalidateQueries({ queryKey: ['standings'] }); return; }
     setRefreshing(true);
     try {
@@ -655,7 +672,7 @@ const StandingsPage = () => {
           className="flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-xl border border-slate-700 bg-slate-900/60 text-slate-300 hover:border-orange-500/50 hover:text-orange-400 transition-all text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <RefreshCw className={`w-4 h-4 ${(loading || refreshing) ? 'animate-spin' : ''}`} />
-          {refreshing ? 'Refreshing…' : 'Force Refresh'}
+          {refreshing ? 'Refreshing…' : 'Refresh Scores & Standings'}
         </button>
       </div>
 
