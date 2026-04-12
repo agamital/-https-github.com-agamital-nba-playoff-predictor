@@ -1187,6 +1187,35 @@ const SectionDivider = ({ label }) => (
   </div>
 );
 
+// ── Player pick bar (MVP + leaders) — shows name + vote % bar, no user names ──
+const _PB_STYLE = [
+  { badge: 'bg-amber-500/20 border-amber-500/40 text-amber-400',   bar: 'bg-amber-500'  },
+  { badge: 'bg-slate-500/20 border-slate-400/40 text-slate-300',   bar: 'bg-slate-400'  },
+  { badge: 'bg-orange-700/20 border-orange-600/40 text-orange-400', bar: 'bg-orange-500' },
+];
+const PlayerPickBar = ({ item, rank }) => {
+  const style = _PB_STYLE[rank] ?? { badge: 'bg-slate-800 border-slate-700 text-slate-400', bar: 'bg-slate-600' };
+  const pct = item.pct ?? 0;
+  return (
+    <div className="flex items-center gap-2 py-1.5">
+      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black border shrink-0 ${style.badge}`}>
+        {rank < 3 ? ['🥇','🥈','🥉'][rank] : rank + 1}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-black text-white truncate">{item.name}</span>
+          {item.team && <span className="text-[10px] text-slate-500 ml-1 shrink-0">{item.team}</span>}
+          <span className="text-[10px] font-bold text-slate-400 shrink-0 ml-1">{item.count} <span className="text-orange-400">({pct}%)</span></span>
+        </div>
+        <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all duration-700 ${style.bar}`}
+            style={{ width: `${Math.max(pct, 3)}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const GlobalStatsTab = ({ currentUser }) => {
   const { data: stats, isLoading: loading } = useQuery({
     queryKey: ['globalStats'],
@@ -1320,8 +1349,66 @@ const GlobalStatsTab = ({ currentUser }) => {
               )}
             </div>
           )}
+
+          {/* ── MVP picks ── */}
+          {(() => {
+            const mvpSections = [
+              { key: 'top_finals_mvp',      label: '🏆 Finals MVP',       cls: 'text-amber-400'  },
+              { key: 'top_west_finals_mvp', label: '🌵 West Finals MVP',  cls: 'text-blue-400'   },
+              { key: 'top_east_finals_mvp', label: '🗽 East Finals MVP',  cls: 'text-green-400'  },
+            ].filter(s => (stats.futures?.[s.key] || []).length > 0);
+            if (!mvpSections.length) return null;
+            return (
+              <div className="space-y-3">
+                <SectionDivider label="MVP Picks" />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {mvpSections.map(({ key, label, cls }) => (
+                    <div key={key} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+                      <p className={`text-xs font-black mb-3 ${cls}`}>{label}</p>
+                      <div className="space-y-2">
+                        {(stats.futures[key] || []).map((item, i) => (
+                          <PlayerPickBar key={i} item={item} rank={i} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
+
+      {/* ── Playoff leaders picks ── */}
+      {(() => {
+        const ld = stats.leaders || {};
+        const leaderSections = [
+          { key: 'top_scorer',   label: '🏀 Top Scorer',   cls: 'text-orange-400' },
+          { key: 'top_assists',  label: '🎯 Top Assists',  cls: 'text-blue-400'   },
+          { key: 'top_rebounds', label: '💪 Top Rebounder', cls: 'text-green-400'  },
+          { key: 'top_threes',   label: '🎳 Top 3-Pointers', cls: 'text-purple-400' },
+          { key: 'top_steals',   label: '🤺 Top Steals',   cls: 'text-cyan-400'   },
+          { key: 'top_blocks',   label: '🛡️ Top Blocks',   cls: 'text-red-400'    },
+        ].filter(s => (ld[s.key] || []).length > 0);
+        if (!leaderSections.length) return null;
+        return (
+          <div className="space-y-3">
+            <SectionDivider label="Playoff Leaders Picks" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {leaderSections.map(({ key, label, cls }) => (
+                <div key={key} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+                  <p className={`text-xs font-black mb-3 ${cls}`}>{label}</p>
+                  <div className="space-y-2">
+                    {(ld[key] || []).map((item, i) => (
+                      <PlayerPickBar key={i} item={item} rank={i} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -1595,6 +1682,27 @@ const leadingEmoji      = (s, fallback) => {
   return m ? m[0] : fallback;
 };
 
+// ── BellButton nav item row ── defined outside to prevent remount on every render
+const _BellNavItem = ({ emoji, label, sublabel, accent, onClick }) => (
+  <button
+    onClick={onClick}
+    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 active:bg-white/10 transition-colors text-left"
+    style={{ minHeight: 60 }}
+  >
+    <div className={`w-10 h-10 rounded-xl ${accent} flex items-center justify-center shrink-0 text-lg`}>
+      {emoji}
+    </div>
+    <div className="flex-1 min-w-0">
+      <p className="text-[13px] font-bold text-white leading-snug truncate">{label}</p>
+      {sublabel && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{sublabel}</p>}
+    </div>
+    <div className="flex items-center gap-1 shrink-0 px-2 py-1 rounded-lg bg-orange-500/15 border border-orange-500/25">
+      <span className="text-[11px] font-black text-orange-400">Pick</span>
+      <ChevronRight className="w-3 h-3 text-orange-400" />
+    </div>
+  </button>
+);
+
 const BellButton = ({ userId, onNavigate, className = '' }) => {
   const [open,         setOpen]         = useState(false);
   const [isSDKReady,   setIsSDKReady]   = useState(false);
@@ -1749,27 +1857,6 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
     }, 150);
   };
 
-  // ── Item row ──────────────────────────────────────────────────────────────
-  const Item = ({ emoji, label, sublabel, accent, onClick }) => (
-    <button
-      onClick={onClick}
-      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 active:bg-white/10 transition-colors text-left"
-      style={{ minHeight: 60 }}
-    >
-      <div className={`w-10 h-10 rounded-xl ${accent} flex items-center justify-center shrink-0 text-lg`}>
-        {emoji}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-bold text-white leading-snug truncate">{label}</p>
-        {sublabel && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{sublabel}</p>}
-      </div>
-      <div className="flex items-center gap-1 shrink-0 px-2 py-1 rounded-lg bg-orange-500/15 border border-orange-500/25">
-        <span className="text-[11px] font-black text-orange-400">Pick</span>
-        <ChevronRight className="w-3 h-3 text-orange-400" />
-      </div>
-    </button>
-  );
-
   // ── Panel body ────────────────────────────────────────────────────────────
   const panelBody = (
     <div ref={panelRef} className="flex flex-col bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/70 overflow-hidden" style={{ width: 320 }}>
@@ -1820,7 +1907,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                   Bracket Picks
                 </p>
                 {summary.missing_series.map(s => (
-                  <Item key={s.id}
+                  <_BellNavItem key={s.id}
                     emoji="🏀"
                     label={s.label}
                     sublabel={s.sublabel}
@@ -1836,7 +1923,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                   Futures Picks
                 </p>
                 {summary.missing_futures.map(f => (
-                  <Item key={f.key}
+                  <_BellNavItem key={f.key}
                     emoji={leadingEmoji(f.label, '🏆')}
                     label={stripLeadingEmoji(f.label)}
                     accent="bg-purple-500/15 border border-purple-500/25"
@@ -1851,7 +1938,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                   Playoff Leaders
                 </p>
                 {summary.missing_leaders.map(l => (
-                  <Item key={l.key}
+                  <_BellNavItem key={l.key}
                     emoji={leadingEmoji(l.label, '📊')}
                     label={stripLeadingEmoji(l.label)}
                     accent="bg-cyan-500/15 border border-cyan-500/25"
@@ -1966,7 +2053,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                       <>
                         <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Bracket Picks</p>
                         {summary.missing_series.map(s => (
-                          <Item key={s.id} emoji="🏀" label={s.label} sublabel={s.sublabel} accent="bg-orange-500/15 border border-orange-500/25" onClick={() => goTo('betting')} />
+                          <_BellNavItem key={s.id} emoji="🏀" label={s.label} sublabel={s.sublabel} accent="bg-orange-500/15 border border-orange-500/25" onClick={() => goTo('betting')} />
                         ))}
                       </>
                     )}
@@ -1974,7 +2061,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                       <>
                         <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Futures Picks</p>
                         {summary.missing_futures.map(f => (
-                          <Item key={f.key} emoji={leadingEmoji(f.label, '🏆')} label={stripLeadingEmoji(f.label)} accent="bg-purple-500/15 border border-purple-500/25" onClick={goToFutures} />
+                          <_BellNavItem key={f.key} emoji={leadingEmoji(f.label, '🏆')} label={stripLeadingEmoji(f.label)} accent="bg-purple-500/15 border border-purple-500/25" onClick={goToFutures} />
                         ))}
                       </>
                     )}
@@ -1982,7 +2069,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                       <>
                         <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Playoff Leaders</p>
                         {summary.missing_leaders.map(l => (
-                          <Item key={l.key} emoji={leadingEmoji(l.label, '📊')} label={stripLeadingEmoji(l.label)} accent="bg-cyan-500/15 border border-cyan-500/25" onClick={goToFutures} />
+                          <_BellNavItem key={l.key} emoji={leadingEmoji(l.label, '📊')} label={stripLeadingEmoji(l.label)} accent="bg-cyan-500/15 border border-cyan-500/25" onClick={goToFutures} />
                         ))}
                       </>
                     )}

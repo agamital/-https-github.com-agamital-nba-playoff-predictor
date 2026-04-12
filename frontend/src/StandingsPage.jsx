@@ -451,6 +451,91 @@ const RecentGamesSection = () => {
   );
 };
 
+// ── Defined outside StandingsPage to avoid remount on every render ───────────
+
+const StatusBadge = ({ status, rank }) => {
+  const s = status || (rank <= 6 ? 'Playoff' : rank <= 10 ? 'Play-In' : 'Eliminated');
+  if (s === 'Playoff')
+    return <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] font-black">Playoff</span>;
+  if (s === 'Play-In')
+    return <span className="px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-black">Play-In</span>;
+  return null;
+};
+
+const StandingsTable = ({ teams, conference }) => {
+  const color = conference === 'Eastern' ? 'from-blue-600 to-blue-800' : 'from-red-600 to-red-800';
+  return (
+    <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden">
+      <div className={`bg-gradient-to-r ${color} px-5 py-4`}>
+        <h2 className="text-xl font-black text-white flex items-center gap-2">
+          <Trophy className="w-5 h-5" />
+          {conference} Conference
+        </h2>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-slate-800/50">
+            <tr>
+              <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase w-10">#</th>
+              <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase">Team</th>
+              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">W</th>
+              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">L</th>
+              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">PCT</th>
+              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase hidden sm:table-cell">GB</th>
+              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/60">
+            {teams.map((team) => {
+              const rank      = team.conf_rank;
+              const isPlayoff = rank <= 6;
+              const isPlayIn  = rank >= 7 && rank <= 10;
+              return (
+                <tr key={team.team_id}
+                  className={`transition-colors hover:bg-slate-800/40 ${
+                    isPlayoff ? 'bg-green-500/5' : isPlayIn ? 'bg-yellow-500/5' : ''
+                  }`}>
+                  <td className="px-4 py-3">
+                    <span className={`text-sm font-black ${
+                      isPlayoff ? 'text-green-400' : isPlayIn ? 'text-yellow-400' : 'text-slate-500'
+                    }`}>{rank}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={`https://cdn.nba.com/logos/nba/${team.team_id}/primary/L/logo.svg`}
+                        alt=""
+                        className="w-9 h-9 shrink-0"
+                        onError={e => e.target.style.display = 'none'}
+                      />
+                      <span className="font-bold text-white text-sm">{team.team_name}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 text-center font-black text-white text-sm">{team.wins}</td>
+                  <td className="px-3 py-3 text-center font-bold text-slate-400 text-sm">{team.losses}</td>
+                  <td className="px-3 py-3 text-center text-slate-300 text-sm">
+                    {team.win_pct != null ? (team.win_pct * 100).toFixed(1) + '%' : '—'}
+                  </td>
+                  <td className="px-3 py-3 text-center text-slate-500 text-sm hidden sm:table-cell">
+                    {rank === 1 ? '—' : (team.games_back != null ? team.games_back.toFixed(1) : '—')}
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    <StatusBadge status={team.status} rank={rank} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-5 py-3 bg-slate-800/30 border-t border-slate-800 flex items-center gap-4 text-[11px] text-slate-500">
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500/60" />Playoff (1–6)</span>
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500/60" />Play-In (7–10)</span>
+      </div>
+    </div>
+  );
+};
+
 // ── Main StandingsPage ──────────────────────────────────────────────────────
 
 const StandingsPage = () => {
@@ -499,89 +584,6 @@ const StandingsPage = () => {
   }, [qc]);
 
   const isLive = lastUpdated && (Date.now() - new Date(lastUpdated)) < 6 * 60 * 1000;
-
-  const StatusBadge = ({ status, rank }) => {
-    const s = status || (rank <= 6 ? 'Playoff' : rank <= 10 ? 'Play-In' : 'Eliminated');
-    if (s === 'Playoff')
-      return <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] font-black">Playoff</span>;
-    if (s === 'Play-In')
-      return <span className="px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-black">Play-In</span>;
-    return null;
-  };
-
-  const StandingsTable = ({ teams, conference }) => {
-    const color = conference === 'Eastern' ? 'from-blue-600 to-blue-800' : 'from-red-600 to-red-800';
-    return (
-      <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden">
-        <div className={`bg-gradient-to-r ${color} px-5 py-4`}>
-          <h2 className="text-xl font-black text-white flex items-center gap-2">
-            <Trophy className="w-5 h-5" />
-            {conference} Conference
-          </h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-800/50">
-              <tr>
-                <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase w-10">#</th>
-                <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase">Team</th>
-                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">W</th>
-                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">L</th>
-                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">PCT</th>
-                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase hidden sm:table-cell">GB</th>
-                <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {teams.map((team) => {
-                const rank      = team.conf_rank;
-                const isPlayoff = rank <= 6;
-                const isPlayIn  = rank >= 7 && rank <= 10;
-                return (
-                  <tr key={team.team_id}
-                    className={`transition-colors hover:bg-slate-800/40 ${
-                      isPlayoff ? 'bg-green-500/5' : isPlayIn ? 'bg-yellow-500/5' : ''
-                    }`}>
-                    <td className="px-4 py-3">
-                      <span className={`text-sm font-black ${
-                        isPlayoff ? 'text-green-400' : isPlayIn ? 'text-yellow-400' : 'text-slate-500'
-                      }`}>{rank}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={`https://cdn.nba.com/logos/nba/${team.team_id}/primary/L/logo.svg`}
-                          alt=""
-                          className="w-9 h-9 shrink-0"
-                          onError={e => e.target.style.display = 'none'}
-                        />
-                        <span className="font-bold text-white text-sm">{team.team_name}</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-center font-black text-white text-sm">{team.wins}</td>
-                    <td className="px-3 py-3 text-center font-bold text-slate-400 text-sm">{team.losses}</td>
-                    <td className="px-3 py-3 text-center text-slate-300 text-sm">
-                      {team.win_pct != null ? (team.win_pct * 100).toFixed(1) + '%' : '—'}
-                    </td>
-                    <td className="px-3 py-3 text-center text-slate-500 text-sm hidden sm:table-cell">
-                      {rank === 1 ? '—' : (team.games_back != null ? team.games_back.toFixed(1) : '—')}
-                    </td>
-                    <td className="px-3 py-3 text-center">
-                      <StatusBadge status={team.status} rank={rank} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className="px-5 py-3 bg-slate-800/30 border-t border-slate-800 flex items-center gap-4 text-[11px] text-slate-500">
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500/60" />Playoff (1–6)</span>
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500/60" />Play-In (7–10)</span>
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">

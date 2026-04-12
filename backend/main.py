@@ -4685,13 +4685,69 @@ async def global_stats(season: str = "2026"):
             conn.rollback()
             total_users = 0
 
+        # MVP picks — aggregate by player name (TEXT field)
+        def top_mvp(col):
+            try:
+                c.execute(f"""
+                    SELECT fp.{col}, COUNT(*) AS cnt
+                    FROM futures_predictions fp
+                    WHERE fp.season = %s AND fp.{col} IS NOT NULL AND fp.{col} <> ''
+                    GROUP BY fp.{col}
+                    ORDER BY cnt DESC LIMIT 5
+                """, (season,))
+                total_mvp = sum(r[1] for r in c.fetchall()) or 1
+                c.execute(f"""
+                    SELECT fp.{col}, COUNT(*) AS cnt
+                    FROM futures_predictions fp
+                    WHERE fp.season = %s AND fp.{col} IS NOT NULL AND fp.{col} <> ''
+                    GROUP BY fp.{col}
+                    ORDER BY cnt DESC LIMIT 5
+                """, (season,))
+                return [{'name': r[0], 'count': r[1], 'pct': round(r[1] / total_mvp * 100)}
+                        for r in c.fetchall()]
+            except Exception as e:
+                print(f"global_stats top_mvp({col}) error: {e}")
+                conn.rollback()
+                return []
+
+        # Leaders picks — aggregate by player_id, join for name
+        def top_leaders(col):
+            try:
+                c.execute(f"""
+                    SELECT lp.{col}, ps.player_name, ps.team_abbreviation, COUNT(*) AS cnt
+                    FROM leaders_predictions lp
+                    JOIN player_stats ps ON ps.player_id = lp.{col} AND ps.season = %s
+                    WHERE lp.season = %s AND lp.{col} IS NOT NULL
+                    GROUP BY lp.{col}, ps.player_name, ps.team_abbreviation
+                    ORDER BY cnt DESC LIMIT 5
+                """, (season, season))
+                rows = c.fetchall()
+                total = sum(r[3] for r in rows) or 1
+                return [{'player_id': r[0], 'name': r[1], 'team': r[2], 'count': r[3], 'pct': round(r[3] / total * 100)}
+                        for r in rows]
+            except Exception as e:
+                print(f"global_stats top_leaders({col}) error: {e}")
+                conn.rollback()
+                return []
+
         return {
             'series':      series_stats,
             'playin':      playin_stats,
             'futures':     {
-                'top_champions':   top_futures('champion_team_id'),
-                'top_west_champs': top_futures('west_champ_team_id'),
-                'top_east_champs': top_futures('east_champ_team_id'),
+                'top_champions':      top_futures('champion_team_id'),
+                'top_west_champs':    top_futures('west_champ_team_id'),
+                'top_east_champs':    top_futures('east_champ_team_id'),
+                'top_finals_mvp':     top_mvp('finals_mvp'),
+                'top_west_finals_mvp': top_mvp('west_finals_mvp'),
+                'top_east_finals_mvp': top_mvp('east_finals_mvp'),
+            },
+            'leaders':     {
+                'top_scorer':   top_leaders('top_scorer'),
+                'top_assists':  top_leaders('top_assists'),
+                'top_rebounds': top_leaders('top_rebounds'),
+                'top_threes':   top_leaders('top_threes'),
+                'top_steals':   top_leaders('top_steals'),
+                'top_blocks':   top_leaders('top_blocks'),
             },
             'total_users': total_users,
         }
