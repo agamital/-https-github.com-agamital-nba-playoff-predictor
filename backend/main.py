@@ -4489,6 +4489,7 @@ async def leaderboard(season: str = "2026"):
         c.execute('''
             SELECT
                 u.id, u.username, u.points,
+                -- Series predictions
                 COUNT(p.id)                                              AS total_preds,
                 SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END)       AS correct_preds,
                 -- Series bullseyes: winner correct AND games exact
@@ -4510,7 +4511,15 @@ async def leaderboard(season: str = "2026"):
                         CASE WHEN lp.is_correct_blocks   = 2 THEN 1 ELSE 0 END
                     ) FROM leaders_predictions lp WHERE lp.user_id = u.id
                 ), 0)                                                    AS bullseyes_count,
-                u.avatar_url
+                u.avatar_url,
+                -- Points per category
+                COALESCE((SELECT SUM(p3.points_earned) FROM predictions p3 WHERE p3.user_id = u.id), 0)             AS series_pts,
+                COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions pp WHERE pp.user_id = u.id), 0)       AS playin_pts,
+                COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u.id), 0)      AS futures_pts,
+                COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u.id), 0)     AS leaders_pts,
+                -- Play-in prediction counts
+                COALESCE((SELECT COUNT(*) FROM playin_predictions pp2 WHERE pp2.user_id = u.id), 0)                  AS playin_total,
+                COALESCE((SELECT COUNT(*) FROM playin_predictions pp2 WHERE pp2.user_id = u.id AND pp2.is_correct = 1), 0) AS playin_correct
             FROM users u LEFT JOIN predictions p ON u.id = p.user_id
             GROUP BY u.id
             ORDER BY u.points DESC, bullseyes_count DESC
@@ -4518,11 +4527,25 @@ async def leaderboard(season: str = "2026"):
         ''')
         board = []
         for idx, row in enumerate(c.fetchall(), 1):
-            total, correct, bullseyes = row[3] or 0, row[4] or 0, row[5] or 0
-            board.append({'rank': idx, 'user_id': row[0], 'username': row[1], 'points': row[2],
-                         'total_predictions': total, 'correct_predictions': correct,
-                         'accuracy': round((correct/total*100) if total > 0 else 0, 1),
-                         'bullseyes_count': bullseyes, 'avatar_url': row[6] or ''})
+            total_series, correct_series, bullseyes = row[3] or 0, row[4] or 0, row[5] or 0
+            series_pts  = int(row[7])  if row[7]  else None
+            playin_pts  = int(row[8])  if row[8]  else None
+            futures_pts = int(row[9])  if row[9]  else None
+            leaders_pts = int(row[10]) if row[10] else None
+            playin_total   = int(row[11]) if row[11] else 0
+            playin_correct = int(row[12]) if row[12] else 0
+            total_all   = total_series + playin_total
+            correct_all = correct_series + playin_correct
+            board.append({
+                'rank': idx, 'user_id': row[0], 'username': row[1], 'points': row[2],
+                'total_predictions': total_all, 'correct_predictions': correct_all,
+                'accuracy': round((correct_all / total_all * 100) if total_all > 0 else 0, 1),
+                'bullseyes_count': bullseyes, 'avatar_url': row[6] or '',
+                'series_points':  series_pts,
+                'playin_points':  playin_pts,
+                'futures_points': futures_pts,
+                'leaders_points': leaders_pts,
+            })
         return board
     except Exception as e:
         print(f"leaderboard error: {e}")
@@ -4535,7 +4558,7 @@ async def leaderboard(season: str = "2026"):
 @app.get("/api/stats/global")
 async def global_stats(season: str = "2026"):
     """Aggregate community prediction stats for the Global Stats tab."""
-    _EMPTY = {'series': [], 'futures': {'top_champions': [], 'top_west_champs': [], 'top_east_champs': []}, 'total_users': 0}
+    _EMPTY = {'series': [], 'playin': [], 'futures': {'top_champions': [], 'top_west_champs': [], 'top_east_champs': []}, 'total_users': 0}
     conn = None
     try:
         conn = get_db_conn()
@@ -4605,6 +4628,54 @@ async def global_stats(season: str = "2026"):
                 conn.rollback()
                 return []
 
+        # Play-in game vote breakdown
+        try:
+            c.execute("""
+                SELECT pg.id, pg.conference, pg.game_type, pg.status,
+                       pg.start_time,
+                       pg.team1_id, t1.name, t1.abbreviation, t1.logo_url, COALESCE(pg.team1_seed, 0),
+                       pg.team2_id, t2.name, t2.abbreviation, t2.logo_url, COALESCE(pg.team2_seed, 0),
+                       pg.winner_id,
+                       COALESCE(SUM(CASE WHEN pp.predicted_winner_id = pg.team1_id THEN 1 ELSE 0 END), 0),
+                       COALESCE(SUM(CASE WHEN pp.predicted_winner_id = pg.team2_id THEN 1 ELSE 0 END), 0),
+                       COUNT(pp.id)
+                FROM playin_games pg
+                JOIN teams t1 ON pg.team1_id = t1.id
+                JOIN teams t2 ON pg.team2_id = t2.id
+                LEFT JOIN playin_predictions pp ON pp.game_id = pg.id
+                WHERE pg.season = %s
+                GROUP BY pg.id, t1.name, t1.abbreviation, t1.logo_url,
+                         t2.name, t2.abbreviation, t2.logo_url
+                ORDER BY pg.conference, pg.game_type
+            """, (season,))
+            playin_stats = []
+            for row in c.fetchall():
+                t1_v = int(row[16]) if row[16] else 0
+                t2_v = int(row[17]) if row[17] else 0
+                total = int(row[18]) if row[18] else 0
+                start_time = row[4].isoformat() if row[4] else None
+                picks_visible = row[3] != 'active'  # visible once game has started
+                playin_stats.append({
+                    'game_id':       row[0],
+                    'conference':    row[1],
+                    'game_type':     row[2],
+                    'status':        row[3],
+                    'start_time':    start_time,
+                    'picks_visible': picks_visible,
+                    'team1': {'id': row[5], 'name': row[6],  'abbreviation': row[7],  'logo_url': row[8],  'seed': row[9]},
+                    'team2': {'id': row[10], 'name': row[11], 'abbreviation': row[12], 'logo_url': row[13], 'seed': row[14]},
+                    'winner_id':   row[15],
+                    'team1_votes': t1_v,
+                    'team2_votes': t2_v,
+                    'total_votes': total,
+                    'team1_pct':   round(t1_v / total * 100) if total > 0 else 50,
+                    'team2_pct':   round(t2_v / total * 100) if total > 0 else 50,
+                })
+        except Exception as e:
+            print(f"global_stats playin query error: {e}")
+            conn.rollback()
+            playin_stats = []
+
         try:
             c.execute("""SELECT COUNT(DISTINCT p.user_id) FROM predictions p
                          JOIN series s ON p.series_id = s.id WHERE s.season = %s""", (season,))
@@ -4616,6 +4687,7 @@ async def global_stats(season: str = "2026"):
 
         return {
             'series':      series_stats,
+            'playin':      playin_stats,
             'futures':     {
                 'top_champions':   top_futures('champion_team_id'),
                 'top_west_champs': top_futures('west_champ_team_id'),

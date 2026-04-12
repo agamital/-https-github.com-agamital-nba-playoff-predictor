@@ -1032,13 +1032,168 @@ const FuturesPickBar = ({ item, rank, totalUsers }) => {
   );
 };
 
-const GlobalStatsTab = ({ currentUser }) => {
-  const [stats, setStats]   = useState(null);
-  const [loading, setLoading] = useState(true);
+// ── Play-in vote bar ────────────────────────────────────────────────────────
+const PlayinVoteBar = ({ g, currentUser }) => {
+  const [expanded, setExpanded]         = useState(false);
+  const [picks, setPicks]               = useState(null);
+  const [loadingPicks, setLoadingPicks] = useState(false);
 
-  useEffect(() => {
-    api.getGlobalStats('2026').then(setStats).catch(console.error).finally(() => setLoading(false));
-  }, []);
+  const total  = g.total_votes;
+  const noVotes = total === 0;
+
+  const handleToggle = async () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !picks) {
+      setLoadingPicks(true);
+      try {
+        const data = await api.getPlayInPicks(g.game_id);
+        setPicks(data.picks);
+      } catch (e) {
+        console.error('PlayinVoteBar picks fetch:', e);
+        setPicks([]);
+      } finally {
+        setLoadingPicks(false);
+      }
+    }
+  };
+
+  // Label the game type in human terms
+  const gameLabel = g.game_type === 'top'
+    ? `${g.conference} — 7 vs 8`
+    : g.game_type === 'bottom'
+    ? `${g.conference} — 9 vs 10`
+    : `${g.conference} — Elimination`;
+
+  const winnerKnown = !!g.winner_id;
+
+  return (
+    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
+      <div className="p-4">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[10px] font-black uppercase tracking-widest text-purple-400">{gameLabel}</span>
+          {g.status === 'completed' && (
+            <span className="text-[9px] font-black uppercase tracking-widest text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">Completed</span>
+          )}
+          {g.status === 'active' && g.start_time && (
+            <span className="text-[9px] font-black text-slate-500 flex items-center gap-1"><Lock className="w-2.5 h-2.5" />Picks locked after tip-off</span>
+          )}
+        </div>
+
+        {/* Teams row */}
+        <div className="flex items-center gap-3 mb-3">
+          <div className="flex-1 flex items-center gap-2 min-w-0">
+            <img src={g.team1.logo_url} alt={g.team1.abbreviation}
+              className={`w-9 h-9 shrink-0 ${winnerKnown && g.winner_id !== g.team1.id ? 'opacity-40' : ''}`}
+              loading="lazy" decoding="async" onError={e => e.target.style.display = 'none'} />
+            <div className="min-w-0">
+              <p className="font-black text-white text-sm leading-tight truncate">{g.team1.name || g.team1.abbreviation}</p>
+              <p className="text-[10px] text-slate-500 font-bold">Seed #{g.team1.seed}</p>
+            </div>
+          </div>
+          <div className="text-slate-700 font-black text-xs shrink-0">VS</div>
+          <div className="flex-1 flex items-center gap-2 justify-end min-w-0">
+            <div className="text-right min-w-0">
+              <p className="font-black text-white text-sm leading-tight truncate">{g.team2.name || g.team2.abbreviation}</p>
+              <p className="text-[10px] text-slate-500 font-bold">Seed #{g.team2.seed}</p>
+            </div>
+            <img src={g.team2.logo_url} alt={g.team2.abbreviation}
+              className={`w-9 h-9 shrink-0 ${winnerKnown && g.winner_id !== g.team2.id ? 'opacity-40' : ''}`}
+              loading="lazy" decoding="async" onError={e => e.target.style.display = 'none'} />
+          </div>
+        </div>
+
+        {/* Vote bar */}
+        <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
+          <div className="h-full bg-purple-500/70 transition-all duration-700"
+            style={{ width: noVotes ? '50%' : `${g.team1_pct}%` }} />
+          <div className="h-full bg-pink-500/60 flex-1" />
+          <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
+            <span className="text-xs font-black text-white drop-shadow-md">{noVotes ? '—' : `${g.team1_pct}%`}</span>
+            <span className="text-xs font-black text-white drop-shadow-md">{noVotes ? '—' : `${g.team2_pct}%`}</span>
+          </div>
+        </div>
+
+        {/* Toggle row */}
+        <div className="flex items-center justify-between mt-2 px-1">
+          <span className="text-[10px] text-purple-400 font-black">{g.team1.abbreviation}</span>
+          {g.picks_visible ? (
+            <button onClick={handleToggle}
+              className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors">
+              <Users className="w-3 h-3" />
+              {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
+              <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+            </button>
+          ) : (
+            <span className="flex items-center gap-1 text-[10px] text-slate-600 font-bold">
+              <Lock className="w-3 h-3" />
+              {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
+            </span>
+          )}
+          <span className="text-[10px] text-pink-400 font-black">{g.team2.abbreviation}</span>
+        </div>
+      </div>
+
+      {/* Expandable per-user picks */}
+      {g.picks_visible && expanded && (
+        <div className="border-t border-slate-800/80 bg-slate-950/40">
+          {loadingPicks ? (
+            <div className="flex justify-center py-5">
+              <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : picks && picks.length > 0 ? (
+            <div className="divide-y divide-slate-800/40 max-h-52 overflow-y-auto">
+              {picks.map((p, i) => {
+                const isMe = currentUser && p.username === currentUser.username;
+                return (
+                  <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-purple-500/10' : ''}`}>
+                    {p.avatar_url ? (
+                      <img src={p.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
+                        onError={e => { e.target.style.display = 'none'; }} />
+                    ) : (
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-purple-500/30' : 'bg-slate-700'}`}>
+                        <span className={`text-[8px] font-black ${isMe ? 'text-purple-400' : 'text-slate-400'}`}>
+                          {(p.username || '?')[0].toUpperCase()}
+                        </span>
+                      </div>
+                    )}
+                    {isMe && <span className="text-[8px] font-black text-purple-400 bg-purple-500/20 border border-purple-500/30 px-1.5 py-0.5 rounded-full shrink-0">YOU</span>}
+                    <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-purple-300' : 'text-slate-300'}`}>{p.username}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <img src={p.team_logo_url} alt="" className="w-4 h-4"
+                        onError={e => e.target.style.display = 'none'} />
+                      <span className={`text-[10px] font-black ${isMe ? 'text-purple-400' : 'text-slate-400'}`}>{p.team_abbreviation}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-600 text-center py-4">No picks yet</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Section divider ─────────────────────────────────────────────────────────
+const SectionDivider = ({ label }) => (
+  <div className="flex items-center gap-2">
+    <div className="h-px flex-1 bg-slate-800" />
+    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-2">{label}</h3>
+    <div className="h-px flex-1 bg-slate-800" />
+  </div>
+);
+
+const GlobalStatsTab = ({ currentUser }) => {
+  const { data: stats, isLoading: loading } = useQuery({
+    queryKey: ['globalStats'],
+    queryFn:  () => api.getGlobalStats('2026'),
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: true,
+  });
 
   if (loading) return (
     <div className="space-y-3">
@@ -1051,56 +1206,82 @@ const GlobalStatsTab = ({ currentUser }) => {
 
   const ROUND_ORDER = ['First Round', 'Conference Semifinals', 'Conference Finals', 'NBA Finals'];
   const byRound = {};
-  stats.series.forEach(s => {
+  (stats.series || []).forEach(s => {
     if (!byRound[s.round]) byRound[s.round] = [];
     byRound[s.round].push(s);
   });
   const sortedRounds = ROUND_ORDER.filter(r => byRound[r]);
 
-  const hasFutures = stats.futures.top_champions.length > 0
-    || stats.futures.top_west_champs.length > 0
-    || stats.futures.top_east_champs.length > 0;
+  // Play-in grouped by conference
+  const playinByConf = {};
+  (stats.playin || []).forEach(g => {
+    if (!playinByConf[g.conference]) playinByConf[g.conference] = [];
+    playinByConf[g.conference].push(g);
+  });
+  const hasPlayin = (stats.playin || []).length > 0;
+
+  const hasFutures = (stats.futures?.top_champions?.length > 0)
+    || (stats.futures?.top_west_champs?.length > 0)
+    || (stats.futures?.top_east_champs?.length > 0);
+
+  const totalBets = (stats.total_users || 0);
 
   return (
     <div className="space-y-6">
 
       {/* ── Participation banner ── */}
-      <div className="bg-gradient-to-r from-orange-500/10 to-amber-500/10 border border-orange-500/20 rounded-2xl p-5 flex items-center justify-center gap-4">
-        <div className="text-center">
-          <div className="text-4xl font-black text-orange-400 leading-none">{stats.total_users}</div>
-          <div className="text-xs text-slate-400 font-bold mt-1 uppercase tracking-wide">Total Participants</div>
-        </div>
-        <div className="w-px h-10 bg-slate-700" />
-        <div className="text-center">
-          <div className="text-4xl font-black text-blue-400 leading-none">{stats.series.length}</div>
-          <div className="text-xs text-slate-400 font-bold mt-1 uppercase tracking-wide">Active Series</div>
+      <div className="bg-gradient-to-r from-orange-500/10 to-amber-500/10 border border-orange-500/20 rounded-2xl p-4">
+        <div className="flex items-center justify-center gap-6">
+          <div className="text-center">
+            <div className="text-3xl font-black text-orange-400 leading-none">{totalBets}</div>
+            <div className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-wide">Participants</div>
+          </div>
+          <div className="w-px h-10 bg-slate-700" />
+          <div className="text-center">
+            <div className="text-3xl font-black text-blue-400 leading-none">{(stats.series || []).length}</div>
+            <div className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-wide">Series</div>
+          </div>
+          {hasPlayin && (
+            <>
+              <div className="w-px h-10 bg-slate-700" />
+              <div className="text-center">
+                <div className="text-3xl font-black text-purple-400 leading-none">{(stats.playin || []).length}</div>
+                <div className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-wide">Play-In</div>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* ── Series votes by round — aggregate bars always visible ── */}
+      {/* ── Play-In games ── */}
+      {hasPlayin && (
+        <div className="space-y-3">
+          <SectionDivider label="Play-In Tournament" />
+          {Object.entries(playinByConf).map(([conf, games]) => (
+            <div key={conf} className="space-y-3">
+              <p className="text-xs font-black text-slate-400 px-1">{conf} Conference</p>
+              {games.map(g => (
+                <PlayinVoteBar key={g.game_id} g={g} currentUser={currentUser} />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Series votes by round ── */}
       {sortedRounds.map(round => (
-        <div key={round}>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="h-px flex-1 bg-slate-800" />
-            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-2">{round}</h3>
-            <div className="h-px flex-1 bg-slate-800" />
-          </div>
-          <div className="space-y-3">
-            {byRound[round].map(s => (
-              <SeriesVoteBar key={s.series_id} s={s} currentUser={currentUser} />
-            ))}
-          </div>
+        <div key={round} className="space-y-3">
+          <SectionDivider label={round} />
+          {byRound[round].map(s => (
+            <SeriesVoteBar key={s.series_id} s={s} currentUser={currentUser} />
+          ))}
         </div>
       ))}
 
-      {/* ── Futures top picks — aggregate counts, always visible ── */}
+      {/* ── Futures top picks ── */}
       {hasFutures && (
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <div className="h-px flex-1 bg-slate-800" />
-            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-2">Top Futures Picks</h3>
-            <div className="h-px flex-1 bg-slate-800" />
-          </div>
+          <SectionDivider label="Top Futures Picks" />
 
           {stats.futures.top_champions.length > 0 && (
             <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
@@ -1146,45 +1327,54 @@ const GlobalStatsTab = ({ currentUser }) => {
 };
 
 const LeaderboardPage = ({ onUserClick, currentUser }) => {
-  const [leaderboard, setLeaderboard] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
-  const [tab, setTab] = useState('rankings'); // 'rankings' | 'global'
+  const [tab, setTab] = useState('rankings');
 
-  useEffect(() => { loadLeaderboard(); }, []);
-
-  const loadLeaderboard = async () => {
-    try {
-      const data = await api.getLeaderboard('2026');
-      setLeaderboard(data);
-    } catch (err) {
-      console.error('Error loading leaderboard:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: leaderboard = [], isLoading: loading } = useQuery({
+    queryKey: ['leaderboard'],
+    queryFn:  () => api.getLeaderboard('2026'),
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: true,
+  });
 
   const medals = ['🥇', '🥈', '🥉'];
+  const myRank = currentUser ? leaderboard.find(u => u.user_id === currentUser.user_id) : null;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-3 mb-6">
-        <Users className="w-7 h-7 text-orange-400" />
-        <h1 className="text-4xl font-black text-white">Leaderboard</h1>
+    <div className="max-w-4xl mx-auto px-4 py-6 pb-24 md:pb-8">
+
+      {/* ── Header ── */}
+      <div className="flex items-center gap-3 mb-5">
+        <Users className="w-6 h-6 text-orange-400" />
+        <h1 className="text-3xl font-black text-white">Leaderboard</h1>
       </div>
 
-      {/* Tab switcher */}
-      <div className="flex gap-1 bg-slate-900/70 border border-slate-800 rounded-xl p-1 mb-6">
-        {[{ id: 'rankings', label: '🏅 Rankings' }, { id: 'global', label: '🌍 Global Stats' }].map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`flex-1 py-2 px-4 rounded-lg text-sm font-bold transition-all ${
-              tab === t.id
-                ? 'bg-orange-500 text-white shadow'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
+      {/* ── Your rank banner (when logged in and ranked) ── */}
+      {myRank && (
+        <div className="mb-5 bg-gradient-to-r from-orange-500/10 to-amber-500/10 border border-orange-500/30 rounded-2xl p-4 flex items-center gap-4">
+          <div className="text-3xl font-black text-orange-400 leading-none shrink-0">
+            {myRank.rank <= 3 ? medals[myRank.rank - 1] : `#${myRank.rank}`}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-black text-white">Your ranking</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {myRank.correct_predictions}/{myRank.total_predictions} correct · {myRank.accuracy}% accuracy
+            </p>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-2xl font-black text-orange-400">{myRank.points}</div>
+            <div className="text-[10px] text-slate-500 font-bold uppercase">pts</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab switcher ── */}
+      <div className="flex gap-1 bg-slate-900/70 border border-slate-800 rounded-xl p-1 mb-5">
+        {[{ id: 'rankings', label: '🏅 Rankings' }, { id: 'global', label: '🌍 Community Picks' }].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`flex-1 py-2.5 px-3 rounded-lg text-sm font-bold transition-all ${
+              tab === t.id ? 'bg-orange-500 text-white shadow' : 'text-slate-400 hover:text-white'
+            }`}>
             {t.label}
           </button>
         ))}
@@ -1206,42 +1396,52 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
       ) : (
         <div className="space-y-2">
           {leaderboard.map((user) => {
+            const isMe       = currentUser && user.user_id === currentUser.user_id;
             const isExpanded = expanded === user.rank;
-            const accuracy = user.accuracy ?? (user.total_predictions > 0 ? Math.round((user.correct_predictions / user.total_predictions) * 100) : 0);
-            const seriesPts  = user.series_points  ?? null;
-            const futuresPts = user.futures_points ?? null;
-            const leadersPts = user.leaders_points ?? null;
-            const hasBreakdown = seriesPts != null || futuresPts != null || leadersPts != null;
-            // Risk profile: pts-per-correct as proxy for boldness
+            const accuracy   = user.accuracy ?? 0;
+            const seriesPts  = user.series_points;
+            const playinPts  = user.playin_points;
+            const futuresPts = user.futures_points;
+            const leadersPts = user.leaders_points;
+            const hasBreakdown = [seriesPts, playinPts, futuresPts, leadersPts].some(v => v != null && v > 0);
+            const bullseyes  = user.bullseyes_count ?? 0;
+
+            // Risk profile based on pts-per-correct
             const ppc = user.correct_predictions > 0 ? Math.round(user.points / user.correct_predictions) : 0;
             const riskProfile = ppc >= 100 ? { label: '🔥 Degen',    cls: 'text-amber-400 bg-amber-500/10 border-amber-500/30' }
                               : ppc >= 55  ? { label: '⚖️ Balanced', cls: 'text-blue-400  bg-blue-500/10  border-blue-500/30'  }
                               : ppc > 0    ? { label: '🛡️ Safe',     cls: 'text-green-400 bg-green-500/10 border-green-500/30' }
                               : null;
 
+            const rankBorder = isMe
+              ? 'border-orange-500/50 ring-1 ring-orange-500/20'
+              : user.rank <= 3 ? 'border-amber-500/30' : 'border-slate-800';
+
             return (
-              <div key={user.rank} className={`bg-slate-900/50 border rounded-xl transition-all overflow-hidden ${
-                user.rank <= 3 ? 'border-amber-500/30' : 'border-slate-800'
-              }`}>
+              <div key={user.rank} className={`bg-slate-900/50 border rounded-xl transition-all overflow-hidden ${rankBorder} ${isMe ? 'bg-orange-500/5' : ''}`}>
                 <div
-                  className="p-4 flex items-center gap-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
+                  className="p-3 sm:p-4 flex items-center gap-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
                   onClick={() => setExpanded(isExpanded ? null : user.rank)}
                 >
-                  {/* Rank / Avatar */}
+                  {/* Rank number (mobile: small) */}
+                  <div className="text-xs font-black text-slate-600 w-5 text-center shrink-0 hidden sm:block">
+                    {user.rank <= 3 ? medals[user.rank - 1] : `${user.rank}`}
+                  </div>
+
+                  {/* Avatar */}
                   <div className="relative shrink-0">
                     {user.avatar_url ? (
-                      <img
-                        src={user.avatar_url} alt={user.username}
-                        className={`w-10 h-10 rounded-full object-cover border-2 ${
+                      <img src={user.avatar_url} alt={user.username}
+                        className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full object-cover border-2 ${
+                          isMe ? 'border-orange-500/60' :
                           user.rank === 1 ? 'border-amber-500/60' :
                           user.rank === 2 ? 'border-slate-400/60' :
-                          user.rank === 3 ? 'border-orange-600/60' :
-                          'border-slate-700'
+                          user.rank === 3 ? 'border-orange-600/60' : 'border-slate-700'
                         }`}
-                        onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
-                      />
+                        onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
                     ) : null}
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm ${user.avatar_url ? 'hidden' : ''} ${
+                    <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-black text-sm ${user.avatar_url ? 'hidden' : ''} ${
+                      isMe ? 'bg-orange-500/20 text-orange-400 border border-orange-500/40' :
                       user.rank === 1 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' :
                       user.rank === 2 ? 'bg-slate-400/20 text-slate-300 border border-slate-400/40' :
                       user.rank === 3 ? 'bg-orange-700/20 text-orange-400 border border-orange-700/40' :
@@ -1250,79 +1450,86 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                       {user.rank <= 3 ? medals[user.rank - 1] : user.rank}
                     </div>
                     {user.rank <= 3 && user.avatar_url && (
-                      <span className="absolute -bottom-1 -right-1 text-sm leading-none">{medals[user.rank - 1]}</span>
+                      <span className="absolute -bottom-1 -right-1 text-xs leading-none">{medals[user.rank - 1]}</span>
                     )}
                   </div>
 
                   {/* Name + stats */}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        className="font-black text-white hover:text-orange-400 transition-colors text-left"
-                        onClick={(e) => { e.stopPropagation(); onUserClick(user); }}
-                      >
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button className={`font-black text-sm hover:text-orange-400 transition-colors text-left truncate ${isMe ? 'text-orange-300' : 'text-white'}`}
+                        onClick={(e) => { e.stopPropagation(); onUserClick(user); }}>
                         {user.username}
+                        {isMe && <span className="ml-1 text-[9px] text-orange-400 font-black align-middle">(you)</span>}
                       </button>
                       {riskProfile && (
-                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${riskProfile.cls}`}>
+                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border hidden sm:inline ${riskProfile.cls}`}>
                           {riskProfile.label}
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                      <span className="text-xs text-slate-500">
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      <span className="text-[11px] text-slate-500">
                         {user.correct_predictions ?? 0}/{user.total_predictions ?? 0} correct
                       </span>
-                      <span className={`text-xs font-black ${
-                        accuracy >= 70 ? 'text-green-400' :
-                        accuracy >= 50 ? 'text-yellow-400' :
-                        'text-slate-500'
-                      }`}>
-                        {accuracy}% acc
-                      </span>
+                      <span className={`text-[11px] font-black ${
+                        accuracy >= 70 ? 'text-green-400' : accuracy >= 50 ? 'text-yellow-400' : 'text-slate-500'
+                      }`}>{accuracy}%</span>
+                      {bullseyes > 0 && (
+                        <span className="text-[10px] text-amber-400 font-black hidden sm:inline">🎯 {bullseyes}</span>
+                      )}
                     </div>
                   </div>
 
-                  {/* Points */}
-                  <div className="text-right shrink-0">
-                    <div className="text-2xl font-black text-orange-400">{user.points}</div>
-                    <div className="text-[10px] text-slate-500 font-bold">pts</div>
+                  {/* Points + chevron */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-right">
+                      <div className={`text-xl font-black ${isMe ? 'text-orange-400' : 'text-orange-400'}`}>{user.points}</div>
+                      <div className="text-[10px] text-slate-500 font-bold">pts</div>
+                    </div>
+                    <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                   </div>
-
-                  {/* Expand chevron */}
-                  <ChevronDown className={`w-4 h-4 text-slate-600 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                 </div>
 
                 {/* Expanded breakdown */}
                 {isExpanded && (
-                  <div className="px-4 pb-4 border-t border-slate-800 pt-3">
+                  <div className="px-3 sm:px-4 pb-4 border-t border-slate-800 pt-3 space-y-3">
+                    {/* Points breakdown grid */}
                     {hasBreakdown ? (
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
-                          <p className="text-lg font-black text-orange-400">{seriesPts ?? '—'}</p>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase">Series</p>
-                        </div>
-                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
-                          <p className="text-lg font-black text-yellow-400">{futuresPts ?? '—'}</p>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase">Futures</p>
-                        </div>
-                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
-                          <p className="text-lg font-black text-cyan-400">{leadersPts ?? '—'}</p>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase">Leaders</p>
-                        </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {[
+                          { label: 'Series',  val: seriesPts,  cls: 'text-orange-400' },
+                          { label: 'Play-In', val: playinPts,  cls: 'text-purple-400' },
+                          { label: 'Futures', val: futuresPts, cls: 'text-yellow-400' },
+                          { label: 'Leaders', val: leadersPts, cls: 'text-cyan-400'   },
+                        ].map(({ label, val, cls }) => (
+                          <div key={label} className="text-center bg-slate-800/60 rounded-xl p-2.5">
+                            <p className={`text-base font-black ${cls}`}>{val ?? 0}</p>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase">{label}</p>
+                          </div>
+                        ))}
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
-                          <p className="text-xl font-black text-orange-400">{user.points}</p>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase">Total Points</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="text-center bg-slate-800/60 rounded-xl p-2.5">
+                          <p className="text-base font-black text-orange-400">{user.points}</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase">Total pts</p>
                         </div>
-                        <div className="text-center bg-slate-800/60 rounded-xl p-3">
-                          <p className="text-xl font-black text-green-400">{accuracy}%</p>
+                        <div className="text-center bg-slate-800/60 rounded-xl p-2.5">
+                          <p className="text-base font-black text-green-400">{accuracy}%</p>
                           <p className="text-[10px] text-slate-500 font-bold uppercase">Accuracy</p>
                         </div>
                       </div>
                     )}
+                    {/* Extra stats row */}
+                    <div className="flex items-center justify-between px-1 text-[11px] text-slate-500">
+                      <span>{user.correct_predictions}/{user.total_predictions} correct picks</span>
+                      {bullseyes > 0 && <span className="text-amber-400 font-bold">🎯 {bullseyes} bullseyes</span>}
+                      <button className="text-slate-500 hover:text-orange-400 font-bold transition-colors"
+                        onClick={(e) => { e.stopPropagation(); onUserClick(user); }}>
+                        View profile →
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
