@@ -904,7 +904,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const { data: playInGames = [], isLoading: l2, isError: e2, refetch: r2 } = useQuery({ queryKey: ['playin', '2026'],  queryFn: () => api.getPlayInGames('2026') });
   const { data: allTeams = [],  isLoading: l3, isError: e3, refetch: r3 } = useQuery({ queryKey: ['teams'],             queryFn: () => api.getTeams() });
   const { data: standingsRaw,   isLoading: l4, isError: e4, refetch: r4 } = useQuery({ queryKey: ['standings'],         queryFn: () => api.getStandings() });
-  const { data: globalStats }                   = useQuery({ queryKey: ['globalStats', '2026'], queryFn: () => api.getGlobalStats('2026'), staleTime: 10 * 60 * 1000 });
+  const { data: globalStats }                   = useQuery({ queryKey: ['globalStats'],         queryFn: () => api.getGlobalStats('2026'), staleTime: 5 * 60 * 1000 });
 
   const standings = standingsRaw || { eastern: [], western: [] };
   const loading   = l1 || l2 || l3 || l4;
@@ -1000,8 +1000,9 @@ const BracketPage = ({ currentUser, onNavigate }) => {
       );
       setConfirmed(p => ({ ...p, [seriesId]: true }));
       setTimeout(() => setSaved(p => ({ ...p, [seriesId]: false })), 2000);
-      // Invalidate notification badge so it reflects this new pick
       qc.invalidateQueries({ queryKey: ['notifications', currentUser.user_id] });
+      qc.invalidateQueries({ queryKey: ['globalStats'] });
+      qc.invalidateQueries({ queryKey: ['leaderboard'] });
     } catch (err) {
       setSaved(p => ({ ...p, [seriesId]: false })); // revert
       setSaveError(err.response?.data?.detail || 'Failed to save prediction. Try again.');
@@ -1024,6 +1025,8 @@ const BracketPage = ({ currentUser, onNavigate }) => {
       await api.makePlayInPrediction(currentUser.user_id, gameId, pick.teamId);
       setTimeout(() => setPiSaved(p => ({ ...p, [gameId]: false })), 2000);
       qc.invalidateQueries({ queryKey: ['notifications', currentUser.user_id] });
+      qc.invalidateQueries({ queryKey: ['globalStats'] });
+      qc.invalidateQueries({ queryKey: ['leaderboard'] });
     } catch (err) {
       setPiSaved(p => ({ ...p, [gameId]: false })); // revert
       setSaveError(err.response?.data?.detail || 'Failed to save prediction. Try again.');

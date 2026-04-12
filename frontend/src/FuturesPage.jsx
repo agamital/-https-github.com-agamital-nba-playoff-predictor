@@ -366,6 +366,8 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
         west_finals_mvp: westFinalsMvp, east_finals_mvp: eastFinalsMvp,
       });
       qc.invalidateQueries({ queryKey: ['userFutures', currentUser.user_id] });
+      qc.invalidateQueries({ queryKey: ['globalStats'] });
+      qc.invalidateQueries({ queryKey: ['leaderboard'] });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
@@ -381,6 +383,8 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
     try {
       await api.saveLeadersPrediction(currentUser.user_id, leaders);
       qc.invalidateQueries({ queryKey: ['userLeaders', currentUser.user_id] });
+      qc.invalidateQueries({ queryKey: ['globalStats'] });
+      qc.invalidateQueries({ queryKey: ['leaderboard'] });
       setLeadersSaved(true);
       setTimeout(() => setLeadersSaved(false), 2500);
     } catch (err) {
