@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from main import (  # noqa: E402
     _standings_sync_job, sync_daily_boxscores, refresh_playin_matchups,
-    NBA_API_AVAILABLE,
+    _auto_sync_leaders_actuals, NBA_API_AVAILABLE,
 )
 
 # Fire at these UTC hours each day
@@ -68,9 +68,16 @@ def _run_full_chain():
             sync_playin_results_from_api, sync_playoff_results_from_api,
             sync_series_provisional_leaders,
         )
-        # Step 3 — Leaders first so _finalize_series scores them when series completes
+        # Step 3 — Series leaders first so _finalize_series scores them when series completes
         pl = sync_series_provisional_leaders('2026')
         print(f"[Auto-Sync {label}] Leaders — updated={pl.get('series_updated',0)}")
+
+        # Step 3b — Playoff Highs: MAX single-game stat across all playoff games
+        la = _auto_sync_leaders_actuals('2026')
+        if not la.get('skipped'):
+            print(f"[Auto-Sync {label}] Playoff Highs — "
+                  f"pts={la.get('actual',{}).get('scorer')} "
+                  f"scored={la.get('predictions_scored',0)}")
 
         # Step 4 — Play-In results + bracket promotion
         pi = sync_playin_results_from_api('2026')

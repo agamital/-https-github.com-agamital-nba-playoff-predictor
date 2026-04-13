@@ -3448,6 +3448,21 @@ async def startup():
         except Exception as e:
             print(f"[Auto-Sync {label}] Leaders ERROR: {type(e).__name__}: {e}")
 
+        # Step 3b — Playoff Highs: auto-compute MAX single-game stat across all
+        # playoff games and re-score leaders_predictions with proximity scoring.
+        try:
+            la = _auto_sync_leaders_actuals('2026')
+            if la.get('skipped'):
+                print(f"[Auto-Sync {label}] Playoff Highs — {la.get('reason','no data yet')}")
+            else:
+                print(f"[Auto-Sync {label}] Playoff Highs — "
+                      f"pts={la.get('actual',{}).get('scorer')} "
+                      f"reb={la.get('actual',{}).get('rebounds')} "
+                      f"ast={la.get('actual',{}).get('assists')} "
+                      f"scored={la.get('predictions_scored',0)}")
+        except Exception as e:
+            print(f"[Auto-Sync {label}] Playoff Highs ERROR: {type(e).__name__}: {e}")
+
         # Step 4 — Play-In results + bracket promotion
         try:
             pi = sync_playin_results_from_api('2026')
@@ -7734,6 +7749,105 @@ async def get_leaders_results(season: str = "2026"):
             results[cat] = None
     conn.close()
     return results
+
+
+def _auto_sync_leaders_actuals(season: str = '2026') -> dict:
+    """
+    Automatically compute the HIGHEST SINGLE-GAME stat by any player across all
+    playoff games played so far, then store them as the provisional/final actuals
+    and re-score every leaders_prediction row.
+
+    Uses only games that are recorded in series_processed_events (type='playoff')
+    so regular-season and play-in boxscores are excluded.
+
+    Safe to call repeatedly — idempotent; only updates if a new max is found.
+    """
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+
+        # Max single-game stat across all tracked playoff game boxscores
+        c.execute("""
+            SELECT
+                MAX(pgs.points)   AS max_pts,
+                MAX(pgs.assists)  AS max_ast,
+                MAX(pgs.rebounds) AS max_reb,
+                MAX(pgs.threes)   AS max_3s,
+                MAX(pgs.steals)   AS max_stl,
+                MAX(pgs.blocks)   AS max_blk
+            FROM player_game_stats pgs
+            JOIN series_processed_events spe
+              ON spe.event_id = pgs.espn_game_id
+            WHERE spe.event_type = 'playoff'
+        """)
+        row = c.fetchone()
+        conn.close()
+        conn = None
+
+        if not row or all(v is None for v in row):
+            return {"skipped": True, "reason": "no playoff boxscores yet"}
+
+        actual = {
+            'scorer':   int(row[0]) if row[0] else None,
+            'assists':  int(row[1]) if row[1] else None,
+            'rebounds': int(row[2]) if row[2] else None,
+            'threes':   int(row[3]) if row[3] else None,
+            'steals':   int(row[4]) if row[4] else None,
+            'blocks':   int(row[5]) if row[5] else None,
+        }
+
+        # Persist to site_settings and re-score predictions
+        conn = get_db_conn()
+        c = conn.cursor()
+        for cat, val in actual.items():
+            c.execute(
+                "INSERT INTO site_settings (key, value) VALUES (%s, %s) "
+                "ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+                (f'leaders_{cat}_{season}', str(val) if val is not None else '')
+            )
+
+        c.execute(
+            "SELECT id, top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks "
+            "FROM leaders_predictions WHERE season = %s",
+            (season,)
+        )
+        scored = 0
+        for lp_id, p_sc, p_ast, p_reb, p_3s, p_stl, p_blk in c.fetchall():
+            preds = {
+                'scorer': p_sc, 'assists': p_ast, 'rebounds': p_reb,
+                'threes': p_3s, 'steals': p_stl, 'blocks': p_blk,
+            }
+            pts, correct = calculate_leaders_points(preds, actual)
+            c.execute(
+                """UPDATE leaders_predictions SET
+                   is_correct_scorer=%(sc)s, is_correct_assists=%(ast)s,
+                   is_correct_rebounds=%(reb)s, is_correct_threes=%(3s)s,
+                   is_correct_steals=%(stl)s, is_correct_blocks=%(blk)s,
+                   points_earned=%(pts)s
+                   WHERE id=%(id)s""",
+                {"sc": correct.get("scorer"), "ast": correct.get("assists"),
+                 "reb": correct.get("rebounds"), "3s": correct.get("threes"),
+                 "stl": correct.get("steals"), "blk": correct.get("blocks"),
+                 "pts": pts, "id": lp_id}
+            )
+            scored += 1
+
+        _recalculate_all_points(c)
+        conn.commit()
+        print(f"[Leaders Auto-Sync] actual={actual} scored={scored} predictions")
+        return {"actual": actual, "predictions_scored": scored}
+
+    except Exception as e:
+        print(f"[Leaders Auto-Sync] ERROR: {type(e).__name__}: {e}")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        return {"error": str(e)}
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 
 @app.post("/api/admin/leaders/results")

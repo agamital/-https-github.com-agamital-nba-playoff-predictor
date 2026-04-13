@@ -65,8 +65,9 @@ SCORING RULES SUMMARY
      Player categories: per-category from site_settings (default 1.0)
 
 4. VARIANCE-BASED (Playoff Highs / Leaders)  ----------------------------
-   Users predict the MAX cumulative stat across all playoffs.
-   Tiered proximity scoring.
+   Users predict the HIGHEST SINGLE-GAME stat across the entire playoffs.
+   e.g. "What's the most points any player will score in one game?"
+   NOT total/cumulative — one game only.  Tiered proximity scoring.
 
    Points / Assists:
      Exact  (Δ=0)  : 80 pts
@@ -309,7 +310,8 @@ def calculate_leaders_points(
 ) -> tuple[int, dict]:
     """
     Score a playoff-highs (leaders) prediction using tiered proximity scoring.
-    Users predict the MAX cumulative stat value across the playoffs as an integer.
+    Users predict the HIGHEST SINGLE-GAME stat value across the playoffs (integer).
+    actual = MAX(stat) in one game across all playoff games, not a cumulative total.
 
     Returns (total_points, correctness).
     correctness values: 2=bullseye, 1=close, 0=miss, None=not set.
