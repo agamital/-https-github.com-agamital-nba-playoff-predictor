@@ -4819,25 +4819,33 @@ async def global_stats(season: str = "2026"):
                 conn.rollback()
                 return []
 
-        # Leaders picks — aggregate by player_id, join for name
+        # Leaders picks — aggregate by predicted numeric value (max single-game stat)
         def top_leaders(col):
             try:
                 c.execute(f"""
-                    SELECT lp.{col}, ps.player_name, ps.team_abbreviation, COUNT(*) AS cnt
+                    SELECT lp.{col}, COUNT(*) AS cnt
                     FROM leaders_predictions lp
-                    JOIN player_stats ps ON ps.player_id = lp.{col} AND ps.season = %s
-                    WHERE lp.season = %s AND lp.{col} IS NOT NULL
-                    GROUP BY lp.{col}, ps.player_name, ps.team_abbreviation
-                    ORDER BY cnt DESC LIMIT 5
-                """, (season, season))
+                    WHERE lp.season = %s AND lp.{col} IS NOT NULL AND lp.{col} > 0
+                    GROUP BY lp.{col}
+                    ORDER BY cnt DESC, lp.{col} DESC
+                    LIMIT 8
+                """, (season,))
                 rows = c.fetchall()
-                total = sum(r[3] for r in rows) or 1
-                return [{'player_id': r[0], 'name': r[1], 'team': r[2], 'count': r[3], 'pct': round(r[3] / total * 100)}
-                        for r in rows]
+                total = sum(r[1] for r in rows) or 1
+                all_vals = [r[0] for r in rows]
+                avg_val  = round(sum(all_vals) / len(all_vals)) if all_vals else None
+                return {
+                    'distribution': [
+                        {'value': r[0], 'count': r[1], 'pct': round(r[1] / total * 100)}
+                        for r in rows
+                    ],
+                    'total_picks': int(total),
+                    'avg_value':   avg_val,
+                }
             except Exception as e:
                 print(f"global_stats top_leaders({col}) error: {e}")
                 conn.rollback()
-                return []
+                return {'distribution': [], 'total_picks': 0, 'avg_value': None}
 
         return {
             'series':      series_stats,

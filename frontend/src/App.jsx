@@ -234,7 +234,7 @@ function FuturesLockTimer() {
         </div>
       </div>
       <p className="text-slate-500 text-[11px] mt-2">
-        {targetLabel} · CLE vs TOR Game 1 (Prime Video)
+        {targetLabel}
       </p>
     </div>
   );
@@ -378,6 +378,9 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
 
     return (
       <div className="max-w-2xl mx-auto px-4 py-8 md:py-10">
+        {/* Futures + Leaders lock countdown — top of page */}
+        <FuturesLockTimer />
+
         {/* Hero */}
         <div className="text-center mb-6">
           <div className="inline-flex items-center px-3 py-1.5 rounded-full bg-orange-500/20 border border-orange-500/30 mb-4">
@@ -512,9 +515,6 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             ))}
           </Card>
         )}
-
-        {/* Futures + Leaders lock countdown */}
-        <FuturesLockTimer />
 
         {/* Divider before Futures/Leaders */}
         <div id="futures-section" className="flex items-center gap-3 mb-6">
@@ -1496,32 +1496,64 @@ const GlobalStatsTab = ({ currentUser }) => {
         </div>
       )}
 
-      {/* ── Playoff leaders picks ── */}
+      {/* ── Playoff Leaders max-stat picks ── */}
       {(() => {
         const ld = stats.leaders || {};
-        const leaderSections = [
-          { key: 'top_scorer',   label: '🏀 Top Scorer',   cls: 'text-orange-400' },
-          { key: 'top_assists',  label: '🎯 Top Assists',  cls: 'text-blue-400'   },
-          { key: 'top_rebounds', label: '💪 Top Rebounder', cls: 'text-green-400'  },
-          { key: 'top_threes',   label: '🎳 Top 3-Pointers', cls: 'text-purple-400' },
-          { key: 'top_steals',   label: '🤺 Top Steals',   cls: 'text-cyan-400'   },
-          { key: 'top_blocks',   label: '🛡️ Top Blocks',   cls: 'text-red-400'    },
-        ].filter(s => (ld[s.key] || []).length > 0);
-        if (!leaderSections.length) return null;
+        const LEADER_META = [
+          { key: 'top_scorer',   label: '🏀 Top Single-Game Score',   unit: 'pts', cls: 'text-orange-400', bar: 'bg-orange-500/70' },
+          { key: 'top_assists',  label: '🎯 Top Single-Game Assists',  unit: 'ast', cls: 'text-blue-400',   bar: 'bg-blue-500/70'   },
+          { key: 'top_rebounds', label: '💪 Top Single-Game Rebounds', unit: 'reb', cls: 'text-green-400',  bar: 'bg-green-500/70'  },
+          { key: 'top_threes',   label: '🎳 Top Single-Game 3s Made', unit: '3pm', cls: 'text-purple-400', bar: 'bg-purple-500/70' },
+          { key: 'top_steals',   label: '🤺 Top Single-Game Steals',  unit: 'stl', cls: 'text-cyan-400',   bar: 'bg-cyan-500/70'   },
+          { key: 'top_blocks',   label: '🛡️ Top Single-Game Blocks',  unit: 'blk', cls: 'text-red-400',    bar: 'bg-red-500/70'    },
+        ].filter(m => (ld[m.key]?.distribution?.length > 0));
+        if (!LEADER_META.length) return null;
         return (
           <div className="space-y-3">
-            <SectionDivider label="Playoff Leaders Picks" />
+            <SectionDivider label="Playoff Leaders Picks — Max Single Game" />
+            <p className="text-[10px] text-slate-600 text-center -mt-2">
+              Each user predicted the highest single-game stat in the entire playoffs. Closer = more points.
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {leaderSections.map(({ key, label, cls }) => (
-                <div key={key} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
-                  <p className={`text-xs font-black mb-3 ${cls}`}>{label}</p>
-                  <div className="space-y-2">
-                    {(ld[key] || []).map((item, i) => (
-                      <PlayerPickBar key={i} item={item} rank={i} />
-                    ))}
+              {LEADER_META.map(({ key, label, unit, cls, bar }) => {
+                const ld_entry = ld[key];
+                const dist = ld_entry?.distribution || [];
+                const maxCount = Math.max(...dist.map(d => d.count), 1);
+                return (
+                  <div key={key} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className={`text-xs font-black ${cls}`}>{label}</p>
+                      {ld_entry?.avg_value != null && (
+                        <span className="text-[10px] text-slate-500 font-bold">
+                          avg pick: <span className={`font-black ${cls}`}>{ld_entry.avg_value}</span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      {dist.map((item, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span className={`text-xs font-black w-10 text-right shrink-0 ${i === 0 ? cls : 'text-slate-400'}`}>
+                            {item.value}
+                          </span>
+                          <span className="text-[9px] text-slate-600 font-bold w-6 shrink-0">{unit}</span>
+                          <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${i === 0 ? bar : 'bg-slate-600/50'}`}
+                              style={{ width: `${Math.max(item.count / maxCount * 100, 8)}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] text-slate-500 font-bold w-12 text-right shrink-0">
+                            {item.count} {item.count === 1 ? 'pick' : 'picks'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-slate-700 mt-2 text-right">
+                      {ld_entry?.total_picks} total picks
+                    </p>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );

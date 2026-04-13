@@ -62,6 +62,32 @@ function PlayInCountdown({ startZ }) {
   );
 }
 
+// ── First Round Game 1 schedule (frontend fallback when backend field is null) ─
+// Keys: `${conference}_${Math.min(s1,s2)}_${Math.max(s1,s2)}`
+const _FR_SCHEDULE = {};
+const _FR_SCHEDULE_DATA = [
+  ['Eastern_4_5', '2026-04-18T17:00:00Z'],   // CLE vs TOR  · Sat 20:00 IDT
+  ['Western_3_6', '2026-04-18T19:30:00Z'],   // DEN vs MIN  · Sat 22:30 IDT
+  ['Eastern_3_6', '2026-04-18T22:00:00Z'],   // NYK vs ATL  · Sun 01:00 IDT
+  ['Western_4_5', '2026-04-19T00:30:00Z'],   // LAL vs HOU  · Sun 03:30 IDT
+  ['Eastern_2_7', '2026-04-19T17:00:00Z'],   // BOS vs #7   · Sun 20:00 IDT
+  ['Western_1_8', '2026-04-19T19:30:00Z'],   // OKC vs #8   · Sun 22:30 IDT
+  ['Eastern_1_8', '2026-04-19T22:30:00Z'],   // DET vs #8   · Mon 01:30 IDT
+  ['Western_2_7', '2026-04-20T01:00:00Z'],   // SAS vs #7   · Mon 04:00 IDT
+];
+_FR_SCHEDULE_DATA.forEach(([k, v]) => { _FR_SCHEDULE[k] = v; });
+
+function getSeriesGame1Z(series) {
+  if (series.game1_start_time) return series.game1_start_time;
+  if (series.round !== 'First Round') return null;
+  const conf = series.conference; // 'Eastern' | 'Western'
+  const hs   = series.home_seed  ?? series.home_team?.seed;
+  const as_  = series.away_seed  ?? series.away_team?.seed;
+  if (!conf || !hs || !as_) return null;
+  const lo = Math.min(hs, as_), hi = Math.max(hs, as_);
+  return _FR_SCHEDULE[`${conf}_${lo}_${hi}`] || null;
+}
+
 // ── Per-series Game 1 countdown ───────────────────────────────────────────────
 function useSeriesCountdown(game1StartZ) {
   const calc = () => game1StartZ ? Math.floor((new Date(game1StartZ) - Date.now()) / 1000) : null;
@@ -845,13 +871,12 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
         {series.status === 'locked' && <span className="text-xs font-bold text-yellow-400 flex items-center gap-1">🔒 Locked</span>}
         {series.status === 'active' && <span className="text-xs font-bold text-blue-400">Predictions Open</span>}
       </div>
-      {/* Game 1 countdown — only for active First Round series */}
-      {series.game1_start_time && (
-        <SeriesGame1Countdown
-          game1StartZ={series.game1_start_time}
-          picksLocked={series.picks_locked}
-        />
-      )}
+      {/* Game 1 countdown — First Round series (uses backend field or frontend fallback) */}
+      {(() => {
+        const g1z = getSeriesGame1Z(series);
+        if (!g1z) return null;
+        return <SeriesGame1Countdown game1StartZ={g1z} picksLocked={series.picks_locked} />;
+      })()}
       <div className="space-y-2">
         {teamBtn(h, hp, hWon, hIsUnderdog2, () => onTeamClick(series, h.id))}
         <div className="text-center text-xs text-slate-600 font-bold">VS</div>
