@@ -62,83 +62,63 @@ function PlayInCountdown({ startZ }) {
   );
 }
 
-// ── First Round lock timer ────────────────────────────────────────────────────
-// Futures + series bets lock when the first R1 game tips off:
-// Saturday April 18 at 17:00 UTC = 1:00 PM ET = 20:00 IDT
-const FIRST_ROUND_LOCK_UTC = '2026-04-18T17:00:00Z';
-
-function useBigCountdown(targetZ) {
-  const calc = () => Math.floor((new Date(targetZ) - Date.now()) / 1000);
+// ── Per-series Game 1 countdown ───────────────────────────────────────────────
+function useSeriesCountdown(game1StartZ) {
+  const calc = () => game1StartZ ? Math.floor((new Date(game1StartZ) - Date.now()) / 1000) : null;
   const [secs, setSecs] = useState(calc);
   useEffect(() => {
+    if (!game1StartZ) return;
     const id = setInterval(() => setSecs(calc()), 1000);
     return () => clearInterval(id);
-  }, [targetZ]);
+  }, [game1StartZ]);
   return secs;
 }
 
-function FirstRoundLockTimer() {
-  const secs = useBigCountdown(FIRST_ROUND_LOCK_UTC);
-  const expired = secs <= 0;
+function SeriesGame1Countdown({ game1StartZ, picksLocked }) {
+  const secs = useSeriesCountdown(game1StartZ);
+  if (!game1StartZ) return null;
 
-  const targetLabel = new Date(FIRST_ROUND_LOCK_UTC).toLocaleString('en-IL', {
-    timeZone: 'Asia/Jerusalem', weekday: 'long', month: 'long',
-    day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
-  });
+  // Format tip-off time in Jerusalem (IDT = UTC+3)
+  const d = new Date(game1StartZ);
+  const idt = new Date(d.getTime() + 3 * 60 * 60 * 1000);
+  const days   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const hh = String(idt.getUTCHours()).padStart(2, '0');
+  const mm = String(idt.getUTCMinutes()).padStart(2, '0');
+  const tipLabel = `${days[idt.getUTCDay()]} ${months[idt.getUTCMonth()]} ${idt.getUTCDate()} · ${hh}:${mm} IDT`;
 
-  if (expired) {
+  if (secs === null || secs <= 0 || picksLocked) {
     return (
-      <div className="max-w-2xl mx-auto mb-6 flex items-center justify-center gap-3 px-5 py-4 rounded-2xl bg-red-500/15 border border-red-500/30">
-        <Lock className="w-5 h-5 text-red-400 shrink-0" />
-        <div className="text-center">
-          <p className="text-red-400 font-black text-base">🔒 Bets are Locked</p>
-          <p className="text-red-400/70 text-xs mt-0.5">First Round has started</p>
-        </div>
+      <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-red-500/8 border border-red-500/20 text-[10px] font-bold">
+        <span className="flex items-center gap-1.5 text-red-400">
+          <Lock className="w-3 h-3" /> Bets Locked · Game 1 Started
+        </span>
+        <span className="text-slate-600">{tipLabel}</span>
       </div>
     );
   }
 
-  const d = Math.floor(secs / 86400);
-  const h = Math.floor((secs % 86400) / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  const s = secs % 60;
-  const pad = n => String(n).padStart(2, '0');
+  const days_  = Math.floor(secs / 86400);
+  const hours  = Math.floor((secs % 86400) / 3600);
+  const mins   = Math.floor((secs % 3600) / 60);
+  const secs_  = secs % 60;
+  const pad    = n => String(n).padStart(2, '0');
   const urgent = secs < 3600;
   const soon   = secs < 86400;
 
   return (
-    <div className={`max-w-2xl mx-auto mb-6 px-5 py-4 rounded-2xl border text-center
-      ${urgent ? 'bg-red-500/15 border-red-500/40' : soon ? 'bg-amber-500/10 border-amber-500/30' : 'bg-slate-800/60 border-slate-700/50'}`}>
-      <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">
-        ⏰ Bets lock when first game starts
-      </p>
-      <div className={`flex items-center justify-center gap-3 font-black font-mono
-        ${urgent ? 'text-red-400' : soon ? 'text-amber-400' : 'text-orange-400'}`}>
-        {d > 0 && (
-          <div className="flex flex-col items-center">
-            <span className="text-3xl sm:text-4xl leading-none">{d}</span>
-            <span className="text-[10px] text-slate-500 font-normal mt-0.5">DAYS</span>
-          </div>
-        )}
-        {d > 0 && <span className="text-2xl text-slate-600 mb-3">:</span>}
-        <div className="flex flex-col items-center">
-          <span className="text-3xl sm:text-4xl leading-none">{pad(h)}</span>
-          <span className="text-[10px] text-slate-500 font-normal mt-0.5">HRS</span>
-        </div>
-        <span className="text-2xl text-slate-600 mb-3">:</span>
-        <div className="flex flex-col items-center">
-          <span className="text-3xl sm:text-4xl leading-none">{pad(m)}</span>
-          <span className="text-[10px] text-slate-500 font-normal mt-0.5">MIN</span>
-        </div>
-        <span className="text-2xl text-slate-600 mb-3">:</span>
-        <div className="flex flex-col items-center">
-          <span className="text-3xl sm:text-4xl leading-none">{pad(s)}</span>
-          <span className="text-[10px] text-slate-500 font-normal mt-0.5">SEC</span>
-        </div>
+    <div className={`px-3 py-2 rounded-xl border text-[10px] font-bold
+      ${urgent ? 'bg-red-500/8 border-red-500/20' : soon ? 'bg-amber-500/8 border-amber-500/20' : 'bg-slate-800/50 border-slate-700/50'}`}>
+      <div className="flex items-center justify-between">
+        <span className={`flex items-center gap-1 ${urgent ? 'text-red-400' : soon ? 'text-amber-400' : 'text-slate-400'}`}>
+          <Clock className="w-3 h-3 shrink-0" />
+          Bets lock in:
+        </span>
+        <span className={`font-mono font-black tabular-nums ${urgent ? 'text-red-400' : soon ? 'text-amber-400' : 'text-cyan-400'}`}>
+          {days_ > 0 ? `${days_}d ` : ''}{pad(hours)}:{pad(mins)}:{pad(secs_)}
+        </span>
       </div>
-      <p className="text-slate-500 text-[11px] mt-2">
-        CLE vs TOR · {targetLabel} · Futures + all series bets lock
-      </p>
+      <p className="text-slate-600 mt-0.5 text-[9px]">Game 1 tipoff · {tipLabel}</p>
     </div>
   );
 }
@@ -865,6 +845,13 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
         {series.status === 'locked' && <span className="text-xs font-bold text-yellow-400 flex items-center gap-1">🔒 Locked</span>}
         {series.status === 'active' && <span className="text-xs font-bold text-blue-400">Predictions Open</span>}
       </div>
+      {/* Game 1 countdown — only for active First Round series */}
+      {series.game1_start_time && (
+        <SeriesGame1Countdown
+          game1StartZ={series.game1_start_time}
+          picksLocked={series.picks_locked}
+        />
+      )}
       <div className="space-y-2">
         {teamBtn(h, hp, hWon, hIsUnderdog2, () => onTeamClick(series, h.id))}
         <div className="text-center text-xs text-slate-600 font-bold">VS</div>
@@ -1203,9 +1190,6 @@ const BracketPage = ({ currentUser, onNavigate }) => {
           <Info className="w-3.5 h-3.5" /> How scoring works
         </button>
       </div>
-
-      {/* First Round countdown / lock banner */}
-      <FirstRoundLockTimer />
 
       {/* Save error banner */}
       {saveError && (

@@ -154,6 +154,92 @@ const GoogleIcon = () => (
   </svg>
 );
 
+// ── Futures + Playoff Leaders lock timer ─────────────────────────────────────
+// Locks when CLE vs TOR tips off: Saturday April 18 17:00 UTC = 20:00 IDT
+const FUTURES_LOCK_UTC = '2026-04-18T17:00:00Z';
+
+function useBigCountdown(targetZ) {
+  const calc = () => Math.floor((new Date(targetZ) - Date.now()) / 1000);
+  const [secs, setSecs] = useState(calc);
+  useEffect(() => {
+    const id = setInterval(() => setSecs(calc()), 1000);
+    return () => clearInterval(id);
+  }, [targetZ]);
+  return secs;
+}
+
+function FuturesLockTimer() {
+  const secs = useBigCountdown(FUTURES_LOCK_UTC);
+  const expired = secs <= 0;
+
+  // Jerusalem time display
+  const d = new Date(FUTURES_LOCK_UTC);
+  const idt = new Date(d.getTime() + 3 * 60 * 60 * 1000);
+  const hh = String(idt.getUTCHours()).padStart(2, '0');
+  const mm = String(idt.getUTCMinutes()).padStart(2, '0');
+  const days   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const targetLabel = `${days[idt.getUTCDay()]} ${months[idt.getUTCMonth()]} ${idt.getUTCDate()} · ${hh}:${mm} IDT`;
+
+  if (expired) {
+    return (
+      <div className="flex items-center justify-center gap-3 px-5 py-4 rounded-2xl bg-red-500/15 border border-red-500/30 mb-6">
+        <Lock className="w-5 h-5 text-red-400 shrink-0" />
+        <div className="text-center">
+          <p className="text-red-400 font-black text-base">🔒 Futures & Leaders Bets are Locked</p>
+          <p className="text-red-400/70 text-xs mt-0.5">First Round has started · {targetLabel}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const dv = Math.floor(secs / 86400);
+  const hv = Math.floor((secs % 86400) / 3600);
+  const mv = Math.floor((secs % 3600) / 60);
+  const sv = secs % 60;
+  const pad = n => String(n).padStart(2, '0');
+  const urgent = secs < 3600;
+  const soon   = secs < 86400;
+
+  return (
+    <div className={`px-5 py-4 rounded-2xl border text-center mb-6
+      ${urgent ? 'bg-red-500/15 border-red-500/40' : soon ? 'bg-amber-500/10 border-amber-500/30' : 'bg-slate-800/60 border-slate-700/50'}`}>
+      <p className={`text-xs font-bold uppercase tracking-widest mb-2 ${urgent ? 'text-red-400' : soon ? 'text-amber-400' : 'text-slate-400'}`}>
+        ⏰ Futures & Playoff Leaders bets lock in
+      </p>
+      <div className={`flex items-center justify-center gap-3 font-black font-mono
+        ${urgent ? 'text-red-400' : soon ? 'text-amber-400' : 'text-orange-400'}`}>
+        {dv > 0 && (
+          <>
+            <div className="flex flex-col items-center">
+              <span className="text-3xl sm:text-4xl leading-none">{dv}</span>
+              <span className="text-[10px] text-slate-500 font-normal mt-0.5">DAYS</span>
+            </div>
+            <span className="text-2xl text-slate-600 mb-3">:</span>
+          </>
+        )}
+        <div className="flex flex-col items-center">
+          <span className="text-3xl sm:text-4xl leading-none">{pad(hv)}</span>
+          <span className="text-[10px] text-slate-500 font-normal mt-0.5">HRS</span>
+        </div>
+        <span className="text-2xl text-slate-600 mb-3">:</span>
+        <div className="flex flex-col items-center">
+          <span className="text-3xl sm:text-4xl leading-none">{pad(mv)}</span>
+          <span className="text-[10px] text-slate-500 font-normal mt-0.5">MIN</span>
+        </div>
+        <span className="text-2xl text-slate-600 mb-3">:</span>
+        <div className="flex flex-col items-center">
+          <span className="text-3xl sm:text-4xl leading-none">{pad(sv)}</span>
+          <span className="text-[10px] text-slate-500 font-normal mt-0.5">SEC</span>
+        </div>
+      </div>
+      <p className="text-slate-500 text-[11px] mt-2">
+        {targetLabel} · CLE vs TOR Game 1 (Prime Video)
+      </p>
+    </div>
+  );
+}
+
 const HomePage = ({ currentUser, onNavigate, onLogin }) => {
   const [mode, setMode] = useState('login'); // 'login' | 'register' | 'reset'
   const [formData, setFormData] = useState({ username: '', email: '', password: '', confirmPassword: '', newPassword: '' });
@@ -426,6 +512,9 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             ))}
           </Card>
         )}
+
+        {/* Futures + Leaders lock countdown */}
+        <FuturesLockTimer />
 
         {/* Divider before Futures/Leaders */}
         <div id="futures-section" className="flex items-center gap-3 mb-6">
@@ -806,8 +895,6 @@ const PicksLockedPlaceholder = () => (
     </span>
   </div>
 );
-
-const FIRST_ROUND_LOCK_UTC = '2026-04-18T17:00:00Z';
 
 // Format an ISO UTC time to Jerusalem (IDT = UTC+3) display string, e.g. "Saturday April 18 · 20:00 IDT"
 function _fmtIDT(isoZ) {
