@@ -966,6 +966,64 @@ const LeadersResultsCard = () => {
   );
 };
 
+const SyncSeedsCard = ({ addToast, onDone }) => {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const run = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await api.syncSeeds();
+      setResult(res);
+      addToast(
+        `Seeds synced — ${res.updated_series} series updated, ${res.updated_playin_seeds} play-in seeds updated`,
+        'success'
+      );
+      if (onDone) onDone();
+    } catch (e) {
+      const msg = e.response?.data?.detail || e.message;
+      setResult({ error: msg });
+      addToast('Seed sync failed: ' + msg, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="p-5 mb-8">
+      <div className="flex items-center gap-2 mb-3">
+        <RefreshCw className="w-5 h-5 text-green-400" />
+        <h2 className="text-lg font-black text-white">Sync Seeds from Standings</h2>
+      </div>
+      <p className="text-xs text-slate-400 mb-4">
+        Updates seed numbers on all active series and play-in games to match current standings —
+        without deleting any series or losing user bets. Use this after standings change (e.g. ATL moved from 5→6).
+      </p>
+      <button
+        onClick={run}
+        disabled={busy}
+        className="px-5 py-2 rounded-lg bg-green-500/20 border border-green-500/40 text-green-400 hover:bg-green-500/30 text-sm font-bold transition-all disabled:opacity-50"
+      >
+        {busy ? 'Syncing…' : 'Sync Seeds'}
+      </button>
+      {result && (
+        <div className="mt-3 p-3 rounded-lg bg-slate-800 text-xs font-mono text-slate-300 break-all">
+          {result.error
+            ? <span className="text-red-400">{result.error}</span>
+            : <span className="text-green-400">
+                Series updated: {result.updated_series} &nbsp;|&nbsp;
+                Flagged: {result.flagged_series} &nbsp;|&nbsp;
+                Play-in seeds: {result.updated_playin_seeds} &nbsp;|&nbsp;
+                Play-in matchups refreshed: {result.playin_refresh?.updated?.length ?? 0}
+              </span>
+          }
+        </div>
+      )}
+    </Card>
+  );
+};
+
 const RegenerateMatchupsCard = ({ onDone }) => {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
@@ -2069,6 +2127,7 @@ const AdminPage = ({ currentUser }) => {
       <OddsCard />
       <FuturesResultsCard teams={allTeams} />
       <LeadersResultsCard />
+      <SyncSeedsCard addToast={addToast} onDone={load} />
       <RegenerateMatchupsCard onDone={load} />
 
       {loading ? (

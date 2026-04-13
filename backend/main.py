@@ -5148,6 +5148,86 @@ async def admin_regenerate_matchups(conference: str = None, season: str = '2026'
     conn.close()
     return {"message": "Done", "series_count": series, "playin_count": playin}
 
+
+@app.post("/api/admin/sync-seeds")
+async def admin_sync_seeds(season: str = '2026'):
+    """
+    Update home_seed / away_seed on existing ACTIVE series and play-in games
+    to match current standings — without deleting any series or bets.
+    Also calls refresh_playin_matchups() to sync play-in team assignments.
+    Use this when seedings shifted but the matchup teams are still correct.
+    Use /regenerate-matchups when the actual teams in a matchup need to change.
+    """
+    conn = None
+    updated_series = []
+    flagged_series = []
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+
+        standings = get_standings()
+        if not standings:
+            raise HTTPException(503, "No standings data available")
+
+        # Build seed map: team_id -> current conf_rank
+        seed_map = {t['team_id']: t['conf_rank'] for t in standings}
+
+        # Update active series seeds
+        c.execute("""SELECT id, home_team_id, away_team_id, home_seed, away_seed, conference, round
+                     FROM series WHERE season = %s AND status = 'active'""", (season,))
+        for row in c.fetchall():
+            sid, ht, at, old_hs, old_as, conf, rnd = row
+            new_hs = seed_map.get(ht)
+            new_as = seed_map.get(at)
+            if new_hs is None or new_as is None:
+                flagged_series.append({'id': sid, 'reason': 'team not in current standings'})
+                continue
+            if new_hs != old_hs or new_as != old_as:
+                c.execute("UPDATE series SET home_seed=%s, away_seed=%s WHERE id=%s",
+                          (new_hs, new_as, sid))
+                updated_series.append({'id': sid, 'round': rnd,
+                                       'old': f'{old_hs}v{old_as}', 'new': f'{new_hs}v{new_as}'})
+
+        # Update active play-in game seeds
+        c.execute("""SELECT id, team1_id, team2_id, team1_seed, team2_seed, conference, game_type
+                     FROM playin_games WHERE season = %s AND status = 'active' AND winner_id IS NULL""", (season,))
+        updated_playin = []
+        for row in c.fetchall():
+            pid, t1, t2, old_s1, old_s2, conf, gtype = row
+            new_s1 = seed_map.get(t1)
+            new_s2 = seed_map.get(t2)
+            if new_s1 and new_s2 and (new_s1 != old_s1 or new_s2 != old_s2):
+                c.execute("UPDATE playin_games SET team1_seed=%s, team2_seed=%s WHERE id=%s",
+                          (new_s1, new_s2, pid))
+                updated_playin.append({'id': pid, 'conf': conf, 'game_type': gtype})
+
+        conn.commit()
+
+        # Also run full play-in refresh to catch team changes in 7-10 range
+        try:
+            playin_refresh = refresh_playin_matchups(season)
+        except Exception as pe:
+            playin_refresh = {'error': str(pe)}
+
+        return {
+            'updated_series': updated_series,
+            'flagged_series': flagged_series,
+            'updated_playin_seeds': updated_playin,
+            'playin_refresh': playin_refresh,
+            'message': f'Seeds synced: {len(updated_series)} series updated, {len(updated_playin)} play-in seeds updated'
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        raise HTTPException(500, f"sync-seeds error: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
 @app.get("/api/admin/series")
 async def admin_get_series(season: str = "2026"):
     conn = None

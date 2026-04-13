@@ -238,6 +238,11 @@ export const generatePlayIn = async (season = '2026') => {
   return response.data;
 };
 
+export const syncSeeds = async (season = '2026') => {
+  const response = await api.post(`/api/admin/sync-seeds?season=${season}`);
+  return response.data;
+};
+
 // Get user's predictions
 export const getMyPredictions = async (userId, season = '2026') => {
   const response = await api.get(`/api/my-predictions?user_id=${userId}&season=${season}`);
