@@ -160,31 +160,31 @@ _NBA_HEADERS = {
 }
 _NBA_TIMEOUT = 30  # seconds — increased for Railway→NBA API latency
 
-# Hardcoded standings (2025-26 season, as of 2026-03-26).
+# Hardcoded standings (2025-26 season, FINAL after April 13 2026).
 # Used instantly on startup so users never wait for the NBA API.
 _HARDCODED_STANDINGS = [
     # Eastern Conference
-    {'team_id': 1610612765, 'team_name': 'Detroit Pistons',        'conference': 'East', 'wins': 52, 'losses': 20, 'win_pct': 0.722, 'conf_rank': 1,  'playoff_rank': 1},
-    {'team_id': 1610612738, 'team_name': 'Boston Celtics',         'conference': 'East', 'wins': 47, 'losses': 24, 'win_pct': 0.662, 'conf_rank': 2,  'playoff_rank': 2},
-    {'team_id': 1610612752, 'team_name': 'New York Knicks',        'conference': 'East', 'wins': 47, 'losses': 25, 'win_pct': 0.653, 'conf_rank': 3,  'playoff_rank': 3},
-    {'team_id': 1610612739, 'team_name': 'Cleveland Cavaliers',    'conference': 'East', 'wins': 44, 'losses': 27, 'win_pct': 0.620, 'conf_rank': 4,  'playoff_rank': 4},
-    {'team_id': 1610612761, 'team_name': 'Toronto Raptors',        'conference': 'East', 'wins': 40, 'losses': 31, 'win_pct': 0.563, 'conf_rank': 5,  'playoff_rank': 5},
-    {'team_id': 1610612737, 'team_name': 'Atlanta Hawks',          'conference': 'East', 'wins': 40, 'losses': 32, 'win_pct': 0.556, 'conf_rank': 6,  'playoff_rank': 6},
-    {'team_id': 1610612755, 'team_name': 'Philadelphia 76ers',     'conference': 'East', 'wins': 39, 'losses': 33, 'win_pct': 0.542, 'conf_rank': 7,  'playoff_rank': 7},
-    {'team_id': 1610612753, 'team_name': 'Orlando Magic',          'conference': 'East', 'wins': 38, 'losses': 33, 'win_pct': 0.535, 'conf_rank': 8,  'playoff_rank': 8},
-    {'team_id': 1610612748, 'team_name': 'Miami Heat',             'conference': 'East', 'wins': 38, 'losses': 34, 'win_pct': 0.528, 'conf_rank': 9,  'playoff_rank': 9},
-    {'team_id': 1610612766, 'team_name': 'Charlotte Hornets',      'conference': 'East', 'wins': 37, 'losses': 34, 'win_pct': 0.521, 'conf_rank': 10, 'playoff_rank': 10},
+    {'team_id': 1610612765, 'team_name': 'Detroit Pistons',        'conference': 'East', 'wins': 60, 'losses': 22, 'win_pct': 0.732, 'conf_rank': 1,  'playoff_rank': 1},
+    {'team_id': 1610612738, 'team_name': 'Boston Celtics',         'conference': 'East', 'wins': 56, 'losses': 26, 'win_pct': 0.683, 'conf_rank': 2,  'playoff_rank': 2},
+    {'team_id': 1610612752, 'team_name': 'New York Knicks',        'conference': 'East', 'wins': 53, 'losses': 29, 'win_pct': 0.646, 'conf_rank': 3,  'playoff_rank': 3},
+    {'team_id': 1610612739, 'team_name': 'Cleveland Cavaliers',    'conference': 'East', 'wins': 52, 'losses': 30, 'win_pct': 0.634, 'conf_rank': 4,  'playoff_rank': 4},
+    {'team_id': 1610612761, 'team_name': 'Toronto Raptors',        'conference': 'East', 'wins': 46, 'losses': 36, 'win_pct': 0.561, 'conf_rank': 5,  'playoff_rank': 5},
+    {'team_id': 1610612737, 'team_name': 'Atlanta Hawks',          'conference': 'East', 'wins': 46, 'losses': 36, 'win_pct': 0.561, 'conf_rank': 6,  'playoff_rank': 6},
+    {'team_id': 1610612755, 'team_name': 'Philadelphia 76ers',     'conference': 'East', 'wins': 45, 'losses': 37, 'win_pct': 0.549, 'conf_rank': 7,  'playoff_rank': 7},
+    {'team_id': 1610612753, 'team_name': 'Orlando Magic',          'conference': 'East', 'wins': 45, 'losses': 37, 'win_pct': 0.549, 'conf_rank': 8,  'playoff_rank': 8},
+    {'team_id': 1610612766, 'team_name': 'Charlotte Hornets',      'conference': 'East', 'wins': 44, 'losses': 38, 'win_pct': 0.537, 'conf_rank': 9,  'playoff_rank': 9},
+    {'team_id': 1610612748, 'team_name': 'Miami Heat',             'conference': 'East', 'wins': 43, 'losses': 39, 'win_pct': 0.524, 'conf_rank': 10, 'playoff_rank': 10},
     # Western Conference
-    {'team_id': 1610612760, 'team_name': 'Oklahoma City Thunder',  'conference': 'West', 'wins': 57, 'losses': 15, 'win_pct': 0.792, 'conf_rank': 1,  'playoff_rank': 1},
-    {'team_id': 1610612759, 'team_name': 'San Antonio Spurs',      'conference': 'West', 'wins': 54, 'losses': 18, 'win_pct': 0.750, 'conf_rank': 2,  'playoff_rank': 2},
-    {'team_id': 1610612747, 'team_name': 'Los Angeles Lakers',     'conference': 'West', 'wins': 46, 'losses': 26, 'win_pct': 0.639, 'conf_rank': 3,  'playoff_rank': 3},
-    {'team_id': 1610612743, 'team_name': 'Denver Nuggets',         'conference': 'West', 'wins': 44, 'losses': 28, 'win_pct': 0.611, 'conf_rank': 4,  'playoff_rank': 4},
-    {'team_id': 1610612750, 'team_name': 'Minnesota Timberwolves', 'conference': 'West', 'wins': 44, 'losses': 28, 'win_pct': 0.611, 'conf_rank': 5,  'playoff_rank': 5},
-    {'team_id': 1610612745, 'team_name': 'Houston Rockets',        'conference': 'West', 'wins': 43, 'losses': 28, 'win_pct': 0.606, 'conf_rank': 6,  'playoff_rank': 6},
-    {'team_id': 1610612756, 'team_name': 'Phoenix Suns',           'conference': 'West', 'wins': 40, 'losses': 32, 'win_pct': 0.556, 'conf_rank': 7,  'playoff_rank': 7},
-    {'team_id': 1610612746, 'team_name': 'LA Clippers',            'conference': 'West', 'wins': 36, 'losses': 36, 'win_pct': 0.500, 'conf_rank': 8,  'playoff_rank': 8},
-    {'team_id': 1610612757, 'team_name': 'Portland Trail Blazers', 'conference': 'West', 'wins': 36, 'losses': 37, 'win_pct': 0.493, 'conf_rank': 9,  'playoff_rank': 9},
-    {'team_id': 1610612744, 'team_name': 'Golden State Warriors',  'conference': 'West', 'wins': 34, 'losses': 38, 'win_pct': 0.472, 'conf_rank': 10, 'playoff_rank': 10},
+    {'team_id': 1610612760, 'team_name': 'Oklahoma City Thunder',  'conference': 'West', 'wins': 64, 'losses': 18, 'win_pct': 0.780, 'conf_rank': 1,  'playoff_rank': 1},
+    {'team_id': 1610612759, 'team_name': 'San Antonio Spurs',      'conference': 'West', 'wins': 62, 'losses': 20, 'win_pct': 0.756, 'conf_rank': 2,  'playoff_rank': 2},
+    {'team_id': 1610612743, 'team_name': 'Denver Nuggets',         'conference': 'West', 'wins': 54, 'losses': 28, 'win_pct': 0.659, 'conf_rank': 3,  'playoff_rank': 3},
+    {'team_id': 1610612747, 'team_name': 'Los Angeles Lakers',     'conference': 'West', 'wins': 53, 'losses': 29, 'win_pct': 0.646, 'conf_rank': 4,  'playoff_rank': 4},
+    {'team_id': 1610612745, 'team_name': 'Houston Rockets',        'conference': 'West', 'wins': 52, 'losses': 30, 'win_pct': 0.634, 'conf_rank': 5,  'playoff_rank': 5},
+    {'team_id': 1610612750, 'team_name': 'Minnesota Timberwolves', 'conference': 'West', 'wins': 49, 'losses': 33, 'win_pct': 0.598, 'conf_rank': 6,  'playoff_rank': 6},
+    {'team_id': 1610612756, 'team_name': 'Phoenix Suns',           'conference': 'West', 'wins': 45, 'losses': 37, 'win_pct': 0.549, 'conf_rank': 7,  'playoff_rank': 7},
+    {'team_id': 1610612757, 'team_name': 'Portland Trail Blazers', 'conference': 'West', 'wins': 42, 'losses': 40, 'win_pct': 0.512, 'conf_rank': 8,  'playoff_rank': 8},
+    {'team_id': 1610612746, 'team_name': 'LA Clippers',            'conference': 'West', 'wins': 42, 'losses': 40, 'win_pct': 0.512, 'conf_rank': 9,  'playoff_rank': 9},
+    {'team_id': 1610612744, 'team_name': 'Golden State Warriors',  'conference': 'West', 'wins': 37, 'losses': 45, 'win_pct': 0.451, 'conf_rank': 10, 'playoff_rank': 10},
 ]
 
 try:
