@@ -1536,6 +1536,104 @@ def _send_missing_picks_alert() -> None:
             except Exception: pass
 
 
+def _send_futures_bet_reminder(hours_before: int) -> None:
+    """
+    DateTrigger job — fires at 12h, 6h, 3h, and 1h before FUTURES_LOCK_UTC.
+    Finds users who have NOT submitted futures_predictions OR leaders_predictions
+    for season 2026, then sends them a targeted OneSignal push notification.
+    Also sends a broadcast fallback so unlinked subscribers are reached.
+    """
+    if not _ONESIGNAL_API_KEY:
+        print(f"[FuturesReminder {hours_before}h] ONESIGNAL_API_KEY not set — skipping")
+        return
+
+    label_map = {12: "12 hours", 6: "6 hours", 3: "3 hours", 1: "1 hour"}
+    time_label = label_map.get(hours_before, f"{hours_before} hours")
+
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+
+        # Find users missing futures OR leaders predictions
+        c.execute("""
+            SELECT DISTINCT u.id::text
+            FROM users u
+            WHERE
+                NOT EXISTS (
+                    SELECT 1 FROM futures_predictions fp
+                    WHERE fp.user_id = u.id AND fp.season = '2026'
+                )
+                OR NOT EXISTS (
+                    SELECT 1 FROM leaders_predictions lp
+                    WHERE lp.user_id = u.id AND lp.season = '2026'
+                )
+        """)
+        user_ids = [r[0] for r in c.fetchall()]
+        conn.close()
+        conn = None
+
+        if not user_ids:
+            print(f"[FuturesReminder {hours_before}h] All users have submitted — skipping")
+            return
+
+        print(f"[FuturesReminder {hours_before}h] Notifying {len(user_ids)} user(s) missing futures/leaders bets")
+
+        import urllib.request, json as _json
+
+        push_title = f"⏰ {time_label} left to place your bets!"
+        push_body  = ("Futures & Playoff Leaders bets close in "
+                      f"{time_label} — lock in your predictions before it's too late!")
+
+        def _os_post(body_dict):
+            payload = _json.dumps(body_dict).encode("utf-8")
+            req = urllib.request.Request(
+                "https://onesignal.com/api/v1/notifications",
+                data=payload,
+                headers={
+                    "Content-Type":  "application/json; charset=utf-8",
+                    "Authorization": f"Key {_ONESIGNAL_API_KEY}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return _json.loads(resp.read())
+
+        # Targeted push to users who haven't bet
+        try:
+            res = _os_post({
+                "app_id":          _ONESIGNAL_APP_ID,
+                "include_aliases": {"external_id": user_ids},
+                "target_channel":  "push",
+                "headings":        {"en": push_title},
+                "contents":        {"en": push_body},
+                "url":             "https://nba-playoffs-2026.vercel.app",
+            })
+            print(f"[FuturesReminder {hours_before}h] Targeted push — recipients: {res.get('recipients', '?')}")
+        except Exception as e:
+            print(f"[FuturesReminder {hours_before}h] Targeted push error: {e}")
+
+        # Broadcast fallback — reaches all subscribed devices
+        try:
+            res2 = _os_post({
+                "app_id":            _ONESIGNAL_APP_ID,
+                "included_segments": ["All"],
+                "headings":          {"en": push_title},
+                "contents":          {"en": push_body},
+                "url":               "https://nba-playoffs-2026.vercel.app",
+            })
+            print(f"[FuturesReminder {hours_before}h] Broadcast push — recipients: {res2.get('recipients', '?')}")
+        except Exception as e:
+            print(f"[FuturesReminder {hours_before}h] Broadcast push error: {e}")
+
+    except Exception as e:
+        print(f"[FuturesReminder {hours_before}h] Error: {type(e).__name__}: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
 def _send_playin_game_reminder(conference: str, game_type: str) -> None:
     """
     Fire a broadcast push ~3 hours before a play-in game tips off.
@@ -3575,6 +3673,30 @@ async def startup():
         )
         print(f"[Scheduler] Auto-lock futures scheduled for {_FUTURES_LOCK_DT} UTC "
               f"(Apr 18 20:00 IDT)")
+
+    # ── 2d) Futures + Leaders bet reminders — 12h, 6h, 3h, 1h before lock ──────
+    # Lock time: 2026-04-18 17:00 UTC (CLE vs TOR tipoff, IDT 20:00)
+    _FUTURES_REMIND_OFFSETS = [
+        (12, datetime(2026, 4, 18,  5, 0, 0)),   # 12h before → 08:00 IDT
+        ( 6, datetime(2026, 4, 18, 11, 0, 0)),   #  6h before → 14:00 IDT
+        ( 3, datetime(2026, 4, 18, 14, 0, 0)),   #  3h before → 17:00 IDT
+        ( 1, datetime(2026, 4, 18, 16, 0, 0)),   #  1h before → 19:00 IDT
+    ]
+    for _hrs, _remind_dt in _FUTURES_REMIND_OFFSETS:
+        if _remind_dt <= datetime.utcnow():
+            print(f"[Scheduler] Futures reminder {_hrs}h already past "
+                  f"({_remind_dt.strftime('%Y-%m-%d %H:%M')} UTC) — skipping")
+            continue
+        _scheduler.add_job(
+            _send_futures_bet_reminder,
+            DateTrigger(run_date=_remind_dt, timezone='UTC'),
+            args=[_hrs],
+            id=f'futures_remind_{_hrs}h',
+            replace_existing=True,
+            misfire_grace_time=1800,
+        )
+        print(f"[Scheduler] Futures reminder {_hrs}h scheduled "
+              f"@ {_remind_dt.strftime('%Y-%m-%d %H:%M')} UTC")
 
     # ── 3) Missing-picks push alert — 06:00 UTC = 09:00 Jerusalem (IDT) ──
     _scheduler.add_job(

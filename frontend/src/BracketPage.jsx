@@ -49,15 +49,16 @@ function PlayInCountdown({ startZ }) {
       <Lock className="w-2.5 h-2.5" /> Bets closed
     </span>
   );
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  const s = secs % 60;
   const pad = n => String(n).padStart(2, '0');
+  const d  = Math.floor(secs / 86400);
+  const h  = Math.floor((secs % 86400) / 3600);
+  const m  = Math.floor((secs % 3600) / 60);
+  const s  = secs % 60;
   const urgent = secs < 7200;
   return (
     <span className={`flex items-center gap-1 text-[10px] font-mono font-bold ${urgent ? 'text-amber-400' : 'text-cyan-400'}`}>
       <Clock className="w-2.5 h-2.5 shrink-0" />
-      {h > 0 ? `${h}h ` : ''}{pad(m)}m {pad(s)}s
+      {d > 0 ? `${d}d ` : ''}{pad(h)}:{pad(m)}:{pad(s)}
     </span>
   );
 }
