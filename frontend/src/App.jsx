@@ -915,21 +915,23 @@ const SeriesVoteBar = ({ s, currentUser }) => {
   const [picks, setPicks]             = useState(null);
   const [loadingPicks, setLoadingPicks] = useState(false);
 
-  // Re-evaluate locked state every second so it auto-reveals at game time
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
-
   const total   = s.total_votes;
   const homePct = s.home_pct;
   const awayPct = s.away_pct;
   const noVotes = total === 0;
 
-  // picks visible once: (a) game1_start_time has passed, (b) series not active, or (c) server already flagged picks_locked
-  const g1Ms      = s.game1_start_time ? new Date(s.game1_start_time).getTime() : null;
-  const picksVisible = s.picks_locked || s.status !== 'active' || (g1Ms != null && now >= g1Ms);
+  const g1Ms = s.game1_start_time ? new Date(s.game1_start_time).getTime() : null;
+  const _initVisible = s.picks_locked || s.status !== 'active' || (g1Ms != null && Date.now() >= g1Ms);
+  const [picksVisible, setPicksVisible] = useState(_initVisible);
+
+  useEffect(() => {
+    if (picksVisible) return; // already unlocked
+    if (!g1Ms) return;
+    const ms = g1Ms - Date.now();
+    if (ms <= 0) { setPicksVisible(true); return; }
+    const t = setTimeout(() => setPicksVisible(true), ms);
+    return () => clearTimeout(t);
+  }, [g1Ms, picksVisible]);
   const g1Label   = _fmtIDT(s.game1_start_time);
 
   const handleToggle = async () => {
@@ -2425,16 +2427,14 @@ function App() {
   const navigate = (page, opts = {}) => {
     setCurrentPage(page);
     setMobileMenuOpen(false);
-    if (page === 'profile' && opts.username) setProfileUsername(opts.username);
+    if (opts.username) setProfileUsername(opts.username);
     if (page !== 'user-predictions') setSelectedUser(null);
     // Persist current page in URL hash so refresh returns to same page
     window.location.hash = page === 'home' ? '' : page;
   };
 
   const handleUserClick = (user) => {
-    setSelectedUser(user);
-    setCurrentPage('user-predictions');
-    setMobileMenuOpen(false);
+    navigate('profile', { username: user.username });
   };
 
   const navItems = [
@@ -2455,7 +2455,7 @@ function App() {
       case 'betting':          return <BracketPage currentUser={currentUser} onNavigate={navigate} />;
       case 'leaderboard':      return <LeaderboardPage onUserClick={handleUserClick} currentUser={currentUser} />;
       case 'mypredictions':    return <MyPredictionsPage currentUser={currentUser} />;
-      case 'profile':          return <UserProfilePage username={profileUsername || currentUser?.username} currentUser={currentUser} />;
+      case 'profile':          return <UserProfilePage username={profileUsername || currentUser?.username} currentUser={currentUser} onBack={profileUsername && profileUsername !== currentUser?.username ? () => navigate('leaderboard') : undefined} />;
       case 'account':          return <AccountPage currentUser={currentUser} onLogout={handleLogout} onUserUpdate={handleUserUpdate} canInstall={!!installPrompt} onInstall={handleInstall} />;
       case 'user-predictions': return selectedUser ? <UserPredictionsPage userId={selectedUser.user_id} username={selectedUser.username} onBack={() => navigate('leaderboard')} /> : null;
       case 'admin':            return <AdminPage currentUser={currentUser} />;

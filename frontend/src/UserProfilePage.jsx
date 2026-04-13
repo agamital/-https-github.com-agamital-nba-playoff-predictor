@@ -60,7 +60,7 @@ const FuturesPick = ({ label, color, team, mvp, isCorrect }) => {
   );
 };
 
-const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
+const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack }) => {
   const [profile, setProfile] = useState(null);
   const [predictions, setPredictions] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -144,6 +144,14 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile }) => {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-slate-400 hover:text-white mb-4 transition-colors text-sm font-bold"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back to Leaderboard
+        </button>
+      )}
 
       {/* ── Profile header ── */}
       <Card className="p-6 mb-8">

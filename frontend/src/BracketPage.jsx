@@ -1319,8 +1319,8 @@ const BracketPage = ({ currentUser, onNavigate }) => {
         </div>
       </div>
 
-      {/* ── MOBILE LAYOUT ── */}
-      <div className="lg:hidden space-y-8">
+      {/* ── SERIES CARDS (all screen sizes) ── */}
+      <div className="space-y-8">
 
         {/* Western Conference */}
         <div>
