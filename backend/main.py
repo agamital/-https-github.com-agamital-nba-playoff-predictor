@@ -3405,156 +3405,77 @@ async def startup():
     print("[Scheduler] Added standings-only syncs at 03:00, 06:00, 09:00 UTC "
           "(06:00, 09:00, 12:00 IDT)")
 
-    # ── 1) Daily full-chain sync — 04:00 UTC (1x/day) ───────────────────────
-    # Replaces the old hourly + 15-min jobs.  Runs the complete sequence once
-    # per day when API traffic is lowest: standings → boxscores → play-in →
-    # playoff results → player stats.  Bypass TTL so fresh data is always written.
-    def _daily_auto_sync():
-        from game_processor import sync_playin_results_from_api, sync_playoff_results_from_api
-
-        utc_now = datetime.utcnow()
-        print(f"[Daily Auto-Sync] ── Starting daily full-chain sync "
-              f"({utc_now.strftime('%Y-%m-%d %H:%M')} UTC) ──")
-
-        # Step 1 — Boxscores: yesterday + today (force=True bypasses TTL)
-        for _bx_date in (None, utc_now.strftime('%Y-%m-%d')):
-            _label = "yesterday" if _bx_date is None else "today"
-            try:
-                bx = sync_daily_boxscores(date_str=_bx_date, season='2026',
-                                          force=True, triggered_by='daily_auto')
-                print(f"[Daily Auto-Sync] Boxscore ({_label}) — "
-                      f"games={bx.get('games_processed',0)} "
-                      f"players={bx.get('players_upserted',0)} "
-                      f"errors={len(bx.get('errors',[]))}")
-            except Exception as e:
-                print(f"[Daily Auto-Sync] Boxscore ({_label}) ERROR: {type(e).__name__}: {e}")
-
-        # Step 2 — Standings + player stats
-        print("[Daily Auto-Sync] Step 2/5 — Standings sync")
-        try:
-            standings_ok = _standings_sync_job()
-            print(f"[Daily Auto-Sync] Step 2/5 done — standings_ok={standings_ok}")
-        except Exception as e:
-            print(f"[Daily Auto-Sync] Step 2/5 ERROR: {type(e).__name__}: {e}")
-
-        # Step 3 — Refresh play-in matchups from latest seeds
-        print("[Daily Auto-Sync] Step 3/5 — refresh_playin_matchups")
-        try:
-            pim = refresh_playin_matchups('2026')
-            print(f"[Daily Auto-Sync] Step 3/5 done — "
-                  f"updated={len(pim.get('updated',[]))} skipped={len(pim.get('skipped',[]))}")
-        except Exception as e:
-            print(f"[Daily Auto-Sync] Step 3/5 ERROR: {type(e).__name__}: {e}")
-
-        # Step 4 — Sync finished Play-In results
-        print("[Daily Auto-Sync] Step 4/5 — sync_playin_results_from_api")
-        try:
-            pi = sync_playin_results_from_api('2026')
-            print(f"[Daily Auto-Sync] Step 4/5 done — "
-                  f"processed={pi.get('processed',0)} promoted={pi.get('promoted',0)} "
-                  f"errors={len(pi.get('errors',[]))}")
-        except Exception as e:
-            print(f"[Daily Auto-Sync] Step 4/5 ERROR: {type(e).__name__}: {e}")
-
-        # Step 5 — Sync finished Playoff results
-        print("[Daily Auto-Sync] Step 5/6 — sync_playoff_results_from_api")
-        try:
-            po = sync_playoff_results_from_api('2026')
-            print(f"[Daily Auto-Sync] Step 5/6 done — "
-                  f"updated={po.get('updated',0)} completed={po.get('completed',0)} "
-                  f"errors={len(po.get('errors',[]))}")
-        except Exception as e:
-            print(f"[Daily Auto-Sync] Step 5/6 ERROR: {type(e).__name__}: {e}")
-
-        # Step 6 — Provisional / final series statistical leaders
-        print("[Daily Auto-Sync] Step 6/6 — sync_series_provisional_leaders")
-        try:
-            from game_processor import sync_series_provisional_leaders
-            pl = sync_series_provisional_leaders('2026')
-            print(f"[Daily Auto-Sync] Step 6/6 done — "
-                  f"updated={pl.get('series_updated',0)} "
-                  f"checked={pl.get('series_checked',0)}")
-        except Exception as e:
-            print(f"[Daily Auto-Sync] Step 6/6 ERROR: {type(e).__name__}: {e}")
-
-        print(f"[Daily Auto-Sync] ── Complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
-
-    _scheduler.add_job(
-        _daily_auto_sync,
-        CronTrigger.from_crontab('0 4 * * *'),   # 04:00 UTC daily — low-traffic window
-        id='daily_auto_sync',
-        replace_existing=True,
-        misfire_grace_time=600,   # 10-min grace — still runs if server lagged at 04:00
-        max_instances=1,
-    )
-
-    # ── 2a) Play-In / Playoff results catch-up — 06:00, 07:00, 08:30 UTC ──────
-    # Play-in games tip off at 23:30–02:00 UTC and finish around 01:30–05:00 UTC.
-    # The 04:00 daily sync may miss late finishers.  These jobs run
-    # sync_playin_results_from_api + sync_playoff_results_from_api so bracket
-    # advancements (7→#7 seed, elimination→#8 seed, series winner→next round)
-    # are applied as soon as games end, without waiting 24 hours.
-    def _results_catchup():
+    # ── 1) Full-chain sync — 04:00–09:00 UTC every hour (6x/day) ──────────────
+    # Runs the complete sequence each hour during the post-game window so
+    # play-in / playoff results, bracket advancements, and boxscores are
+    # picked up within ~1 hour of a game finishing (games tip off ~23:30 UTC,
+    # latest finishes ~05:00 UTC).  Idempotent — safe to run repeatedly.
+    def _full_chain_sync():
         from game_processor import (
             sync_playin_results_from_api, sync_playoff_results_from_api,
             sync_series_provisional_leaders,
         )
-        label = datetime.utcnow().strftime('%H:%M UTC')
+        utc_now = datetime.utcnow()
+        label = utc_now.strftime('%H:%M')
+        print(f"[Auto-Sync {label}] ── starting full-chain sync ──")
+
+        # Step 1 — Boxscores: yesterday + today
+        for _bx_date in (None, utc_now.strftime('%Y-%m-%d')):
+            _lbl = "yesterday" if _bx_date is None else "today"
+            try:
+                bx = sync_daily_boxscores(date_str=_bx_date, season='2026',
+                                          force=True, triggered_by='auto_sync')
+                print(f"[Auto-Sync {label}] Boxscore ({_lbl}) — "
+                      f"games={bx.get('games_processed',0)} "
+                      f"players={bx.get('players_upserted',0)} "
+                      f"errors={len(bx.get('errors',[]))}")
+            except Exception as e:
+                print(f"[Auto-Sync {label}] Boxscore ({_lbl}) ERROR: {type(e).__name__}: {e}")
+
+        # Step 2 — Standings (also triggers generate_matchups + refresh_playin)
+        try:
+            standings_ok = _standings_sync_job()
+            print(f"[Auto-Sync {label}] Standings — ok={standings_ok}")
+        except Exception as e:
+            print(f"[Auto-Sync {label}] Standings ERROR: {type(e).__name__}: {e}")
+
+        # Step 3 — Play-In results + bracket promotion
         try:
             pi = sync_playin_results_from_api('2026')
-            print(f"[Results Catchup {label}] Play-In: "
+            print(f"[Auto-Sync {label}] Play-In — "
                   f"processed={pi.get('processed',0)} promoted={pi.get('promoted',0)} "
                   f"errors={len(pi.get('errors',[]))}")
         except Exception as e:
-            print(f"[Results Catchup {label}] Play-In ERROR: {type(e).__name__}: {e}")
+            print(f"[Auto-Sync {label}] Play-In ERROR: {type(e).__name__}: {e}")
+
+        # Step 4 — Playoff results + bracket advancement
         try:
             po = sync_playoff_results_from_api('2026')
-            print(f"[Results Catchup {label}] Playoff: "
-                  f"updated={po.get('updated',0)} completed={po.get('completed',0)}")
+            print(f"[Auto-Sync {label}] Playoff — "
+                  f"updated={po.get('updated',0)} completed={po.get('completed',0)} "
+                  f"errors={len(po.get('errors',[]))}")
         except Exception as e:
-            print(f"[Results Catchup {label}] Playoff ERROR: {type(e).__name__}: {e}")
+            print(f"[Auto-Sync {label}] Playoff ERROR: {type(e).__name__}: {e}")
+
+        # Step 5 — Provisional / final series leaders
         try:
             pl = sync_series_provisional_leaders('2026')
-            print(f"[Results Catchup {label}] Leaders: updated={pl.get('series_updated',0)}")
+            print(f"[Auto-Sync {label}] Leaders — updated={pl.get('series_updated',0)}")
         except Exception as e:
-            print(f"[Results Catchup {label}] Leaders ERROR: {type(e).__name__}: {e}")
+            print(f"[Auto-Sync {label}] Leaders ERROR: {type(e).__name__}: {e}")
 
-    for _hr, _mi, _rid in [(6, 0, '0600'), (7, 0, '0700'), (8, 30, '0830')]:
+        print(f"[Auto-Sync {label}] ── complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
+
+    for _hr in range(4, 10):   # 04, 05, 06, 07, 08, 09 UTC
         _scheduler.add_job(
-            _results_catchup,
-            CronTrigger.from_crontab(f'{_mi} {_hr} * * *'),
-            id=f'results_catchup_{_rid}',
+            _full_chain_sync,
+            CronTrigger.from_crontab(f'0 {_hr} * * *'),
+            id=f'full_chain_sync_{_hr:02d}00',
             replace_existing=True,
             misfire_grace_time=600,
             max_instances=1,
         )
-    print("[Scheduler] Added results catch-up syncs at 06:00, 07:00, 08:30 UTC")
-
-    # ── 2b) Boxscore catch-up — 08:00 UTC ──────────────────────────────────
-    # Late NBA games (10:30 PM ET start) finish around 01:00–05:00 UTC.
-    # The 04:00 UTC daily sync can miss them. This job re-syncs yesterday's
-    # boxscores at 08:00 UTC to capture any games that finished after 04:00.
-    def _boxscore_catchup():
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
-        today_utc = datetime.utcnow().strftime('%Y-%m-%d')
-        for _date, _label in [(yesterday, 'yesterday'), (today_utc, 'today')]:
-            try:
-                bx = sync_daily_boxscores(date_str=_date, season='2026',
-                                          force=True, triggered_by='catchup_0800')
-                print(f"[Catchup] Boxscore ({_label}/{_date}): "
-                      f"games={bx.get('games_processed',0)} "
-                      f"players={bx.get('players_upserted',0)}")
-            except Exception as e:
-                print(f"[Catchup] Boxscore ({_label}) ERROR: {type(e).__name__}: {e}")
-
-    _scheduler.add_job(
-        _boxscore_catchup,
-        CronTrigger.from_crontab('0 8 * * *'),   # 08:00 UTC = after all US games finish
-        id='boxscore_catchup',
-        replace_existing=True,
-        misfire_grace_time=600,
-        max_instances=1,
-    )
+    print("[Scheduler] Full-chain sync scheduled at 04:00–09:00 UTC (every hour)")
 
     # ── 3) Missing-picks push alert — 06:00 UTC = 09:00 Jerusalem (IDT) ──
     _scheduler.add_job(
