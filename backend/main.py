@@ -29,7 +29,7 @@ _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 
 # Sync runs once daily (04:00 UTC) until end-of-day April 20 2026 (last regular-season day).
 # After this the app enters Static Mode: DB snapshot is served forever, no API calls.
-_STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 13, 0, 0, 0)   # exclusive — regular season ended Apr 12; stops standings ON April 13
+_STANDINGS_SYNC_CUTOFF = datetime(2026, 4, 14, 0, 0, 0)   # extended — games on Apr 13; stops standings ON April 14
 
 # ── Player name normalization (accent / diacritic stripping) ─────────────────
 import unicodedata as _ud

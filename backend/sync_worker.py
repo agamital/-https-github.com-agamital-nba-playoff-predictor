@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 # main.py:_standings_sync_job() self-skips after this date — no code change needed here.
 # The worker itself keeps running indefinitely for boxscores + playoff results.
 # ---------------------------------------------------------------------------
-_STANDINGS_CUTOFF = datetime(2026, 4, 13, 0, 0, 0)  # exclusive — standings stop ON April 13
+_STANDINGS_CUTOFF = datetime(2026, 4, 14, 0, 0, 0)  # extended — games on Apr 13; stops standings ON April 14
 _DAILY_SYNC_HOUR  = 4                                 # 04:00 UTC
 
 # Ensure the backend package is importable when run directly
