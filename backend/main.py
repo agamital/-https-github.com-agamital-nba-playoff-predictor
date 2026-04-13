@@ -3488,6 +3488,48 @@ async def startup():
         max_instances=1,
     )
 
+    # ── 2a) Play-In / Playoff results catch-up — 06:00, 07:00, 08:30 UTC ──────
+    # Play-in games tip off at 23:30–02:00 UTC and finish around 01:30–05:00 UTC.
+    # The 04:00 daily sync may miss late finishers.  These jobs run
+    # sync_playin_results_from_api + sync_playoff_results_from_api so bracket
+    # advancements (7→#7 seed, elimination→#8 seed, series winner→next round)
+    # are applied as soon as games end, without waiting 24 hours.
+    def _results_catchup():
+        from game_processor import (
+            sync_playin_results_from_api, sync_playoff_results_from_api,
+            sync_series_provisional_leaders,
+        )
+        label = datetime.utcnow().strftime('%H:%M UTC')
+        try:
+            pi = sync_playin_results_from_api('2026')
+            print(f"[Results Catchup {label}] Play-In: "
+                  f"processed={pi.get('processed',0)} promoted={pi.get('promoted',0)} "
+                  f"errors={len(pi.get('errors',[]))}")
+        except Exception as e:
+            print(f"[Results Catchup {label}] Play-In ERROR: {type(e).__name__}: {e}")
+        try:
+            po = sync_playoff_results_from_api('2026')
+            print(f"[Results Catchup {label}] Playoff: "
+                  f"updated={po.get('updated',0)} completed={po.get('completed',0)}")
+        except Exception as e:
+            print(f"[Results Catchup {label}] Playoff ERROR: {type(e).__name__}: {e}")
+        try:
+            pl = sync_series_provisional_leaders('2026')
+            print(f"[Results Catchup {label}] Leaders: updated={pl.get('series_updated',0)}")
+        except Exception as e:
+            print(f"[Results Catchup {label}] Leaders ERROR: {type(e).__name__}: {e}")
+
+    for _hr, _mi, _rid in [(6, 0, '0600'), (7, 0, '0700'), (8, 30, '0830')]:
+        _scheduler.add_job(
+            _results_catchup,
+            CronTrigger.from_crontab(f'{_mi} {_hr} * * *'),
+            id=f'results_catchup_{_rid}',
+            replace_existing=True,
+            misfire_grace_time=600,
+            max_instances=1,
+        )
+    print("[Scheduler] Added results catch-up syncs at 06:00, 07:00, 08:30 UTC")
+
     # ── 2b) Boxscore catch-up — 08:00 UTC ──────────────────────────────────
     # Late NBA games (10:30 PM ET start) finish around 01:00–05:00 UTC.
     # The 04:00 UTC daily sync can miss them. This job re-syncs yesterday's

@@ -1098,9 +1098,28 @@ def _promote_from_playin(winner_id: int, stage: str, season: str, conference: st
         conn = get_db_conn()
         c = conn.cursor()
 
+        # Map stage → game_type string used in playin_games table
+        _stage_to_gtype = {
+            STAGE_PLAYIN_7V8:  '7v8',
+            STAGE_PLAYIN_9V10: '9v10',
+            STAGE_PLAYIN_ELIM: 'elimination',
+        }
+        gtype = _stage_to_gtype.get(stage)
+
+        # Look up the actual game_id row so we pass the correct (c, game_id, winner_id, season)
+        game_id = None
+        if gtype:
+            c.execute(
+                "SELECT id FROM playin_games WHERE season=%s AND game_type=%s AND winner_id=%s",
+                (season, gtype, winner_id)
+            )
+            row = c.fetchone()
+            game_id = row[0] if row else None
+
         if stage == STAGE_PLAYIN_7V8:
             # Winner → #7 seed; also try creating Game 3 if 9v10 is done
-            _try_create_r1_from_playin(c, season, game_type='7v8')
+            if game_id:
+                _try_create_r1_from_playin(c, game_id, winner_id, season)
             _try_create_playin_game3(c, season)
             conn.commit()
             next_stage = STAGE_FIRST_ROUND
@@ -1115,7 +1134,8 @@ def _promote_from_playin(winner_id: int, stage: str, season: str, conference: st
 
         else:  # elimination
             # Winner → #8 seed
-            _try_create_r1_from_playin(c, season, game_type='elimination')
+            if game_id:
+                _try_create_r1_from_playin(c, game_id, winner_id, season)
             conn.commit()
             next_stage = STAGE_FIRST_ROUND
             msg = f"Elimination winner {winner_id} promoted → R1 #8 seed slot"
