@@ -4671,7 +4671,8 @@ async def global_stats(season: str = "2026"):
                        s.status,
                        COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.home_team_id THEN 1 ELSE 0 END), 0),
                        COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.away_team_id THEN 1 ELSE 0 END), 0),
-                       COUNT(p.id)
+                       COUNT(p.id),
+                       s.game1_start_time
                 FROM series s
                 JOIN teams ht ON s.home_team_id = ht.id
                 JOIN teams at ON s.away_team_id = at.id
@@ -4680,26 +4681,39 @@ async def global_stats(season: str = "2026"):
                 GROUP BY s.id, s.round, s.conference,
                          s.home_team_id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
                          s.away_team_id, at.name, at.abbreviation, at.logo_url, s.away_seed,
-                         s.status
+                         s.status, s.game1_start_time
                 ORDER BY s.conference, s.round
             """, (season,))
             series_stats = []
+            _now_utc = datetime.utcnow().replace(tzinfo=__import__('datetime').timezone.utc)
             for row in c.fetchall():
-                home_v = int(row[14]) if row[14] else 0
-                away_v = int(row[15]) if row[15] else 0
-                total  = int(row[16]) if row[16] else 0
+                home_v    = int(row[14]) if row[14] else 0
+                away_v    = int(row[15]) if row[15] else 0
+                total     = int(row[16]) if row[16] else 0
+                g1_start  = row[17]
+                # picks_locked: true once game1_start_time has passed OR series is not active
+                _picks_locked = row[13] != 'active'
+                if not _picks_locked and g1_start:
+                    try:
+                        from datetime import timezone as _tz
+                        _start_dt = datetime.fromisoformat(g1_start.replace('Z', '+00:00'))
+                        _picks_locked = datetime.now(_tz.utc) >= _start_dt
+                    except Exception:
+                        pass
                 series_stats.append({
-                    'series_id':  row[0],
-                    'round':      row[1],
-                    'conference': row[2],
-                    'home_team':  {'id': row[3], 'name': row[4],  'abbreviation': row[5],  'logo_url': row[6],  'seed': row[7]},
-                    'away_team':  {'id': row[8], 'name': row[9],  'abbreviation': row[10], 'logo_url': row[11], 'seed': row[12]},
-                    'status':      row[13],
-                    'home_votes':  home_v,
-                    'away_votes':  away_v,
-                    'total_votes': total,
-                    'home_pct':    round(home_v / total * 100) if total > 0 else 50,
-                    'away_pct':    round(away_v / total * 100) if total > 0 else 50,
+                    'series_id':    row[0],
+                    'round':        row[1],
+                    'conference':   row[2],
+                    'home_team':    {'id': row[3], 'name': row[4],  'abbreviation': row[5],  'logo_url': row[6],  'seed': row[7]},
+                    'away_team':    {'id': row[8], 'name': row[9],  'abbreviation': row[10], 'logo_url': row[11], 'seed': row[12]},
+                    'status':       row[13],
+                    'home_votes':   home_v,
+                    'away_votes':   away_v,
+                    'total_votes':  total,
+                    'home_pct':     round(home_v / total * 100) if total > 0 else 50,
+                    'away_pct':     round(away_v / total * 100) if total > 0 else 50,
+                    'game1_start_time': g1_start,
+                    'picks_locked': _picks_locked,
                 })
         except Exception as e:
             print(f"global_stats series query error: {e}")

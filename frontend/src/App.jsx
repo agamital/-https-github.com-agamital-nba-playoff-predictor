@@ -807,17 +807,46 @@ const PicksLockedPlaceholder = () => (
   </div>
 );
 
+const FIRST_ROUND_LOCK_UTC = '2026-04-18T17:00:00Z';
+
+// Format an ISO UTC time to Jerusalem (IDT = UTC+3) display string, e.g. "Saturday April 18 · 20:00 IDT"
+function _fmtIDT(isoZ) {
+  if (!isoZ) return null;
+  try {
+    const d = new Date(isoZ);
+    const idt = new Date(d.getTime() + 3 * 60 * 60 * 1000);
+    const days   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const hh = String(idt.getUTCHours()).padStart(2, '0');
+    const mm = String(idt.getUTCMinutes()).padStart(2, '0');
+    return `${days[idt.getUTCDay()]} ${months[idt.getUTCMonth()]} ${idt.getUTCDate()} · ${hh}:${mm} IDT`;
+  } catch { return null; }
+}
+
 const SeriesVoteBar = ({ s, currentUser }) => {
   const [expanded, setExpanded]       = useState(false);
   const [picks, setPicks]             = useState(null);
   const [loadingPicks, setLoadingPicks] = useState(false);
+
+  // Re-evaluate locked state every second so it auto-reveals at game time
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const total   = s.total_votes;
   const homePct = s.home_pct;
   const awayPct = s.away_pct;
   const noVotes = total === 0;
 
+  // picks visible once: (a) game1_start_time has passed, (b) series not active, or (c) server already flagged picks_locked
+  const g1Ms      = s.game1_start_time ? new Date(s.game1_start_time).getTime() : null;
+  const picksVisible = s.picks_locked || s.status !== 'active' || (g1Ms != null && now >= g1Ms);
+  const g1Label   = _fmtIDT(s.game1_start_time);
+
   const handleToggle = async () => {
+    if (!picksVisible) return;
     const next = !expanded;
     setExpanded(next);
     if (next && !picks) {
@@ -899,35 +928,36 @@ const SeriesVoteBar = ({ s, currentUser }) => {
             </span>
           </div>
         </div>
-        {/* Toggle row — individual picks only visible once series is no longer 'active' */}
-        {(() => {
-          const picksVisible = s.status !== 'active';
-          return (
-            <div className="flex items-center justify-between mt-2 px-1">
-              <span className="text-[10px] text-blue-400 font-black">{s.home_team.abbreviation}</span>
-              {picksVisible ? (
-                <button
-                  onClick={handleToggle}
-                  className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors"
-                >
-                  <Users className="w-3 h-3" />
-                  {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
-                  <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-                </button>
-              ) : (
-                <span className="flex items-center gap-1 text-[10px] text-slate-600 font-bold">
-                  <Lock className="w-3 h-3" />
-                  {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
-                </span>
-              )}
-              <span className="text-[10px] text-orange-400 font-black">{s.away_team.abbreviation}</span>
-            </div>
-          );
-        })()}
+        {/* Toggle row — individual picks revealed once game1_start_time passes */}
+        <div className="flex items-center justify-between mt-2 px-1">
+          <span className="text-[10px] text-blue-400 font-black">{s.home_team.abbreviation}</span>
+          {picksVisible ? (
+            <button
+              onClick={handleToggle}
+              className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors"
+            >
+              <Users className="w-3 h-3" />
+              {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
+              <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+            </button>
+          ) : (
+            <span className="flex items-center gap-1 text-[10px] text-slate-600 font-bold">
+              <Lock className="w-3 h-3" />
+              {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
+            </span>
+          )}
+          <span className="text-[10px] text-orange-400 font-black">{s.away_team.abbreviation}</span>
+        </div>
+        {/* Lock hint — show game time until tipoff */}
+        {!picksVisible && g1Label && (
+          <p className="text-[9px] text-slate-700 font-bold text-center mt-1">
+            Picks revealed at tipoff · {g1Label}
+          </p>
+        )}
       </div>
 
-      {/* Expandable per-user picks — only once series is no longer 'active' */}
-      {s.status !== 'active' && expanded && (
+      {/* Expandable per-user picks — only once picks are revealed */}
+      {picksVisible && expanded && (
         <div className="border-t border-slate-800/80 bg-slate-950/40">
           {loadingPicks ? (
             <div className="flex justify-center py-5">
