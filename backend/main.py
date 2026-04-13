@@ -1634,31 +1634,13 @@ def _send_futures_bet_reminder(hours_before: int) -> None:
             except Exception: pass
 
 
-def _send_playin_game_reminder(conference: str, game_type: str) -> None:
+def _send_playin_game_reminder(conference: str, game_type: str, hours_before: int = 3) -> None:
     """
-    Fire a broadcast push ~3 hours before a play-in game tips off.
+    Fire a targeted push (+ broadcast fallback) before a play-in game tips off.
+    Targets users who have NOT placed a playin_prediction for this game.
     Skips if the game no longer exists or is already completed.
     """
     if not _ONESIGNAL_API_KEY:
-        return
-    try:
-        conn = get_db_conn()
-        c    = conn.cursor()
-        c.execute(
-            "SELECT id, status FROM playin_games WHERE season='2026' AND conference=%s AND game_type=%s",
-            (conference, game_type),
-        )
-        row = c.fetchone()
-        conn.close()
-    except Exception as e:
-        print(f"[PlayinReminder] DB check error ({conference} {game_type}): {e}")
-        return
-
-    if not row:
-        print(f"[PlayinReminder] {conference} {game_type} — game not found, skip")
-        return
-    if row[1] == 'completed':
-        print(f"[PlayinReminder] {conference} {game_type} — already completed, skip")
         return
 
     _game_labels = {
@@ -1667,10 +1649,209 @@ def _send_playin_game_reminder(conference: str, game_type: str) -> None:
         'elimination': 'Game 3 — Elimination',
     }
     label = _game_labels.get(game_type, game_type)
-    title = "⏰ Play-In bets close in 3 hours!"
-    body  = (f"{conference} Conference {label} tips off soon — "
-             "make your pick before bets close!")
-    _send_onesignal_notification(title, body)
+    label_map = {12: "12 hours", 6: "6 hours", 3: "3 hours", 1: "1 hour"}
+    time_label = label_map.get(hours_before, f"{hours_before} hours")
+
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+
+        c.execute(
+            "SELECT id, status FROM playin_games WHERE season='2026' AND conference=%s AND game_type=%s",
+            (conference, game_type),
+        )
+        row = c.fetchone()
+        if not row:
+            print(f"[PlayinReminder {hours_before}h] {conference} {game_type} — not found, skip")
+            conn.close()
+            return
+        if row[1] == 'completed':
+            print(f"[PlayinReminder {hours_before}h] {conference} {game_type} — completed, skip")
+            conn.close()
+            return
+
+        game_id = row[0]
+
+        # Find users who haven't bet on this game
+        c.execute("""
+            SELECT DISTINCT u.id::text
+            FROM users u
+            WHERE NOT EXISTS (
+                SELECT 1 FROM playin_predictions pp
+                WHERE pp.user_id = u.id AND pp.game_id = %s
+            )
+        """, (game_id,))
+        user_ids = [r[0] for r in c.fetchall()]
+        conn.close()
+        conn = None
+
+        push_title = f"⏰ {conference} Play-In bets close in {time_label}!"
+        push_body  = (f"{conference} Conference {label} tips off in {time_label} — "
+                      "lock in your pick before bets close!")
+
+        import urllib.request, json as _json
+
+        def _os_post(body_dict):
+            payload = _json.dumps(body_dict).encode("utf-8")
+            req = urllib.request.Request(
+                "https://onesignal.com/api/v1/notifications",
+                data=payload,
+                headers={
+                    "Content-Type":  "application/json; charset=utf-8",
+                    "Authorization": f"Key {_ONESIGNAL_API_KEY}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return _json.loads(resp.read())
+
+        if user_ids:
+            try:
+                res = _os_post({
+                    "app_id":          _ONESIGNAL_APP_ID,
+                    "include_aliases": {"external_id": user_ids},
+                    "target_channel":  "push",
+                    "headings":        {"en": push_title},
+                    "contents":        {"en": push_body},
+                    "url":             "https://nba-playoffs-2026.vercel.app",
+                })
+                print(f"[PlayinReminder {hours_before}h] {conference} {game_type} targeted — "
+                      f"recipients: {res.get('recipients', '?')}")
+            except Exception as e:
+                print(f"[PlayinReminder {hours_before}h] Targeted push error: {e}")
+        else:
+            print(f"[PlayinReminder {hours_before}h] {conference} {game_type} — all users have bet, skip broadcast")
+            return
+
+        # Broadcast fallback — reaches unlinked subscribers
+        try:
+            res2 = _os_post({
+                "app_id":            _ONESIGNAL_APP_ID,
+                "included_segments": ["All"],
+                "headings":          {"en": push_title},
+                "contents":          {"en": push_body},
+                "url":               "https://nba-playoffs-2026.vercel.app",
+            })
+            print(f"[PlayinReminder {hours_before}h] Broadcast — recipients: {res2.get('recipients', '?')}")
+        except Exception as e:
+            print(f"[PlayinReminder {hours_before}h] Broadcast error: {e}")
+
+    except Exception as e:
+        print(f"[PlayinReminder {hours_before}h] Error ({conference} {game_type}): {type(e).__name__}: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _send_series_bet_reminder(conference: str, home_seed: int, away_seed: int, hours_before: int) -> None:
+    """
+    Fire a targeted push (+ broadcast fallback) before a playoff series Game 1.
+    Targets users who have NOT placed a prediction for this series.
+    Skips if the series doesn't exist or is no longer active.
+    """
+    if not _ONESIGNAL_API_KEY:
+        return
+
+    label_map = {12: "12 hours", 6: "6 hours", 3: "3 hours", 1: "1 hour"}
+    time_label = label_map.get(hours_before, f"{hours_before} hours")
+
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+
+        c.execute("""
+            SELECT s.id, t1.abbreviation, t2.abbreviation
+            FROM series s
+            LEFT JOIN teams t1 ON t1.id = s.home_team_id
+            LEFT JOIN teams t2 ON t2.id = s.away_team_id
+            WHERE s.season = '2026' AND s.conference = %s
+              AND s.home_seed = %s AND s.away_seed = %s
+              AND s.round = 'First Round'
+        """, (conference, home_seed, away_seed))
+        row = c.fetchone()
+
+        if not row:
+            print(f"[SeriesReminder {hours_before}h] {conference} {home_seed}v{away_seed} — not found, skip")
+            conn.close()
+            return
+
+        series_id, home_abbr, away_abbr = row
+        matchup = f"{home_abbr or f'#{home_seed}'} vs {away_abbr or f'#{away_seed}'}"
+
+        # Find users who haven't bet on this series
+        c.execute("""
+            SELECT DISTINCT u.id::text
+            FROM users u
+            WHERE NOT EXISTS (
+                SELECT 1 FROM predictions p
+                WHERE p.user_id = u.id AND p.series_id = %s
+            )
+        """, (series_id,))
+        user_ids = [r[0] for r in c.fetchall()]
+        conn.close()
+        conn = None
+
+        if not user_ids:
+            print(f"[SeriesReminder {hours_before}h] {matchup} — all users have bet, skip")
+            return
+
+        push_title = f"⏰ {matchup} bets close in {time_label}!"
+        push_body  = (f"{conference} First Round — {matchup} Game 1 tips off in {time_label}. "
+                      "Lock in your series prediction before bets close!")
+
+        import urllib.request, json as _json
+
+        def _os_post(body_dict):
+            payload = _json.dumps(body_dict).encode("utf-8")
+            req = urllib.request.Request(
+                "https://onesignal.com/api/v1/notifications",
+                data=payload,
+                headers={
+                    "Content-Type":  "application/json; charset=utf-8",
+                    "Authorization": f"Key {_ONESIGNAL_API_KEY}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return _json.loads(resp.read())
+
+        try:
+            res = _os_post({
+                "app_id":          _ONESIGNAL_APP_ID,
+                "include_aliases": {"external_id": user_ids},
+                "target_channel":  "push",
+                "headings":        {"en": push_title},
+                "contents":        {"en": push_body},
+                "url":             "https://nba-playoffs-2026.vercel.app",
+            })
+            print(f"[SeriesReminder {hours_before}h] {matchup} targeted — "
+                  f"recipients: {res.get('recipients', '?')}")
+        except Exception as e:
+            print(f"[SeriesReminder {hours_before}h] Targeted push error: {e}")
+
+        # Broadcast fallback
+        try:
+            res2 = _os_post({
+                "app_id":            _ONESIGNAL_APP_ID,
+                "included_segments": ["All"],
+                "headings":          {"en": push_title},
+                "contents":          {"en": push_body},
+                "url":               "https://nba-playoffs-2026.vercel.app",
+            })
+            print(f"[SeriesReminder {hours_before}h] Broadcast — recipients: {res2.get('recipients', '?')}")
+        except Exception as e:
+            print(f"[SeriesReminder {hours_before}h] Broadcast error: {e}")
+
+    except Exception as e:
+        print(f"[SeriesReminder {hours_before}h] Error ({conference} {home_seed}v{away_seed}): "
+              f"{type(e).__name__}: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 
 def _build_reminder_html(missing_labels: list[str]) -> str:
@@ -3728,30 +3909,55 @@ async def startup():
         max_instances=1,
     )
 
-    # ── 6) Play-In game reminders — broadcast push 3 h before tip-off ─────────
-    # One-shot DateTrigger jobs per game.  Only scheduled if the remind time is
-    # still in the future (safe to re-schedule on every restart — APScheduler
-    # deduplicates by job id via replace_existing=True).
-    _PLAYIN_REMIND_BEFORE = timedelta(hours=3)
+    # ── 6) Play-In game reminders — 12h, 6h, 3h, 1h before each tipoff ─────────
+    # One-shot DateTrigger jobs per game × 4 intervals.
+    # Targeted push to users missing that game's bet + broadcast fallback.
+    _PLAYIN_REMIND_HOURS = [12, 6, 3, 1]
     _now_utc = datetime.utcnow()
     for (_pi_conf, _pi_gtype), _pi_start_str in PLAYIN_SCHEDULE_UTC.items():
-        _pi_start  = datetime.strptime(_pi_start_str, "%Y-%m-%d %H:%M:%S")
-        _pi_remind = _pi_start - _PLAYIN_REMIND_BEFORE
-        if _pi_remind <= _now_utc:
-            print(f"[Scheduler] Play-In reminder {_pi_conf} {_pi_gtype} already past "
-                  f"({_pi_remind.strftime('%Y-%m-%d %H:%M')} UTC) — skipping")
-            continue
-        _pi_job_id = f"playin_remind_{_pi_conf.lower()}_{_pi_gtype}"
-        _scheduler.add_job(
-            _send_playin_game_reminder,
-            DateTrigger(run_date=_pi_remind, timezone='UTC'),
-            args=[_pi_conf, _pi_gtype],
-            id=_pi_job_id,
-            replace_existing=True,
-            misfire_grace_time=1800,  # fire up to 30 min late if server was down
+        _pi_start = datetime.strptime(_pi_start_str, "%Y-%m-%d %H:%M:%S")
+        for _pi_hrs in _PLAYIN_REMIND_HOURS:
+            _pi_remind = _pi_start - timedelta(hours=_pi_hrs)
+            if _pi_remind <= _now_utc:
+                print(f"[Scheduler] Play-In reminder {_pi_conf} {_pi_gtype} -{_pi_hrs}h already past "
+                      f"({_pi_remind.strftime('%Y-%m-%d %H:%M')} UTC) — skipping")
+                continue
+            _pi_job_id = f"playin_remind_{_pi_conf.lower()}_{_pi_gtype}_{_pi_hrs}h"
+            _scheduler.add_job(
+                _send_playin_game_reminder,
+                DateTrigger(run_date=_pi_remind, timezone='UTC'),
+                args=[_pi_conf, _pi_gtype, _pi_hrs],
+                id=_pi_job_id,
+                replace_existing=True,
+                misfire_grace_time=1800,
+            )
+            print(f"[Scheduler] Play-In reminder scheduled: {_pi_conf} {_pi_gtype} -{_pi_hrs}h "
+                  f"@ {_pi_remind.strftime('%Y-%m-%d %H:%M')} UTC")
+
+    # ── 7) First Round series reminders — 12h, 6h, 3h, 1h before each Game 1 ──
+    # Targeted push to users missing that series' prediction + broadcast fallback.
+    _SERIES_REMIND_HOURS = [12, 6, 3, 1]
+    for (_sr_conf, _sr_hs, _sr_as), _sr_start_str in _GAME1_SCHEDULE_UTC.items():
+        _sr_start = datetime.strptime(
+            _sr_start_str.rstrip('Z').replace('T', ' '), "%Y-%m-%d %H:%M:%S"
         )
-        print(f"[Scheduler] Play-In reminder scheduled: {_pi_conf} {_pi_gtype} "
-              f"@ {_pi_remind.strftime('%Y-%m-%d %H:%M')} UTC")
+        for _sr_hrs in _SERIES_REMIND_HOURS:
+            _sr_remind = _sr_start - timedelta(hours=_sr_hrs)
+            if _sr_remind <= _now_utc:
+                print(f"[Scheduler] Series reminder {_sr_conf} {_sr_hs}v{_sr_as} -{_sr_hrs}h already past "
+                      f"({_sr_remind.strftime('%Y-%m-%d %H:%M')} UTC) — skipping")
+                continue
+            _sr_job_id = f"series_remind_{_sr_conf.lower()}_{_sr_hs}v{_sr_as}_{_sr_hrs}h"
+            _scheduler.add_job(
+                _send_series_bet_reminder,
+                DateTrigger(run_date=_sr_remind, timezone='UTC'),
+                args=[_sr_conf, _sr_hs, _sr_as, _sr_hrs],
+                id=_sr_job_id,
+                replace_existing=True,
+                misfire_grace_time=1800,
+            )
+            print(f"[Scheduler] Series reminder scheduled: {_sr_conf} {_sr_hs}v{_sr_as} -{_sr_hrs}h "
+                  f"@ {_sr_remind.strftime('%Y-%m-%d %H:%M')} UTC")
 
     _scheduler.start()
     print("[Scheduler] APScheduler started"
