@@ -2078,6 +2078,12 @@ def _standings_sync_job():
                 refresh_playin_matchups('2026')
             except Exception as _rpe:
                 print(f"[Standings] refresh_playin_matchups failed (non-fatal): {_rpe}")
+            # Auto-generate/update First Round matchups from fresh standings
+            # (safety guard inside generate_matchups skips if any series is not 'active')
+            try:
+                generate_matchups()
+            except Exception as _gme:
+                print(f"[Standings] generate_matchups failed (non-fatal): {_gme}")
             # Push notification when teams cross playoff/play-in boundaries
             changes = result.get('rank_changes', [])
             if changes:
@@ -3158,6 +3164,11 @@ def generate_matchups(force_conference=None):
             continue
 
         if need_series or force_conference:
+            # Clean up predictions on series being deleted to avoid orphans
+            c.execute("SELECT id FROM series WHERE season = %s AND conference = %s", ('2026', conf_full))
+            old_ids = [r[0] for r in c.fetchall()]
+            if old_ids:
+                c.execute("DELETE FROM predictions WHERE series_id = ANY(%s)", (old_ids,))
             c.execute('DELETE FROM series WHERE season = %s AND conference = %s', ('2026', conf_full))
             matchups = [(teams[2], teams[5]), (teams[3], teams[4])]
             bracket_groups = ['B', 'A']  # 3v6 → Group B, 4v5 → Group A
@@ -4019,6 +4030,10 @@ async def admin_push_standings(payload: dict):
     print(f"[Standings] ✓ Browser-pushed {result['rows']} teams. #1 East: {east_no1 and east_no1['team_name']}")
 
     playin_refresh = refresh_playin_matchups('2026')
+    try:
+        generate_matchups()
+    except Exception as _gme:
+        print(f"[Standings/push] generate_matchups failed (non-fatal): {_gme}")
 
     return {
         "success":          True,
