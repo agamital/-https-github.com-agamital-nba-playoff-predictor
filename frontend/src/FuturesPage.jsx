@@ -195,12 +195,12 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference, mvpT
 };
 
 const LEADER_CATEGORIES = [
-  { key: 'top_scorer',   statKey: 'scorer',   short: 'Most Total Points',    question: 'What will be the highest total points scored?',    color: 'text-yellow-400', pts: LEADERS_POINTS.scorer,   icon: '🏀', example: 'e.g. 550', refKey: 'top_scorers',  statField: 'ppg', statLabel: 'PPG' },
-  { key: 'top_assists',  statKey: 'assists',  short: 'Most Total Assists',   question: 'What will be the highest total assists?',          color: 'text-blue-400',   pts: LEADERS_POINTS.assists,  icon: '🎯', example: 'e.g. 200', refKey: 'top_assists',  statField: 'apg', statLabel: 'APG' },
-  { key: 'top_rebounds', statKey: 'rebounds', short: 'Most Total Rebounds',  question: 'What will be the highest total rebounds?',         color: 'text-green-400',  pts: LEADERS_POINTS.rebounds, icon: '💪', example: 'e.g. 250', refKey: 'top_rebounds', statField: 'rpg', statLabel: 'RPG' },
-  { key: 'top_threes',   statKey: 'threes',   short: 'Most 3-Pointers Made', question: 'What will be the highest 3-pointers made?',        color: 'text-purple-400', pts: LEADERS_POINTS.threes,   icon: '3️⃣', example: 'e.g. 55',  refKey: 'top_threes',   statField: 'fg3m', statLabel: '3PM' },
-  { key: 'top_steals',   statKey: 'steals',   short: 'Most Total Steals',    question: 'What will be the highest total steals?',           color: 'text-red-400',    pts: LEADERS_POINTS.steals,   icon: '🤚', example: 'e.g. 35',  refKey: 'top_steals',   statField: 'spg', statLabel: 'SPG' },
-  { key: 'top_blocks',   statKey: 'blocks',   short: 'Most Total Blocks',    question: 'What will be the highest total blocks?',           color: 'text-orange-400', pts: LEADERS_POINTS.blocks,   icon: '🛡️', example: 'e.g. 40',  refKey: 'top_blocks',   statField: 'bpg', statLabel: 'BPG' },
+  { key: 'top_scorer',   statKey: 'scorer',   short: 'Max Points in 1 Game',    question: 'Highest points scored in a single playoff game?',    color: 'text-yellow-400', pts: LEADERS_POINTS.scorer,   icon: '🏀', example: 'e.g. 45', refKey: 'top_scorers',  statField: 'ppg', statLabel: 'PPG' },
+  { key: 'top_assists',  statKey: 'assists',  short: 'Max Assists in 1 Game',   question: 'Highest assists in a single playoff game?',          color: 'text-blue-400',   pts: LEADERS_POINTS.assists,  icon: '🎯', example: 'e.g. 17', refKey: 'top_assists',  statField: 'apg', statLabel: 'APG' },
+  { key: 'top_rebounds', statKey: 'rebounds', short: 'Max Rebounds in 1 Game',  question: 'Highest rebounds in a single playoff game?',         color: 'text-green-400',  pts: LEADERS_POINTS.rebounds, icon: '💪', example: 'e.g. 22', refKey: 'top_rebounds', statField: 'rpg', statLabel: 'RPG' },
+  { key: 'top_threes',   statKey: 'threes',   short: 'Max 3-Pointers in 1 Game',question: 'Most 3-pointers made in a single playoff game?',     color: 'text-purple-400', pts: LEADERS_POINTS.threes,   icon: '3️⃣', example: 'e.g. 9',  refKey: 'top_threes',   statField: 'fg3m', statLabel: '3PM' },
+  { key: 'top_steals',   statKey: 'steals',   short: 'Max Steals in 1 Game',    question: 'Most steals by any player in a single playoff game?',color: 'text-red-400',    pts: LEADERS_POINTS.steals,   icon: '🤚', example: 'e.g. 6',  refKey: 'top_steals',   statField: 'spg', statLabel: 'SPG' },
+  { key: 'top_blocks',   statKey: 'blocks',   short: 'Max Blocks in 1 Game',    question: 'Most blocks by any player in a single playoff game?',color: 'text-orange-400', pts: LEADERS_POINTS.blocks,   icon: '🛡️', example: 'e.g. 8',  refKey: 'top_blocks',   statField: 'bpg', statLabel: 'BPG' },
 ];
 
 const TeamGrid = ({ teams, selectedId, onSelect, locked, oddsField, cols = 5 }) => (
@@ -531,7 +531,8 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
             <h2 className="text-xl font-black text-white uppercase tracking-wide">Playoff Leaders</h2>
             <ScoringTooltip content={
               <div className="space-y-2 text-xs">
-                <p className="font-black text-white mb-1">Playoff Leaders — Elite Scoring</p>
+                <p className="font-black text-white mb-1">Playoff Leaders — Best Single Game</p>
+                <p className="text-red-400 text-[10px] font-bold mb-1">⚠️ Single game only — NOT a season total!</p>
                 <p className="text-slate-500 text-[10px] mb-2">Tiered points — closer = more. Exact match earns full points.</p>
                 {LEADER_CATEGORIES.map(c => {
                   const tiers = LEADERS_TIERS[c.statKey] || [];
@@ -555,7 +556,17 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
             } />
             <span className="ml-2 px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 text-[10px] font-black uppercase tracking-wider">New</span>
           </div>
-          <p className="text-slate-500 text-xs mb-5">Predict the highest total across the entire playoffs. <strong className="text-slate-400">Closer = more points.</strong> Picks lock with Futures.</p>
+          {/* ── Single-game clarification banner ── */}
+          <div className="flex items-start gap-2.5 bg-red-500/10 border border-red-500/40 rounded-xl px-3.5 py-3 mb-5">
+            <span className="text-red-400 text-base mt-0.5 shrink-0">⚠️</span>
+            <div>
+              <p className="text-red-400 text-xs font-black uppercase tracking-wide mb-0.5">Single game only — NOT total!</p>
+              <p className="text-slate-400 text-xs leading-relaxed">
+                Predict the <strong className="text-white">best single-game performance</strong> by any player across the entire playoffs —
+                not a season total or sum. <span className="text-slate-500">For example: if you think someone will drop 45 pts in one game, enter 45.</span>
+              </p>
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {LEADER_CATEGORIES.map(cat => {
