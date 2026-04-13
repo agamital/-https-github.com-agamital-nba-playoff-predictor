@@ -3195,6 +3195,7 @@ def generate_matchups(force_conference=None):
     conn.commit()
     conn.close()
     print("generate_matchups complete")
+    _backfill_game1_start_times()
 
 # Play-In game start times (UTC). Bets close when server time >= start_time.
 # Schedule: Tue Apr 15 & Wed Apr 16 (phase 1), Fri Apr 18 (elimination).
@@ -3289,20 +3290,66 @@ def _clean_allstar_data_from_db():
 
 
 def _apply_series_migration():
-    """Ensure manual_override column exists on the series table (idempotent)."""
+    """Ensure manual_override + game1_start_time columns exist on series table (idempotent)."""
     try:
         conn = get_db_conn()
         conn.autocommit = True
         c = conn.cursor()
         c.execute("SET search_path TO public")
-        try:
-            c.execute("ALTER TABLE series ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE")
-            print("Migration: ensured series.manual_override exists")
-        except Exception as col_err:
-            print(f"Migration: could not add series.manual_override: {col_err}")
+        for col, defn in [
+            ("manual_override",   "BOOLEAN DEFAULT FALSE"),
+            ("game1_start_time",  "TEXT"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE series ADD COLUMN IF NOT EXISTS {col} {defn}")
+                print(f"Migration: ensured series.{col} exists")
+            except Exception as col_err:
+                print(f"Migration: could not add series.{col}: {col_err}")
         conn.close()
     except Exception as e:
         print(f"Series migration connection error (non-fatal): {e}")
+
+
+# Game 1 start times for First Round 2026 (UTC ISO strings).
+# Key: (conference, home_seed, away_seed)  — home = better seed per generate_matchups()
+_GAME1_SCHEDULE_UTC: dict[tuple, str] = {
+    # Saturday April 18
+    ('Eastern', 4, 5): '2026-04-18T17:00:00Z',   # CLE vs TOR   1:00 PM ET  → 20:00 IDT
+    ('Western', 3, 6): '2026-04-18T19:30:00Z',   # DEN vs MIN   3:30 PM ET  → 22:30 IDT
+    ('Eastern', 3, 6): '2026-04-18T22:00:00Z',   # NYK vs ATL   6:00 PM ET  → 01:00 IDT Apr 19
+    ('Western', 4, 5): '2026-04-19T00:30:00Z',   # LAL vs HOU   8:30 PM ET  → 03:30 IDT Apr 19
+    # Sunday April 19
+    ('Eastern', 2, 7): '2026-04-19T17:00:00Z',   # BOS vs #7    1:00 PM ET  → 20:00 IDT
+    ('Western', 1, 8): '2026-04-19T19:30:00Z',   # OKC vs #8    3:30 PM ET  → 22:30 IDT
+    ('Eastern', 1, 8): '2026-04-19T22:30:00Z',   # DET vs #8    6:30 PM ET  → 01:30 IDT Apr 20
+    ('Western', 2, 7): '2026-04-20T01:00:00Z',   # SAS vs #7    9:00 PM ET  → 04:00 IDT Apr 20
+}
+
+# Futures + leaders bets lock when the very first First Round game tips off
+FUTURES_LOCK_UTC = '2026-04-18T17:00:00Z'   # CLE vs TOR — earliest Game 1
+
+
+def _backfill_game1_start_times(season: str = '2026'):
+    """Set game1_start_time on First Round series that are missing it."""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""SELECT id, conference, home_seed, away_seed
+                     FROM series
+                     WHERE season=%s AND round='First Round' AND game1_start_time IS NULL""",
+                  (season,))
+        updated = 0
+        for sid, conf, hs, aws in c.fetchall():
+            t = _GAME1_SCHEDULE_UTC.get((conf, hs, aws))
+            if t:
+                c.execute("UPDATE series SET game1_start_time=%s WHERE id=%s", (t, sid))
+                updated += 1
+        conn.commit()
+        conn.close()
+        if updated:
+            print(f"[Schedule] Set game1_start_time on {updated} First Round series")
+    except Exception as e:
+        print(f"[Schedule] _backfill_game1_start_times error: {e}")
 
 
 @app.on_event("startup")
@@ -3369,8 +3416,12 @@ async def startup():
               "— avatar uploads will return 503. "
               "Add it in Railway → Settings → Variables.")
 
-    # Apply series schema migration (manual_override column)
+    # Apply series schema migration (manual_override + game1_start_time columns)
     _apply_series_migration()
+    try:
+        _backfill_game1_start_times()
+    except Exception as e:
+        print(f"ERROR _backfill_game1_start_times: {e}")
 
     # Run heavyweight / network-dependent tasks in background threads so they
     # never block the server from binding to its port.
@@ -3495,6 +3546,35 @@ async def startup():
             max_instances=1,
         )
     print("[Scheduler] Full-chain sync scheduled at 04:00–09:00 UTC (every hour)")
+
+    # ── 2c) Auto-lock futures + leaders at first First Round tip-off ─────────
+    # Saturday April 18 17:00 UTC = CLE vs TOR 1 PM ET = 20:00 IDT
+    _FUTURES_LOCK_DT = datetime(2026, 4, 18, 17, 0, 0)
+    if datetime.utcnow() < _FUTURES_LOCK_DT:
+        def _auto_lock_futures():
+            try:
+                conn = get_db_conn()
+                c = conn.cursor()
+                for key in ('futures_locked', 'leaders_locked'):
+                    c.execute(
+                        "INSERT INTO site_settings(key,value) VALUES(%s,'1') "
+                        "ON CONFLICT(key) DO UPDATE SET value='1'", (key,)
+                    )
+                conn.commit()
+                conn.close()
+                print("[Scheduler] Futures + Leaders bets AUTO-LOCKED (first R1 game started)")
+            except Exception as e:
+                print(f"[Scheduler] auto_lock_futures error: {e}")
+
+        from apscheduler.triggers.date import DateTrigger
+        _scheduler.add_job(
+            _auto_lock_futures,
+            DateTrigger(run_date=_FUTURES_LOCK_DT),
+            id='auto_lock_futures',
+            replace_existing=True,
+        )
+        print(f"[Scheduler] Auto-lock futures scheduled for {_FUTURES_LOCK_DT} UTC "
+              f"(Apr 18 20:00 IDT)")
 
     # ── 3) Missing-picks push alert — 06:00 UTC = 09:00 Jerusalem (IDT) ──
     _scheduler.add_job(
@@ -4305,14 +4385,25 @@ async def api_series(season: str = "2026"):
                      ht.name, ht.abbreviation, ht.logo_url,
                      at.name, at.abbreviation, at.logo_url,
                      s.actual_leading_scorer, s.actual_leading_rebounder,
-                     s.actual_leading_assister
+                     s.actual_leading_assister,
+                     s.game1_start_time
                      FROM series s
                      JOIN teams ht ON s.home_team_id = ht.id
                      JOIN teams at ON s.away_team_id = at.id
                      WHERE s.season = %s''', (season,))
 
+        from datetime import timezone as _tz
+        _now_utc = datetime.now(_tz.utc)
+
         series = []
         for row in c.fetchall():
+            g1_start = row[22]
+            # A series is picks_locked when game1_start_time has passed OR status != active
+            if g1_start:
+                g1_dt = datetime.fromisoformat(g1_start.replace('Z', '+00:00'))
+                picks_locked = _now_utc >= g1_dt or row[11] != 'active'
+            else:
+                picks_locked = row[11] != 'active'
             series.append({
                 'id': row[0],
                 'season': row[1],
@@ -4337,10 +4428,11 @@ async def api_series(season: str = "2026"):
                 'winner_team_id': row[10],
                 'status': row[11],
                 'actual_games': row[12],
-                # Provisional during active series, final once completed
                 'leading_scorer':    row[19],
                 'leading_rebounder': row[20],
                 'leading_assister':  row[21],
+                'game1_start_time':  g1_start,
+                'picks_locked':      picks_locked,
             })
 
         return series
@@ -4410,13 +4502,19 @@ async def make_pred(prediction: Prediction, user_id: int):
     try:
         conn = get_db_conn()
         c = conn.cursor()
-        # Reject predictions on locked or completed series
-        c.execute("SELECT status FROM series WHERE id = %s", (prediction.series_id,))
+        # Reject predictions on locked, completed, or game-started series
+        c.execute("SELECT status, game1_start_time FROM series WHERE id = %s", (prediction.series_id,))
         series_row = c.fetchone()
         if not series_row:
             raise HTTPException(status_code=404, detail="Series not found")
         if series_row[0] != 'active':
             raise HTTPException(status_code=400, detail="Predictions are closed for this series")
+        game1_start = series_row[1]
+        if game1_start:
+            from datetime import timezone
+            start_dt = datetime.fromisoformat(game1_start.replace('Z', '+00:00'))
+            if datetime.now(timezone.utc) >= start_dt:
+                raise HTTPException(status_code=400, detail="Game 1 has started — predictions are closed")
         c.execute('''INSERT INTO predictions
                          (user_id, series_id, predicted_winner_id, predicted_games,
                           leading_scorer, leading_rebounder, leading_assister)

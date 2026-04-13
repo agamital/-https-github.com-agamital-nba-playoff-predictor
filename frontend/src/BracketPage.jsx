@@ -62,6 +62,87 @@ function PlayInCountdown({ startZ }) {
   );
 }
 
+// ── First Round lock timer ────────────────────────────────────────────────────
+// Futures + series bets lock when the first R1 game tips off:
+// Saturday April 18 at 17:00 UTC = 1:00 PM ET = 20:00 IDT
+const FIRST_ROUND_LOCK_UTC = '2026-04-18T17:00:00Z';
+
+function useBigCountdown(targetZ) {
+  const calc = () => Math.floor((new Date(targetZ) - Date.now()) / 1000);
+  const [secs, setSecs] = useState(calc);
+  useEffect(() => {
+    const id = setInterval(() => setSecs(calc()), 1000);
+    return () => clearInterval(id);
+  }, [targetZ]);
+  return secs;
+}
+
+function FirstRoundLockTimer() {
+  const secs = useBigCountdown(FIRST_ROUND_LOCK_UTC);
+  const expired = secs <= 0;
+
+  const targetLabel = new Date(FIRST_ROUND_LOCK_UTC).toLocaleString('en-IL', {
+    timeZone: 'Asia/Jerusalem', weekday: 'long', month: 'long',
+    day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+
+  if (expired) {
+    return (
+      <div className="max-w-2xl mx-auto mb-6 flex items-center justify-center gap-3 px-5 py-4 rounded-2xl bg-red-500/15 border border-red-500/30">
+        <Lock className="w-5 h-5 text-red-400 shrink-0" />
+        <div className="text-center">
+          <p className="text-red-400 font-black text-base">🔒 Bets are Locked</p>
+          <p className="text-red-400/70 text-xs mt-0.5">First Round has started</p>
+        </div>
+      </div>
+    );
+  }
+
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const pad = n => String(n).padStart(2, '0');
+  const urgent = secs < 3600;
+  const soon   = secs < 86400;
+
+  return (
+    <div className={`max-w-2xl mx-auto mb-6 px-5 py-4 rounded-2xl border text-center
+      ${urgent ? 'bg-red-500/15 border-red-500/40' : soon ? 'bg-amber-500/10 border-amber-500/30' : 'bg-slate-800/60 border-slate-700/50'}`}>
+      <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">
+        ⏰ Bets lock when first game starts
+      </p>
+      <div className={`flex items-center justify-center gap-3 font-black font-mono
+        ${urgent ? 'text-red-400' : soon ? 'text-amber-400' : 'text-orange-400'}`}>
+        {d > 0 && (
+          <div className="flex flex-col items-center">
+            <span className="text-3xl sm:text-4xl leading-none">{d}</span>
+            <span className="text-[10px] text-slate-500 font-normal mt-0.5">DAYS</span>
+          </div>
+        )}
+        {d > 0 && <span className="text-2xl text-slate-600 mb-3">:</span>}
+        <div className="flex flex-col items-center">
+          <span className="text-3xl sm:text-4xl leading-none">{pad(h)}</span>
+          <span className="text-[10px] text-slate-500 font-normal mt-0.5">HRS</span>
+        </div>
+        <span className="text-2xl text-slate-600 mb-3">:</span>
+        <div className="flex flex-col items-center">
+          <span className="text-3xl sm:text-4xl leading-none">{pad(m)}</span>
+          <span className="text-[10px] text-slate-500 font-normal mt-0.5">MIN</span>
+        </div>
+        <span className="text-2xl text-slate-600 mb-3">:</span>
+        <div className="flex flex-col items-center">
+          <span className="text-3xl sm:text-4xl leading-none">{pad(s)}</span>
+          <span className="text-[10px] text-slate-500 font-normal mt-0.5">SEC</span>
+        </div>
+      </div>
+      <p className="text-slate-500 text-[11px] mt-2">
+        CLE vs TOR · {targetLabel} · Futures + all series bets lock
+      </p>
+    </div>
+  );
+}
+
 // Strip diacritics/accents for dedup — matches backend _normalize_name().
 // 'Luka Dončić' → 'luka doncic'
 const normalizeName = (n) =>
@@ -1122,6 +1203,9 @@ const BracketPage = ({ currentUser, onNavigate }) => {
           <Info className="w-3.5 h-3.5" /> How scoring works
         </button>
       </div>
+
+      {/* First Round countdown / lock banner */}
+      <FirstRoundLockTimer />
 
       {/* Save error banner */}
       {saveError && (
