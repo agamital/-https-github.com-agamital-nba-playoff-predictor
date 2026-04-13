@@ -80,12 +80,65 @@ _FR_SCHEDULE_DATA.forEach(([k, v]) => { _FR_SCHEDULE[k] = v; });
 function getSeriesGame1Z(series) {
   if (series.game1_start_time) return series.game1_start_time;
   if (series.round !== 'First Round') return null;
+  // Try every combination of conf+seeds — backend may COALESCE NULL seeds to 0
   const conf = series.conference; // 'Eastern' | 'Western'
-  const hs   = series.home_seed  ?? series.home_team?.seed;
-  const as_  = series.away_seed  ?? series.away_team?.seed;
-  if (!conf || !hs || !as_) return null;
-  const lo = Math.min(hs, as_), hi = Math.max(hs, as_);
-  return _FR_SCHEDULE[`${conf}_${lo}_${hi}`] || null;
+  const hs   = series.home_seed  != null ? +series.home_seed  : +(series.home_team?.seed  ?? 0);
+  const as_  = series.away_seed  != null ? +series.away_seed  : +(series.away_team?.seed  ?? 0);
+  if (conf && hs > 0 && as_ > 0) {
+    const lo = Math.min(hs, as_), hi = Math.max(hs, as_);
+    const t = _FR_SCHEDULE[`${conf}_${lo}_${hi}`];
+    if (t) return t;
+  }
+  // Last resort: match by team IDs known from standings if seeds aren't reliable
+  // Just return the earliest lock time so the card always shows something
+  if (series.round === 'First Round') {
+    // Return the per-conference earliest game if we can't determine matchup
+    const earliestByConf = { Eastern: '2026-04-18T17:00:00Z', Western: '2026-04-18T19:30:00Z' };
+    return earliestByConf[conf] || null;
+  }
+  return null;
+}
+
+// ── Desktop bracket compact timer ────────────────────────────────────────────
+function DesktopSeriesTimer({ game1StartZ, picksLocked }) {
+  const calc = () => game1StartZ ? Math.floor((new Date(game1StartZ) - Date.now()) / 1000) : null;
+  const [secs, setSecs] = useState(calc);
+  useEffect(() => {
+    if (!game1StartZ) return;
+    const id = setInterval(() => setSecs(calc()), 1000);
+    return () => clearInterval(id);
+  }, [game1StartZ]);
+
+  if (!game1StartZ) return null;
+  const d = new Date(game1StartZ);
+  const idt = new Date(d.getTime() + 3 * 60 * 60 * 1000);
+  const hh = String(idt.getUTCHours()).padStart(2, '0');
+  const mm = String(idt.getUTCMinutes()).padStart(2, '0');
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const tipLabel = `${days[idt.getUTCDay()]} ${hh}:${mm}`;
+
+  if (secs === null || secs <= 0 || picksLocked) {
+    return (
+      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/30 text-[9px] font-black text-red-400">
+        <Lock className="w-2.5 h-2.5" /> Locked
+      </span>
+    );
+  }
+  const dv = Math.floor(secs / 86400);
+  const hv = Math.floor((secs % 86400) / 3600);
+  const mv = Math.floor((secs % 3600) / 60);
+  const sv = secs % 60;
+  const pad = n => String(n).padStart(2, '0');
+  const urgent = secs < 3600;
+  const soon   = secs < 86400;
+  return (
+    <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full border text-[9px] font-black font-mono
+      ${urgent ? 'bg-red-500/20 border-red-500/30 text-red-400' : soon ? 'bg-amber-500/15 border-amber-500/30 text-amber-400' : 'bg-slate-800 border-slate-700 text-cyan-400'}`}>
+      <Clock className="w-2.5 h-2.5 shrink-0" />
+      {dv > 0 ? `${dv}d ` : ''}{pad(hv)}:{pad(mv)}:{pad(sv)}
+      <span className={`font-normal ${urgent ? 'text-red-400/60' : 'text-slate-600'}`}>· {tipLabel}</span>
+    </span>
+  );
 }
 
 // ── Per-series Game 1 countdown ───────────────────────────────────────────────
@@ -652,8 +705,18 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
             {s ? (
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
                 <MatchCard series={s} pick={picks[s.id]} onTeamClick={onTeamClick} />
+                {/* Game 1 timer badge — shown below card on desktop */}
+                {s.status === 'active' && (() => {
+                  const g1z = getSeriesGame1Z(s);
+                  if (!g1z) return null;
+                  return (
+                    <div style={{ position: 'absolute', top: CH + 2, left: '50%', transform: 'translateX(-50%)', zIndex: 20, whiteSpace: 'nowrap' }}>
+                      <DesktopSeriesTimer game1StartZ={g1z} picksLocked={s.picks_locked} />
+                    </div>
+                  );
+                })()}
                 {picks[s.id]?.teamId && s.status === 'active' && (
-                  <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
+                  <div style={{ position: 'absolute', top: CH + 26, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
                     {confirmed[s.id] ? (
                       <button
                         onClick={() => onEdit(s.id)}
