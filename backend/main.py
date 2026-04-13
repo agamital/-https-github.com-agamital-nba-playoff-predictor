@@ -3439,7 +3439,16 @@ async def startup():
         except Exception as e:
             print(f"[Auto-Sync {label}] Standings ERROR: {type(e).__name__}: {e}")
 
-        # Step 3 — Play-In results + bracket promotion
+        # Step 3 — Aggregate series leaders from boxscores BEFORE processing results
+        # so that when a series completes in step 4/5, _finalize_series() can
+        # immediately score leader predictions (10 pts each) from the fresh data.
+        try:
+            pl = sync_series_provisional_leaders('2026')
+            print(f"[Auto-Sync {label}] Leaders — updated={pl.get('series_updated',0)}")
+        except Exception as e:
+            print(f"[Auto-Sync {label}] Leaders ERROR: {type(e).__name__}: {e}")
+
+        # Step 4 — Play-In results + bracket promotion
         try:
             pi = sync_playin_results_from_api('2026')
             print(f"[Auto-Sync {label}] Play-In — "
@@ -3448,7 +3457,9 @@ async def startup():
         except Exception as e:
             print(f"[Auto-Sync {label}] Play-In ERROR: {type(e).__name__}: {e}")
 
-        # Step 4 — Playoff results + bracket advancement
+        # Step 5 — Playoff results + bracket advancement + prediction scoring
+        # Leaders are already computed (step 3), so _finalize_series() will
+        # include leader points in the prediction scores automatically.
         try:
             po = sync_playoff_results_from_api('2026')
             print(f"[Auto-Sync {label}] Playoff — "
@@ -3456,13 +3467,6 @@ async def startup():
                   f"errors={len(po.get('errors',[]))}")
         except Exception as e:
             print(f"[Auto-Sync {label}] Playoff ERROR: {type(e).__name__}: {e}")
-
-        # Step 5 — Provisional / final series leaders
-        try:
-            pl = sync_series_provisional_leaders('2026')
-            print(f"[Auto-Sync {label}] Leaders — updated={pl.get('series_updated',0)}")
-        except Exception as e:
-            print(f"[Auto-Sync {label}] Leaders ERROR: {type(e).__name__}: {e}")
 
         print(f"[Auto-Sync {label}] ── complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
 

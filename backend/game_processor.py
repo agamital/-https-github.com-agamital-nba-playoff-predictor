@@ -883,7 +883,7 @@ def _finalize_series(series_id: int, winner_id: int, actual_games: int,
     """
     try:
         from main import get_db_conn, _recalculate_all_points, _try_advance_bracket
-        from scoring import calculate_series_points
+        from scoring import calculate_series_points, calculate_series_leader_points
     except ImportError as e:
         _log(f"_finalize_series: cannot import main helpers: {e}")
         return
@@ -893,13 +893,27 @@ def _finalize_series(series_id: int, winner_id: int, actual_games: int,
         conn = get_db_conn()
         c = conn.cursor()
 
-        # Score predictions
+        # Read actual series leaders (computed by sync_series_provisional_leaders)
         c.execute(
-            "SELECT id, predicted_winner_id, predicted_games "
+            "SELECT actual_leading_scorer, actual_leading_rebounder, actual_leading_assister "
+            "FROM series WHERE id = %s",
+            (series_id,)
+        )
+        leaders_row = c.fetchone() or (None, None, None)
+        actual_leaders = {
+            "scorer":    leaders_row[0],
+            "rebounder": leaders_row[1],
+            "assister":  leaders_row[2],
+        }
+
+        # Score predictions (winner + games + leaders)
+        c.execute(
+            "SELECT id, predicted_winner_id, predicted_games, "
+            "       leading_scorer, leading_rebounder, leading_assister "
             "FROM predictions WHERE series_id = %s",
             (series_id,)
         )
-        for pred_id, pred_winner_id, pred_games in c.fetchall():
+        for pred_id, pred_winner_id, pred_games, pred_scorer, pred_rebounder, pred_assister in c.fetchall():
             winner_correct = pred_winner_id == winner_id
             games_correct  = pred_games == actual_games
             games_diff     = abs(pred_games - actual_games) if pred_games is not None else None
@@ -911,6 +925,11 @@ def _finalize_series(series_id: int, winner_id: int, actual_games: int,
                 games_correct=games_correct,
                 games_diff=games_diff,
             )
+            # Add leader prediction points (10 pts each, only if actual leaders known)
+            pts += calculate_series_leader_points(
+                predicted={"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
+                actual=actual_leaders,
+            )
             c.execute(
                 "UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s",
                 (1 if winner_correct else 0, pts, pred_id)
@@ -919,7 +938,9 @@ def _finalize_series(series_id: int, winner_id: int, actual_games: int,
         _recalculate_all_points(c)
         _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_id)
         conn.commit()
-        _log(f"_finalize_series: series {series_id} scored + bracket advanced")
+        _log(f"_finalize_series: series {series_id} scored + bracket advanced "
+             f"(leaders: scorer={actual_leaders['scorer']}, "
+             f"reb={actual_leaders['rebounder']}, ast={actual_leaders['assister']})")
 
     except Exception as e:
         _log(f"_finalize_series error for series {series_id}: {type(e).__name__}: {e}")

@@ -63,25 +63,25 @@ def _run_full_chain():
     except Exception as e:
         print(f"[Auto-Sync {label}] Standings ERROR: {type(e).__name__}: {e}")
 
-    # Step 3 — Play-In results + bracket promotion
     try:
         from game_processor import (
             sync_playin_results_from_api, sync_playoff_results_from_api,
             sync_series_provisional_leaders,
         )
+        # Step 3 — Leaders first so _finalize_series scores them when series completes
+        pl = sync_series_provisional_leaders('2026')
+        print(f"[Auto-Sync {label}] Leaders — updated={pl.get('series_updated',0)}")
+
+        # Step 4 — Play-In results + bracket promotion
         pi = sync_playin_results_from_api('2026')
         print(f"[Auto-Sync {label}] Play-In — "
               f"processed={pi.get('processed',0)} promoted={pi.get('promoted',0)} "
               f"errors={len(pi.get('errors',[]))}")
 
-        # Step 4 — Playoff results + bracket advancement
+        # Step 5 — Playoff results + bracket advancement + leader scoring
         po = sync_playoff_results_from_api('2026')
         print(f"[Auto-Sync {label}] Playoff — "
               f"updated={po.get('updated',0)} completed={po.get('completed',0)}")
-
-        # Step 5 — Provisional leaders
-        pl = sync_series_provisional_leaders('2026')
-        print(f"[Auto-Sync {label}] Leaders — updated={pl.get('series_updated',0)}")
     except Exception as e:
         print(f"[Auto-Sync {label}] Results ERROR: {type(e).__name__}: {e}")
 
