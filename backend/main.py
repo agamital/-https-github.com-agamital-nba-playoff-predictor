@@ -3833,7 +3833,18 @@ async def startup():
             misfire_grace_time=600,
             max_instances=1,
         )
-    print("[Scheduler] Full-chain sync scheduled at 04:00–09:00 UTC (every hour)")
+    # Extra play-in window syncs — games finish 23:30–02:00 UTC so we need
+    # results picked up before the 04:00 job.  Fire at 00:30 and 02:30 UTC.
+    for _hhmm, _jid in [('30 0', 'full_chain_sync_0030'), ('30 2', 'full_chain_sync_0230')]:
+        _scheduler.add_job(
+            _full_chain_sync,
+            CronTrigger.from_crontab(f'{_hhmm} * * *'),
+            id=_jid,
+            replace_existing=True,
+            misfire_grace_time=600,
+            max_instances=1,
+        )
+    print("[Scheduler] Full-chain sync scheduled at 04:00–09:00 UTC + 00:30 + 02:30 UTC (play-in window)")
 
     # ── 2c) Auto-lock futures + leaders at first First Round tip-off ─────────
     # Saturday April 18 17:00 UTC = CLE vs TOR 1 PM ET = 20:00 IDT
@@ -4885,8 +4896,10 @@ async def playin_pred(game_id: int, predicted_winner_id: int, user_id: int):
             conn.close()
             raise HTTPException(status_code=400, detail="Bets are closed — game is no longer active")
         if start_time:
-            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-            if now_utc >= start_time:
+            # Compare both as naive UTC datetimes (DB stores TIMESTAMP without tz)
+            now_naive = datetime.utcnow()
+            st_naive  = start_time if isinstance(start_time, datetime) else datetime.fromisoformat(str(start_time))
+            if now_naive >= st_naive:
                 conn.close()
                 raise HTTPException(status_code=400, detail="Bets are closed — game has already started")
     c.execute('''INSERT INTO playin_predictions (user_id, game_id, predicted_winner_id)

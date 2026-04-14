@@ -323,11 +323,11 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
                   <div>
                     <p className="text-xs text-slate-400 mb-1.5">{pred.conference} · {pred.round}</p>
                     <div className="flex items-center gap-2">
-                      <img src={pred.home_team.logo_url} alt="" className="w-6 h-6" onError={e=>e.target.style.display='none'} />
-                      <span className="text-xs text-slate-300 font-bold">{pred.home_team.abbreviation}</span>
+                      <img src={pred.home_team?.logo_url} alt="" className="w-6 h-6" onError={e=>e.target.style.display='none'} />
+                      <span className="text-xs text-slate-300 font-bold">{pred.home_team?.abbreviation}</span>
                       <span className="text-slate-600 text-xs">vs</span>
-                      <img src={pred.away_team.logo_url} alt="" className="w-6 h-6" onError={e=>e.target.style.display='none'} />
-                      <span className="text-xs text-slate-300 font-bold">{pred.away_team.abbreviation}</span>
+                      <img src={pred.away_team?.logo_url} alt="" className="w-6 h-6" onError={e=>e.target.style.display='none'} />
+                      <span className="text-xs text-slate-300 font-bold">{pred.away_team?.abbreviation}</span>
                     </div>
                   </div>
                   {pred.is_correct === 1 && <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />}
@@ -335,8 +335,8 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
                 </div>
                 <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-slate-800">
                   <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/20 border border-orange-500/30">
-                    <img src={pred.predicted_winner.logo_url} alt="" className="w-5 h-5" onError={e=>e.target.style.display='none'} />
-                    <span className="text-orange-400 text-xs font-black">{pred.predicted_winner.name}</span>
+                    <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5" onError={e=>e.target.style.display='none'} />
+                    <span className="text-orange-400 text-xs font-black">{pred.predicted_winner?.name}</span>
                   </div>
                   {pred.predicted_games && (
                     <span className="px-3 py-1.5 rounded-lg bg-blue-500/20 border border-blue-500/30 text-blue-400 text-xs font-bold">
@@ -366,10 +366,10 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
               <Card key={pred.id} className="p-4">
                 <p className="text-xs text-slate-400 mb-2">{pred.conference} · {pred.game_type}</p>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-300">{pred.team1.name} vs {pred.team2.name}</span>
+                  <span className="text-sm text-slate-300">{pred.team1?.name} vs {pred.team2?.name}</span>
                   <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/20 border border-orange-500/30">
-                    <img src={pred.predicted_winner.logo_url} alt="" className="w-5 h-5" onError={e=>e.target.style.display='none'} />
-                    <span className="text-orange-400 text-xs font-black">{pred.predicted_winner.abbreviation}</span>
+                    <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5" onError={e=>e.target.style.display='none'} />
+                    <span className="text-orange-400 text-xs font-black">{pred.predicted_winner?.abbreviation}</span>
                   </div>
                 </div>
               </Card>
