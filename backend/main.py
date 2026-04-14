@@ -3979,6 +3979,49 @@ async def startup():
             print(f"[Scheduler] Series reminder scheduled: {_sr_conf} {_sr_hs}v{_sr_as} -{_sr_hrs}h "
                   f"@ {_sr_remind.strftime('%Y-%m-%d %H:%M')} UTC")
 
+    # ── 8) Post-game syncs — fire 3h after each game tipoff to capture results ───
+    # One-shot DateTrigger per game so results are picked up promptly even if
+    # the game falls outside the 04:00–09:00 UTC cron window.
+    _POST_GAME_DELAY = timedelta(hours=3)
+    # Play-in games
+    for (_pg_conf, _pg_gtype), _pg_start_str in PLAYIN_SCHEDULE_UTC.items():
+        _pg_start = datetime.strptime(_pg_start_str, "%Y-%m-%d %H:%M:%S")
+        _pg_sync = _pg_start + _POST_GAME_DELAY
+        if _pg_sync > _now_utc:
+            _pg_jid = f"post_game_sync_{_pg_conf.lower()}_{_pg_gtype.replace('v','v')}"
+            _scheduler.add_job(
+                _full_chain_sync,
+                DateTrigger(run_date=_pg_sync, timezone='UTC'),
+                id=_pg_jid,
+                replace_existing=True,
+                misfire_grace_time=1800,
+                max_instances=1,
+            )
+            print(f"[Scheduler] Post-game sync: {_pg_conf} {_pg_gtype} @ "
+                  f"{_pg_sync.strftime('%Y-%m-%d %H:%M')} UTC (+3h)")
+        else:
+            print(f"[Scheduler] Post-game sync {_pg_conf} {_pg_gtype} already past — skipping")
+    # First Round Game 1 tipoffs
+    for (_sr_conf, _sr_hs, _sr_as), _sr_start_str in _GAME1_SCHEDULE_UTC.items():
+        _sr_start = datetime.strptime(
+            _sr_start_str.rstrip('Z').replace('T', ' '), "%Y-%m-%d %H:%M:%S"
+        )
+        _sr_sync = _sr_start + _POST_GAME_DELAY
+        if _sr_sync > _now_utc:
+            _sr_jid = f"post_game_sync_{_sr_conf.lower()}_{_sr_hs}v{_sr_as}"
+            _scheduler.add_job(
+                _full_chain_sync,
+                DateTrigger(run_date=_sr_sync, timezone='UTC'),
+                id=_sr_jid,
+                replace_existing=True,
+                misfire_grace_time=1800,
+                max_instances=1,
+            )
+            print(f"[Scheduler] Post-game sync: {_sr_conf} {_sr_hs}v{_sr_as} @ "
+                  f"{_sr_sync.strftime('%Y-%m-%d %H:%M')} UTC (+3h after Game 1)")
+        else:
+            print(f"[Scheduler] Post-game sync {_sr_conf} {_sr_hs}v{_sr_as} already past — skipping")
+
     _scheduler.start()
     print("[Scheduler] APScheduler started"
           " — daily_auto_sync: 0 4 * * * UTC (04:00 UTC, 1x/day; full chain)"
