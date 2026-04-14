@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Users, ChevronDown, Lock } from 'lucide-react';
 import * as api from '../services/api';
 import { picksRevealed } from '../scoringConstants';
@@ -16,17 +16,35 @@ import { picksRevealed } from '../scoringConstants';
  *   status        – series/game status string: 'active' | 'locked' | 'completed'
  *                   Individual picks are hidden while status === 'active'.
  *                   Falls back to global picksRevealed() when not provided.
+ *   startZ        – ISO UTC string of game/series Game 1 tipoff time.
+ *                   Picks unlock immediately when this time is reached,
+ *                   without waiting for a status sync from the server.
  */
-const CommunityInsights = ({ seriesId, gameId, homeTeam, awayTeam, initialStats = null, status }) => {
+const CommunityInsights = ({ seriesId, gameId, homeTeam, awayTeam, initialStats = null, status, startZ }) => {
   const [open, setOpen]       = useState(false);
   const [picks, setPicks]     = useState(null);
   const [loading, setLoading] = useState(false);
   const [stats, setStats]     = useState(initialStats);
 
-  // Determine whether individual pick names are revealed:
-  // • If status prop provided: revealed once the series/game is no longer 'active'
-  // • If status not provided: fall back to global PICKS_REVEAL_DATE gate
-  const picksVisible = status != null ? status !== 'active' : picksRevealed();
+  // Determine whether individual pick names are revealed.
+  // Priority order:
+  //  1. startZ passed and time has passed → immediately revealed at tipoff
+  //  2. status prop not 'active' (server confirmed game/series started)
+  //  3. Global picksRevealed() fallback (first play-in game date)
+  const startMs = startZ ? new Date(startZ).getTime() : null;
+  const _timerPast = startMs != null && Date.now() >= startMs;
+  const _initVisible = _timerPast || (status != null ? status !== 'active' : picksRevealed());
+  const [picksVisible, setPicksVisible] = useState(_initVisible);
+
+  // If the timer hasn't fired yet, schedule a one-shot to flip it exactly at tipoff
+  useEffect(() => {
+    if (picksVisible) return;
+    if (!startMs) return;
+    const ms = startMs - Date.now();
+    if (ms <= 0) { setPicksVisible(true); return; }
+    const t = setTimeout(() => setPicksVisible(true), ms);
+    return () => clearTimeout(t);
+  }, [startMs, picksVisible]);
 
   // With pre-fetched stats: hide component if nobody voted yet.
   // Without pre-fetched stats: always render (lazy-load button).
