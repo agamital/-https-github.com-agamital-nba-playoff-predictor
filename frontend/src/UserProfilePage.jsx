@@ -232,6 +232,8 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
   const playin  = predictions?.playin_predictions  || [];
   const futures = predictions?.futures_prediction;
   const leaders = predictions?.leaders_prediction  || null;
+  const hasHiddenFutures = predictions?.has_hidden_futures ?? false;
+  const hasHiddenLeaders = predictions?.has_hidden_leaders ?? false;
 
   const correctCount = playoff.filter(p => p.is_correct === 1).length;
   const pointsFromPicks = playoff.reduce((s, p) => s + (p.points_earned || 0), 0)
@@ -405,7 +407,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
       )}
 
       {/* ── Futures Picks ── */}
-      {futures && (
+      {futures ? (
         <div className="mb-8">
           <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
             <Star className="w-5 h-5 text-yellow-400" />
@@ -430,6 +432,17 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
               <FuturesPick label="East Finals MVP"  color="text-blue-400"   mvp={futures.east_finals_mvp} />
             </Card>
           </div>
+        </div>
+      ) : hasHiddenFutures && (
+        <div className="mb-8">
+          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+            <Star className="w-5 h-5 text-yellow-400" />
+            Futures Picks
+          </h2>
+          <Card className="p-6 flex items-center gap-3 text-slate-500">
+            <Lock className="w-5 h-5 shrink-0" />
+            <span className="text-sm">Hidden until this user locks their futures picks.</span>
+          </Card>
         </div>
       )}
 
@@ -470,7 +483,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
       )}
 
       {/* ── Playoff Leaders Picks ── */}
-      {leaders && (
+      {leaders ? (
         <div className="mb-8">
           <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
             <BarChart2 className="w-5 h-5 text-cyan-400" />
@@ -511,6 +524,17 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
             </div>
           </Card>
         </div>
+      ) : hasHiddenLeaders && (
+        <div className="mb-8">
+          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+            <BarChart2 className="w-5 h-5 text-cyan-400" />
+            Playoff Leaders Picks
+          </h2>
+          <Card className="p-6 flex items-center gap-3 text-slate-500">
+            <Lock className="w-5 h-5 shrink-0" />
+            <span className="text-sm">Hidden until this user locks their futures picks.</span>
+          </Card>
+        </div>
       )}
 
       {predsLoading && (
@@ -527,7 +551,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
         </div>
       )}
 
-      {!predsLoading && !futures && !leaders && playoff.length === 0 && playin.length === 0 && predictions !== null && (
+      {!predsLoading && !futures && !leaders && !hasHiddenFutures && !hasHiddenLeaders && playoff.length === 0 && playin.length === 0 && predictions !== null && (
         <Card className="p-12 text-center">
           <Trophy className="w-14 h-14 text-slate-700 mx-auto mb-4" />
           <p className="text-slate-400 font-bold">

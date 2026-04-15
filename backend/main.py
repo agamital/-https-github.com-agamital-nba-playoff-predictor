@@ -5868,8 +5868,11 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
             WHERE f.user_id = %s AND f.season = %s
         ''', (user_id, season))
         frow = c.fetchone()
+        futures_locked = bool(frow[9]) if frow else False
+
+        # Privacy: futures picks are only visible to others after the user locks them
         futures_pred = None
-        if frow:
+        if frow and (show_all or futures_locked):
             futures_pred = {
                 'champion_team':   {'name': frow[15], 'abbreviation': frow[16], 'logo_url': frow[17]} if frow[15] else None,
                 'west_champ_team': {'name': frow[18], 'abbreviation': frow[19], 'logo_url': frow[20]} if frow[18] else None,
@@ -5877,7 +5880,7 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
                 'finals_mvp':      frow[6],
                 'west_finals_mvp': frow[7],
                 'east_finals_mvp': frow[8],
-                'locked':          bool(frow[9]),
+                'locked':          futures_locked,
                 'predicted_at':    frow[10],
                 'is_correct_champion': frow[11],
                 'is_correct_west':     frow[12],
@@ -5892,8 +5895,10 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
                      points_earned, predicted_at
                      FROM leaders_predictions WHERE user_id = %s AND season = %s''', (user_id, season))
         lrow = c.fetchone()
+
+        # Privacy: leaders lock with futures — only visible to others once futures are locked
         leaders_pred = None
-        if lrow:
+        if lrow and (show_all or futures_locked):
             leaders_pred = {
                 'top_scorer':    lrow[0],
                 'top_assists':   lrow[1],
@@ -5911,11 +5916,18 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
                 'predicted_at':  lrow[13],
             }
 
+        # Tell the frontend whether futures/leaders exist but are hidden for this viewer
+        has_hidden_futures = (not show_all and not futures_locked and frow is not None)
+        has_hidden_leaders = (not show_all and not futures_locked and lrow is not None)
+
         return {
             'playoff_predictions': playoff_preds,
             'playin_predictions': playin_preds,
             'futures_prediction': futures_pred,
             'leaders_prediction': leaders_pred,
+            'futures_locked': futures_locked,
+            'has_hidden_futures': has_hidden_futures,
+            'has_hidden_leaders': has_hidden_leaders,
             'total_predictions': len(playoff_preds) + len(playin_preds)
         }
     except Exception as e:
