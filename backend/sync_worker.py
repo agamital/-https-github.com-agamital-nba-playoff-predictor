@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from main import (  # noqa: E402
     _standings_sync_job, sync_daily_boxscores, refresh_playin_matchups,
-    _auto_sync_leaders_actuals, NBA_API_AVAILABLE,
+    _auto_sync_leaders_actuals, NBA_API_AVAILABLE, _send_daily_email_reminders,
 )
 
 # Fire at these UTC hours each day.
@@ -112,6 +112,14 @@ def _run_full_chain():
               f"updated={po.get('updated',0)} completed={po.get('completed',0)}")
     except Exception as e:
         print(f"[Auto-Sync {label}] Results ERROR: {type(e).__name__}: {e}")
+
+    # Fire email reminders after every sync — 20h dedup prevents spam
+    try:
+        result = _send_daily_email_reminders()
+        if result.get('sent', 0) > 0:
+            print(f"[Auto-Sync {label}] Emails sent={result['sent']}")
+    except Exception as e:
+        print(f"[Auto-Sync {label}] Email reminder ERROR: {type(e).__name__}: {e}")
 
     print(f"[Auto-Sync {label}] ── complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
 

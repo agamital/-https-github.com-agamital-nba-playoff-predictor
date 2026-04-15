@@ -3505,6 +3505,13 @@ def _run_live_sync_bg(season: str = "2026"):
 
         _live_sync_last = _time.time()
         print(f"[LiveSync] Done — cooldown reset")
+
+        # Fire email reminders so users hear about new series/promotions quickly.
+        # The 20-hour per-user dedup prevents spam.
+        try:
+            threading.Thread(target=_send_daily_email_reminders, daemon=True).start()
+        except Exception as e:
+            print(f"[LiveSync] Email reminder trigger error: {e}")
     finally:
         _live_sync_lock.release()
 
@@ -3847,6 +3854,8 @@ async def startup():
             conn.close()
             if rows:
                 print(f"[Startup] Bracket gap-filler: processed {len(rows)} completed play-in game(s)")
+                # New series may have been created — remind users immediately
+                threading.Thread(target=_send_daily_email_reminders, daemon=True).start()
         except Exception as e:
             print(f"[Startup] Bracket gap-filler ERROR: {e}")
 
@@ -4064,15 +4073,17 @@ async def startup():
         max_instances=1,
     )
 
-    # ── 5) Daily email reminders — 10:00 UTC (one send per user per 20h) ──
-    _scheduler.add_job(
-        _send_daily_email_reminders,
-        CronTrigger.from_crontab('0 10 * * *'),
-        id='daily_email_reminders',
-        replace_existing=True,
-        misfire_grace_time=1800,
-        max_instances=1,
-    )
+    # ── 5) Daily email reminders — 10:00 UTC (1 PM Israel) + 17:00 UTC (8 PM Israel) ──
+    # 20-hour per-user dedup prevents double-sending within the same day.
+    for _remind_hr, _remind_id in ((10, 'daily_email_reminders'), (17, 'daily_email_reminders_eve')):
+        _scheduler.add_job(
+            _send_daily_email_reminders,
+            CronTrigger.from_crontab(f'0 {_remind_hr} * * *'),
+            id=_remind_id,
+            replace_existing=True,
+            misfire_grace_time=1800,
+            max_instances=1,
+        )
 
     # ── 6) Play-In game reminders — 12h, 6h, 2h before each tipoff ─────────────
     # One-shot DateTrigger jobs per game × 3 intervals.

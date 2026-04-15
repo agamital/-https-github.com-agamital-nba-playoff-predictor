@@ -363,6 +363,21 @@ def sync_playin_results_from_api(season: str = "2026") -> dict:
 
     _log(f"Total events to scan for play-in: {len(events)}")
 
+    # Pre-fetch all play-in team pairs (any status) for fallback matching.
+    # ESPN sometimes returns play-in games with season.type=3 instead of 5.
+    try:
+        from main import get_db_conn as _get_db
+        _pc = _get_db()
+        _pcur = _pc.cursor()
+        _pcur.execute(
+            "SELECT team1_id, team2_id FROM playin_games WHERE season=%s", (season,)
+        )
+        _playin_pairs = {frozenset(r) for r in _pcur.fetchall()}
+        _pc.close()
+    except Exception as _e:
+        _playin_pairs = set()
+        _log(f"Could not pre-fetch play-in pairs: {_e}")
+
     # ── 3. Filter Play-In events ─────────────────────────────────────────
     playin_events = []
     for ev in events:
@@ -373,6 +388,19 @@ def sync_playin_results_from_api(season: str = "2026") -> dict:
             or "play-in" in str(season_obj.get("slug", "")).lower()
             or "play-in" in str(season_obj.get("name", "")).lower()
         )
+        # Fallback: match by team IDs against our playin_games table
+        if not is_playin and _playin_pairs:
+            comps = (ev.get("competitions") or [{}])[0].get("competitors") or []
+            if len(comps) >= 2:
+                t_ids = frozenset(filter(None, (
+                    _espn_team_name_to_nba_id(
+                        (c.get("team") or {}).get("displayName") or
+                        (c.get("team") or {}).get("name") or ""
+                    ) for c in comps[:2]
+                )))
+                if t_ids and t_ids in _playin_pairs:
+                    is_playin = True
+                    _log(f"Fallback match: event {ev.get('id')} → play-in via team IDs")
         if is_playin:
             playin_events.append(ev)
 
@@ -580,13 +608,46 @@ def sync_playoff_results_from_api(season: str = "2026") -> dict:
 
     _log(f"Total events to scan for playoffs: {len(events)}")
 
+    # Pre-fetch active series team pairs for fallback matching.
+    # ESPN sometimes returns playoff games with unexpected season types.
+    try:
+        from main import get_db_conn as _get_db2
+        _sc = _get_db2()
+        _scur = _sc.cursor()
+        _scur.execute(
+            "SELECT home_team_id, away_team_id FROM series WHERE season=%s AND status='active'",
+            (season,)
+        )
+        _series_pairs = {frozenset(r) for r in _scur.fetchall()}
+        _sc.close()
+    except Exception as _e2:
+        _series_pairs = set()
+        _log(f"Could not pre-fetch series pairs: {_e2}")
+
     # ── 3. Filter Playoff events ─────────────────────────────────────────
     playoff_events = []
     for ev in events:
         season_obj = ev.get("season") or {}
         s_type = season_obj.get("type")
         s_slug = str(season_obj.get("slug", "")).lower()
-        if s_type == 3 or str(s_type) == "3" or "post-season" in s_slug or "playoff" in s_slug:
+        is_playoff = (
+            s_type == 3 or str(s_type) == "3"
+            or "post-season" in s_slug or "playoff" in s_slug
+        )
+        # Fallback: match by team IDs against our active series
+        if not is_playoff and _series_pairs:
+            comps = (ev.get("competitions") or [{}])[0].get("competitors") or []
+            if len(comps) >= 2:
+                t_ids = frozenset(filter(None, (
+                    _espn_team_name_to_nba_id(
+                        (c.get("team") or {}).get("displayName") or
+                        (c.get("team") or {}).get("name") or ""
+                    ) for c in comps[:2]
+                )))
+                if t_ids and t_ids in _series_pairs:
+                    is_playoff = True
+                    _log(f"Fallback match: event {ev.get('id')} → playoff via team IDs")
+        if is_playoff:
             playoff_events.append(ev)
 
     _log(f"Playoff events found: {len(playoff_events)}")
