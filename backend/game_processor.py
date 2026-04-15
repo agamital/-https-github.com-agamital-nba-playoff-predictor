@@ -388,19 +388,36 @@ def sync_playin_results_from_api(season: str = "2026") -> dict:
             or "play-in" in str(season_obj.get("slug", "")).lower()
             or "play-in" in str(season_obj.get("name", "")).lower()
         )
-        # Fallback: match by team IDs against our playin_games table
+        # Fallback: match by team IDs against our playin_games table.
+        # ONLY applies to games played on/after 2026-04-15 (first play-in day)
+        # so regular-season games between the same teams are never mistaken
+        # for play-in results.
         if not is_playin and _playin_pairs:
-            comps = (ev.get("competitions") or [{}])[0].get("competitors") or []
-            if len(comps) >= 2:
-                t_ids = frozenset(filter(None, (
-                    _espn_team_name_to_nba_id(
-                        (c.get("team") or {}).get("displayName") or
-                        (c.get("team") or {}).get("name") or ""
-                    ) for c in comps[:2]
-                )))
-                if t_ids and t_ids in _playin_pairs:
-                    is_playin = True
-                    _log(f"Fallback match: event {ev.get('id')} → play-in via team IDs")
+            ev_date_str = (
+                (ev.get("competitions") or [{}])[0].get("date") or
+                ev.get("date") or ""
+            )
+            ev_date_ok = False
+            if ev_date_str:
+                try:
+                    from datetime import datetime as _dt
+                    ev_dt = _dt.fromisoformat(ev_date_str.replace("Z", "+00:00"))
+                    # Play-in tournament starts 2026-04-15
+                    ev_date_ok = ev_dt.date() >= _dt(2026, 4, 15).date()
+                except Exception:
+                    pass  # if we can't parse, skip fallback to be safe
+            if ev_date_ok:
+                comps = (ev.get("competitions") or [{}])[0].get("competitors") or []
+                if len(comps) >= 2:
+                    t_ids = frozenset(filter(None, (
+                        _espn_team_name_to_nba_id(
+                            (c.get("team") or {}).get("displayName") or
+                            (c.get("team") or {}).get("name") or ""
+                        ) for c in comps[:2]
+                    )))
+                    if t_ids and t_ids in _playin_pairs:
+                        is_playin = True
+                        _log(f"Fallback match: event {ev.get('id')} ({ev_date_str[:10]}) → play-in via team IDs")
         if is_playin:
             playin_events.append(ev)
 
@@ -634,19 +651,36 @@ def sync_playoff_results_from_api(season: str = "2026") -> dict:
             s_type == 3 or str(s_type) == "3"
             or "post-season" in s_slug or "playoff" in s_slug
         )
-        # Fallback: match by team IDs against our active series
+        # Fallback: match by team IDs against our active series.
+        # ONLY applies to games played on/after 2026-04-19 (first playoff day)
+        # so regular-season or play-in games between the same teams are never
+        # mistaken for playoff results.
         if not is_playoff and _series_pairs:
-            comps = (ev.get("competitions") or [{}])[0].get("competitors") or []
-            if len(comps) >= 2:
-                t_ids = frozenset(filter(None, (
-                    _espn_team_name_to_nba_id(
-                        (c.get("team") or {}).get("displayName") or
-                        (c.get("team") or {}).get("name") or ""
-                    ) for c in comps[:2]
-                )))
-                if t_ids and t_ids in _series_pairs:
-                    is_playoff = True
-                    _log(f"Fallback match: event {ev.get('id')} → playoff via team IDs")
+            ev_date_str = (
+                (ev.get("competitions") or [{}])[0].get("date") or
+                ev.get("date") or ""
+            )
+            ev_date_ok = False
+            if ev_date_str:
+                try:
+                    from datetime import datetime as _dt2
+                    ev_dt2 = _dt2.fromisoformat(ev_date_str.replace("Z", "+00:00"))
+                    # First Round starts 2026-04-19
+                    ev_date_ok = ev_dt2.date() >= _dt2(2026, 4, 19).date()
+                except Exception:
+                    pass  # if we can't parse, skip fallback to be safe
+            if ev_date_ok:
+                comps = (ev.get("competitions") or [{}])[0].get("competitors") or []
+                if len(comps) >= 2:
+                    t_ids = frozenset(filter(None, (
+                        _espn_team_name_to_nba_id(
+                            (c.get("team") or {}).get("displayName") or
+                            (c.get("team") or {}).get("name") or ""
+                        ) for c in comps[:2]
+                    )))
+                    if t_ids and t_ids in _series_pairs:
+                        is_playoff = True
+                        _log(f"Fallback match: event {ev.get('id')} ({ev_date_str[:10]}) → playoff via team IDs")
         if is_playoff:
             playoff_events.append(ev)
 
