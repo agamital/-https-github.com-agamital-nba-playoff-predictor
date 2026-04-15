@@ -5739,7 +5739,7 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
         if viewer_id:
             c.execute("SELECT email FROM users WHERE id = %s", (viewer_id,))
             vrow = c.fetchone()
-            if vrow and vrow[0] == 'agamital@gmail.com':
+            if vrow and vrow[0] in _ADMIN_EMAILS:
                 is_admin = True
         is_self = (viewer_id == user_id)
         show_all = is_admin or is_self  # if False: only show locked/completed bets

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal, BarChart2, Lock, Eye, EyeOff } from 'lucide-react';
 import * as api from './services/api';
+import { ADMIN_EMAIL } from './constants';
 
 const Card = ({ children, className = '' }) => (
   <div className={`bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur-sm ${className}`}>
@@ -178,7 +179,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
   const [predsLoading, setPredsLoading] = useState(false);
   const [error, setError]             = useState('');
 
-  const isAdmin = currentUser?.email === 'agamital@gmail.com';
+  const isAdmin = currentUser?.email === ADMIN_EMAIL;
 
   useEffect(() => {
     if (!username) return;
