@@ -3435,8 +3435,20 @@ def _should_live_sync(season: str = "2026") -> bool:
                      WHERE season = %s AND status = 'active'
                      LIMIT 1''', (season,))
         has_active_series = c.fetchone() is not None
+        # Completed play-in game(s) whose 7-seed/8-seed R1 series hasn't been created yet?
+        c.execute('''SELECT 1 FROM playin_games p
+                     WHERE p.season = %s AND p.status = 'completed'
+                       AND p.winner_id IS NOT NULL
+                       AND NOT EXISTS (
+                           SELECT 1 FROM series s
+                           WHERE s.season = %s AND s.conference = p.conference
+                             AND s.round = 'First Round'
+                             AND (s.home_team_id = p.winner_id OR s.away_team_id = p.winner_id)
+                       )
+                     LIMIT 1''', (season, season))
+        missing_r1_series = c.fetchone() is not None
         conn.close()
-        return has_live_playin or has_active_series
+        return has_live_playin or has_active_series or missing_r1_series
     except Exception as e:
         print(f"[LiveSync] _should_live_sync check error: {e}")
         return False
@@ -3819,6 +3831,24 @@ async def startup():
             generate_matchups()
         except Exception as e:
             print(f"ERROR generate_matchups: {e}")
+        # On every deploy: re-apply bracket promotions for already-completed play-in games.
+        # Fixes any R1 series that were missed due to the bracket_group bug.
+        try:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute('''SELECT id, winner_id FROM playin_games
+                         WHERE season = '2026' AND status = 'completed'
+                           AND winner_id IS NOT NULL''')
+            rows = c.fetchall()
+            for gid, wid in rows:
+                _try_create_r1_from_playin(c, gid, wid, '2026')
+            _try_create_playin_game3(c, '2026')
+            conn.commit()
+            conn.close()
+            if rows:
+                print(f"[Startup] Bracket gap-filler: processed {len(rows)} completed play-in game(s)")
+        except Exception as e:
+            print(f"[Startup] Bracket gap-filler ERROR: {e}")
 
     threading.Thread(target=_background_init, daemon=True).start()
 
