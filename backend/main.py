@@ -3505,13 +3505,6 @@ def _run_live_sync_bg(season: str = "2026"):
 
         _live_sync_last = _time.time()
         print(f"[LiveSync] Done — cooldown reset")
-
-        # Fire email reminders so users hear about new series/promotions quickly.
-        # The 20-hour per-user dedup prevents spam.
-        try:
-            threading.Thread(target=_send_daily_email_reminders, daemon=True).start()
-        except Exception as e:
-            print(f"[LiveSync] Email reminder trigger error: {e}")
     finally:
         _live_sync_lock.release()
 
