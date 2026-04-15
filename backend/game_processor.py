@@ -129,8 +129,45 @@ def _fetch_nba_events_for_sync(summary: dict) -> list:
         _log(f"ESPN total events (7-day window): {len(all_events)}")
         return all_events
 
-    # ── RapidAPI fallback ────────────────────────────────────────────────
-    _log("ESPN unavailable — falling back to RapidAPI")
+    # ── RapidAPI PRIMARY fallback (api-basketball-nba, 1500/day) ────────
+    _log("ESPN unavailable — trying PRIMARY RapidAPI (api-basketball-nba)")
+    try:
+        from main import _RAPIDAPI_KEY, _RAPIDAPI_HOST_PRIMARY, _RAPIDAPI_PRIMARY_SCOREBOARD_URL
+        if not _RAPIDAPI_KEY:
+            raise ValueError("RAPIDAPI_KEY not set")
+        primary_events = []
+        for days_ago in range(7):
+            check_date = today - timedelta(days=days_ago)
+            params = {
+                "year":  check_date.strftime("%Y"),
+                "month": check_date.strftime("%m"),
+                "day":   check_date.strftime("%d"),
+                "limit": 20,
+            }
+            try:
+                resp = _http.get(
+                    _RAPIDAPI_PRIMARY_SCOREBOARD_URL,
+                    headers={"x-rapidapi-key": _RAPIDAPI_KEY,
+                             "x-rapidapi-host": _RAPIDAPI_HOST_PRIMARY},
+                    params=params,
+                    timeout=12,
+                )
+                if resp.status_code == 200:
+                    day_events = resp.json().get("events") or []
+                    primary_events.extend(day_events)
+                    _log(f"PRIMARY RapidAPI {check_date}: {len(day_events)} events")
+                else:
+                    _log(f"PRIMARY RapidAPI {check_date}: HTTP {resp.status_code}")
+            except Exception as e:
+                _log(f"PRIMARY RapidAPI {check_date} error: {type(e).__name__}: {e}")
+        if primary_events:
+            _log(f"PRIMARY RapidAPI total events (7-day): {len(primary_events)}")
+            return primary_events
+    except Exception as e:
+        _log(f"PRIMARY RapidAPI setup error: {type(e).__name__}: {e}")
+
+    # ── RapidAPI SECONDARY fallback (nba-api-free-data, monthly quota) ──
+    _log("Primary RapidAPI unavailable — falling back to SECONDARY RapidAPI")
     try:
         from main import _RAPIDAPI_KEY, _RAPIDAPI_HOST
         if not _RAPIDAPI_KEY:
@@ -150,7 +187,7 @@ def _fetch_nba_events_for_sync(summary: dict) -> list:
             events = resp_obj
         else:
             events = []
-        _log(f"RapidAPI fallback: {len(events)} events")
+        _log(f"SECONDARY RapidAPI fallback: {len(events)} events")
         return events
     except Exception as e:
         err = f"All scoreboard sources failed: {type(e).__name__}: {e}"
