@@ -123,7 +123,7 @@ const GameCard = ({ game, currentUser, onPrediction }) => {
       </div>
       <p className="text-[10px] text-slate-600 mb-2">{meta.next}</p>
 
-      {!isCompleted && startTimeZ && (
+      {!betsClosed && startTimeZ && (
         <div className="mb-3 space-y-1">
           {startLabel && <p className="text-[11px] text-slate-500">🕐 {startLabel} (Israel Time)</p>}
           <Countdown startTime={startTimeZ} />
