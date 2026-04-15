@@ -5728,8 +5728,8 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
                    p.predicted_at, p.is_correct, p.points_earned, p.predicted_games,
                    p.leading_scorer, p.leading_rebounder, p.leading_assister,
                    s.round, s.conference,
-                   ht.id, ht.name, ht.abbreviation, ht.logo_url, ht.seed,
-                   at.id, at.name, at.abbreviation, at.logo_url, at.seed,
+                   ht.id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
+                   at.id, at.name, at.abbreviation, at.logo_url, s.away_seed,
                    wt.name, wt.abbreviation, wt.logo_url,
                    s.status, s.game1_start_time,
                    s.home_wins, s.away_wins
@@ -5743,10 +5743,10 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
 
         playoff_preds = []
         for row in c.fetchall():
-            s_status   = row[26]
-            g1_start   = row[27]
-            home_wins  = row[28] or 0
-            away_wins  = row[29] or 0
+            s_status  = row[26]
+            g1_start  = row[27]
+            home_wins = row[28] or 0
+            away_wins = row[29] or 0
 
             # Picks are locked once game1_start_time has passed or series is not active
             picks_locked = (s_status != 'active')
@@ -5758,9 +5758,8 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
                     pass
 
             if not show_all and not picks_locked:
-                continue  # hide this bet from other viewers until locked
+                continue  # hide from other viewers until bet time is over
 
-            series_finished = (s_status == 'completed')
             playoff_preds.append({
                 'id': row[0],
                 'series_id': row[2],
@@ -5778,7 +5777,7 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
                 'points_earned': row[6] or 0,
                 'picks_locked': picks_locked,
                 'series_status': s_status,
-                'series_finished': series_finished,
+                'series_finished': (s_status == 'completed'),
                 'home_wins': home_wins,
                 'away_wins': away_wins,
             })
