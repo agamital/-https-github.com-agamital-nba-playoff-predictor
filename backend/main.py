@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -94,6 +94,14 @@ _SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 # APScheduler instance — created in startup(), referenced in shutdown()
 _scheduler = None
+
+# ── On-demand live sync ────────────────────────────────────────────────────
+# Triggered whenever a user fetches play-in or series data.
+# Cooldown prevents hammering the API on every request.
+import threading as _threading
+_live_sync_lock   = _threading.Lock()
+_live_sync_last   = 0.0          # epoch seconds of last completed sync
+_LIVE_SYNC_COOLDOWN = 300        # seconds — only re-sync at most once per 5 min
 
 # ── RapidAPI — multi-source data strategy ──────────────────────────────────
 # PRIMARY:   api-basketball-nba.p.rapidapi.com  (1,500 calls/day)
@@ -3400,6 +3408,95 @@ def refresh_playin_matchups(season: str = '2026') -> dict:
     return summary
 
 
+def _should_live_sync(season: str = "2026") -> bool:
+    """
+    Return True if a live sync should fire now.
+    Conditions:
+      1. Cooldown has elapsed (>_LIVE_SYNC_COOLDOWN seconds since last sync).
+      2. At least one play-in or playoff game is active AND its start_time is
+         in the past (game may have finished but DB hasn't been updated yet).
+    """
+    import time as _time
+    global _live_sync_last
+    if _time.time() - _live_sync_last < _LIVE_SYNC_COOLDOWN:
+        return False
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        now_utc = datetime.utcnow()
+        # Any active play-in game whose start_time has passed?
+        c.execute('''SELECT 1 FROM playin_games
+                     WHERE season = %s AND status = 'active'
+                       AND start_time IS NOT NULL AND start_time <= %s
+                     LIMIT 1''', (season, now_utc))
+        has_live_playin = c.fetchone() is not None
+        # Any active playoff series (once R1 starts)?
+        c.execute('''SELECT 1 FROM series
+                     WHERE season = %s AND status = 'active'
+                     LIMIT 1''', (season,))
+        has_active_series = c.fetchone() is not None
+        conn.close()
+        return has_live_playin or has_active_series
+    except Exception as e:
+        print(f"[LiveSync] _should_live_sync check error: {e}")
+        return False
+
+
+def _run_live_sync_bg(season: str = "2026"):
+    """
+    Non-blocking full sync chain called as a background task.
+    Acquires a lock so only one sync runs at a time.
+    Updates _live_sync_last after completion.
+    """
+    import time as _time
+    global _live_sync_last
+    if not _live_sync_lock.acquire(blocking=False):
+        return   # another sync already running — skip
+    try:
+        print(f"[LiveSync] Background sync triggered for season={season}")
+        from game_processor import (
+            sync_playin_results_from_api,
+            sync_playoff_results_from_api,
+            sync_series_provisional_leaders,
+        )
+
+        # Play-In results + bracket promotion
+        try:
+            pi = sync_playin_results_from_api(season)
+            print(f"[LiveSync] Play-In — processed={pi.get('processed',0)} "
+                  f"promoted={pi.get('promoted',0)} errors={len(pi.get('errors',[]))}")
+        except Exception as e:
+            print(f"[LiveSync] Play-In ERROR: {type(e).__name__}: {e}")
+
+        # Bracket gap-filler: ensure all completed play-in games have R1 series
+        try:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute('''SELECT id, winner_id FROM playin_games
+                         WHERE season = %s AND status = 'completed' AND winner_id IS NOT NULL''',
+                      (season,))
+            for gid, wid in c.fetchall():
+                _try_create_r1_from_playin(c, gid, wid, season)
+            _try_create_playin_game3(c, season)
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[LiveSync] Bracket gap-filler ERROR: {type(e).__name__}: {e}")
+
+        # Playoff results + series advancement
+        try:
+            po = sync_playoff_results_from_api(season)
+            print(f"[LiveSync] Playoff — updated={po.get('updated',0)} "
+                  f"completed={po.get('completed',0)} errors={len(po.get('errors',[]))}")
+        except Exception as e:
+            print(f"[LiveSync] Playoff ERROR: {type(e).__name__}: {e}")
+
+        _live_sync_last = _time.time()
+        print(f"[LiveSync] Done — cooldown reset")
+    finally:
+        _live_sync_lock.release()
+
+
 def generate_matchups(force_conference=None):
     standings = get_standings()
     if not standings:
@@ -4779,7 +4876,10 @@ async def google_auth(email: str, name: str = "", avatar_url: str = ""):
 
 
 @app.get("/api/series")
-async def api_series(season: str = "2026"):
+async def api_series(season: str = "2026", background_tasks: BackgroundTasks = None):
+    # Fire a live sync in the background if games are active and cooldown elapsed
+    if background_tasks is not None and _should_live_sync(season):
+        background_tasks.add_task(_run_live_sync_bg, season)
     conn = None
     try:
         conn = get_db_conn()
@@ -4854,7 +4954,10 @@ async def api_series(season: str = "2026"):
             except Exception: pass
 
 @app.get("/api/playin-games")
-async def api_playin(season: str = "2026"):
+async def api_playin(season: str = "2026", background_tasks: BackgroundTasks = None):
+    # Fire a live sync in the background if games are active and cooldown elapsed
+    if background_tasks is not None and _should_live_sync(season):
+        background_tasks.add_task(_run_live_sync_bg, season)
     conn = None
     try:
         conn = get_db_conn()
