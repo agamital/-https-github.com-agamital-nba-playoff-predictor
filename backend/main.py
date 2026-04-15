@@ -5698,22 +5698,41 @@ async def notifications_summary(user_id: int, season: str = "2026"):
 
 
 @app.get("/api/my-predictions")
-async def my_predictions(user_id: int, season: str = "2026"):
-    """Get all predictions for a user"""
+async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = None):
+    """Get predictions for a user.
+    viewer_id controls privacy:
+      - admin (user 1 / agamital@gmail.com) sees everything
+      - user viewing own profile sees everything
+      - anyone else only sees predictions for locked/completed games
+    """
     conn = None
     try:
         conn = get_db_conn()
         c = conn.cursor()
 
-        # Get playoff predictions
+        # Determine if viewer is admin or the profile owner
+        is_admin = False
+        if viewer_id:
+            c.execute("SELECT email FROM users WHERE id = %s", (viewer_id,))
+            vrow = c.fetchone()
+            if vrow and vrow[0] == 'agamital@gmail.com':
+                is_admin = True
+        is_self = (viewer_id == user_id)
+        show_all = is_admin or is_self  # if False: only show locked/completed bets
+
+        now_utc = datetime.utcnow()
+
+        # Get playoff predictions — include game1_start_time + status for lock check
         c.execute('''
             SELECT p.id, p.user_id, p.series_id, p.predicted_winner_id,
                    p.predicted_at, p.is_correct, p.points_earned, p.predicted_games,
                    p.leading_scorer, p.leading_rebounder, p.leading_assister,
                    s.round, s.conference,
-                   ht.name, ht.abbreviation, ht.logo_url,
-                   at.name, at.abbreviation, at.logo_url,
-                   wt.name, wt.abbreviation, wt.logo_url
+                   ht.id, ht.name, ht.abbreviation, ht.logo_url, ht.seed,
+                   at.id, at.name, at.abbreviation, at.logo_url, at.seed,
+                   wt.name, wt.abbreviation, wt.logo_url,
+                   s.status, s.game1_start_time,
+                   s.home_wins, s.away_wins
             FROM predictions p
             JOIN series s ON p.series_id = s.id
             JOIN teams ht ON s.home_team_id = ht.id
@@ -5724,6 +5743,24 @@ async def my_predictions(user_id: int, season: str = "2026"):
 
         playoff_preds = []
         for row in c.fetchall():
+            s_status   = row[26]
+            g1_start   = row[27]
+            home_wins  = row[28] or 0
+            away_wins  = row[29] or 0
+
+            # Picks are locked once game1_start_time has passed or series is not active
+            picks_locked = (s_status != 'active')
+            if not picks_locked and g1_start:
+                try:
+                    _g1dt = g1_start if hasattr(g1_start, 'year') else datetime.fromisoformat(str(g1_start))
+                    picks_locked = now_utc >= _g1dt
+                except Exception:
+                    pass
+
+            if not show_all and not picks_locked:
+                continue  # hide this bet from other viewers until locked
+
+            series_finished = (s_status == 'completed')
             playoff_preds.append({
                 'id': row[0],
                 'series_id': row[2],
@@ -5733,17 +5770,24 @@ async def my_predictions(user_id: int, season: str = "2026"):
                 'leading_assister': row[10],
                 'round': row[11],
                 'conference': row[12],
-                'home_team': {'name': row[13], 'abbreviation': row[14], 'logo_url': row[15]},
-                'away_team': {'name': row[16], 'abbreviation': row[17], 'logo_url': row[18]},
-                'predicted_winner': {'name': row[19], 'abbreviation': row[20], 'logo_url': row[21]},
+                'home_team': {'id': row[13], 'name': row[14], 'abbreviation': row[15], 'logo_url': row[16], 'seed': row[17]},
+                'away_team': {'id': row[18], 'name': row[19], 'abbreviation': row[20], 'logo_url': row[21], 'seed': row[22]},
+                'predicted_winner': {'name': row[23], 'abbreviation': row[24], 'logo_url': row[25]},
                 'predicted_at': row[4],
                 'is_correct': row[5],
-                'points_earned': row[6]
+                'points_earned': row[6] or 0,
+                'picks_locked': picks_locked,
+                'series_status': s_status,
+                'series_finished': series_finished,
+                'home_wins': home_wins,
+                'away_wins': away_wins,
             })
 
-        # Get play-in predictions
+        # Get play-in predictions — include start_time + winner_id for lock/result check
         c.execute('''
-            SELECT pp.*, pg.game_type, pg.conference,
+            SELECT pp.id, pp.user_id, pp.game_id, pp.predicted_winner_id,
+                   pp.predicted_at, pp.is_correct, pp.points_earned,
+                   pg.game_type, pg.conference, pg.winner_id, pg.start_time, pg.status,
                    t1.name, t1.abbreviation, t1.logo_url,
                    t2.name, t2.abbreviation, t2.logo_url,
                    wt.name, wt.abbreviation, wt.logo_url
@@ -5757,15 +5801,35 @@ async def my_predictions(user_id: int, season: str = "2026"):
 
         playin_preds = []
         for row in c.fetchall():
+            pg_winner_id = row[9]
+            pg_start     = row[10]
+            pg_status    = row[11]
+
+            # Locked once start_time has passed or game is completed
+            pi_locked = (pg_status == 'completed') or (pg_winner_id is not None)
+            if not pi_locked and pg_start:
+                try:
+                    _pdt = pg_start if hasattr(pg_start, 'year') else datetime.fromisoformat(str(pg_start))
+                    pi_locked = now_utc >= _pdt
+                except Exception:
+                    pass
+
+            if not show_all and not pi_locked:
+                continue
+
             playin_preds.append({
                 'id': row[0],
                 'game_id': row[2],
                 'game_type': row[7],
                 'conference': row[8],
-                'team1': {'name': row[9], 'abbreviation': row[10], 'logo_url': row[11]},
-                'team2': {'name': row[12], 'abbreviation': row[13], 'logo_url': row[14]},
-                'predicted_winner': {'name': row[15], 'abbreviation': row[16], 'logo_url': row[17]},
-                'predicted_at': row[4]
+                'team1': {'name': row[12], 'abbreviation': row[13], 'logo_url': row[14]},
+                'team2': {'name': row[15], 'abbreviation': row[16], 'logo_url': row[17]},
+                'predicted_winner': {'name': row[18], 'abbreviation': row[19], 'logo_url': row[20]},
+                'predicted_at': row[4],
+                'is_correct': row[5],
+                'points_earned': row[6] or 0,
+                'picks_locked': pi_locked,
+                'game_finished': pg_status == 'completed',
             })
 
         # Get futures prediction

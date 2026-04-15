@@ -244,8 +244,9 @@ export const syncSeeds = async (season = '2026') => {
 };
 
 // Get user's predictions
-export const getMyPredictions = async (userId, season = '2026') => {
-  const response = await api.get(`/api/my-predictions?user_id=${userId}&season=${season}`);
+export const getMyPredictions = async (userId, season = '2026', viewerId = null) => {
+  const vParam = viewerId != null ? `&viewer_id=${viewerId}` : '';
+  const response = await api.get(`/api/my-predictions?user_id=${userId}&season=${season}${vParam}`);
   return response.data;
 };
 

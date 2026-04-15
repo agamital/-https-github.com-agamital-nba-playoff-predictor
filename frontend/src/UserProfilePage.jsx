@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal, BarChart2 } from 'lucide-react';
+import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal, BarChart2, Lock, Eye, EyeOff } from 'lucide-react';
 import * as api from './services/api';
 
 const Card = ({ children, className = '' }) => (
@@ -34,6 +34,22 @@ export const Avatar = ({ username, avatarUrl, size = 'md' }) => {
   );
 };
 
+const ResultBadge = ({ isCorrect, points }) => {
+  if (isCorrect === 1) return (
+    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-black shrink-0">
+      <CheckCircle className="w-3.5 h-3.5" />
+      {points > 0 ? `+${points} pts` : 'Correct'}
+    </div>
+  );
+  if (isCorrect === 0) return (
+    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-black shrink-0">
+      <XCircle className="w-3.5 h-3.5" />
+      Wrong
+    </div>
+  );
+  return null;
+};
+
 const FuturesPick = ({ label, color, team, mvp, isCorrect }) => {
   const border =
     isCorrect === 1 ? 'border-green-500/40 bg-green-500/5' :
@@ -60,12 +76,109 @@ const FuturesPick = ({ label, color, team, mvp, isCorrect }) => {
   );
 };
 
+// ── Playoff prediction card ───────────────────────────────────────────────────
+const PlayoffPredCard = ({ pred }) => {
+  const finished  = pred.series_finished;
+  const correct   = pred.is_correct;
+  const cardBorder =
+    correct === 1 ? 'border-green-500/30 bg-green-500/5' :
+    correct === 0 ? 'border-red-500/30   bg-red-500/5'   :
+    'border-slate-800';
+
+  return (
+    <Card className={`p-4 ${cardBorder}`}>
+      {/* Header */}
+      <div className="flex items-start justify-between mb-3 gap-2">
+        <div>
+          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">
+            {pred.conference} · {pred.round}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <img src={pred.home_team?.logo_url} alt="" className="w-6 h-6" onError={e=>e.target.style.display='none'} />
+            <span className="text-xs text-slate-300 font-bold">{pred.home_team?.abbreviation}</span>
+            {finished && (
+              <span className="text-[10px] font-black text-slate-500">
+                {pred.home_wins}–{pred.away_wins}
+              </span>
+            )}
+            <span className="text-slate-600 text-xs">vs</span>
+            <img src={pred.away_team?.logo_url} alt="" className="w-6 h-6" onError={e=>e.target.style.display='none'} />
+            <span className="text-xs text-slate-300 font-bold">{pred.away_team?.abbreviation}</span>
+          </div>
+        </div>
+        <ResultBadge isCorrect={correct} points={pred.points_earned} />
+      </div>
+
+      {/* Pick */}
+      <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-slate-800/60">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/20 border border-orange-500/30">
+          <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5" onError={e=>e.target.style.display='none'} />
+          <span className="text-orange-400 text-xs font-black">{pred.predicted_winner?.name}</span>
+        </div>
+        {pred.predicted_games && (
+          <span className="px-2.5 py-1.5 rounded-lg bg-blue-500/20 border border-blue-500/30 text-blue-400 text-xs font-bold">
+            in {pred.predicted_games}G
+          </span>
+        )}
+        {/* Pending series — show lock icon */}
+        {!finished && pred.picks_locked && correct == null && (
+          <span className="ml-auto flex items-center gap-1 text-slate-600 text-[10px]">
+            <Lock className="w-3 h-3" /> Awaiting result
+          </span>
+        )}
+      </div>
+    </Card>
+  );
+};
+
+// ── Play-in prediction card ───────────────────────────────────────────────────
+const PlayinPredCard = ({ pred }) => {
+  const finished = pred.game_finished;
+  const correct  = pred.is_correct;
+  const cardBorder =
+    correct === 1 ? 'border-green-500/30 bg-green-500/5' :
+    correct === 0 ? 'border-red-500/30   bg-red-500/5'   :
+    'border-slate-800';
+
+  const GAME_LABELS = { '7v8': 'Game 1 — 7 vs 8', '9v10': 'Game 2 — 9 vs 10', 'elimination': 'Game 3 — Elimination' };
+
+  return (
+    <Card className={`p-4 ${cardBorder}`}>
+      <div className="flex items-start justify-between mb-3 gap-2">
+        <div>
+          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">
+            {pred.conference} · Play-In
+          </p>
+          <p className="text-xs text-slate-400">{GAME_LABELS[pred.game_type] || pred.game_type}</p>
+          <p className="text-xs text-slate-500 mt-0.5">{pred.team1?.name} vs {pred.team2?.name}</p>
+        </div>
+        <ResultBadge isCorrect={correct} points={pred.points_earned} />
+      </div>
+
+      <div className="flex items-center gap-2 pt-3 border-t border-slate-800/60">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-purple-500/20 border border-purple-500/30">
+          <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5" onError={e=>e.target.style.display='none'} />
+          <span className="text-purple-400 text-xs font-black">{pred.predicted_winner?.abbreviation}</span>
+        </div>
+        {!finished && pred.picks_locked && correct == null && (
+          <span className="ml-auto flex items-center gap-1 text-slate-600 text-[10px]">
+            <Lock className="w-3 h-3" /> Awaiting result
+          </span>
+        )}
+      </div>
+    </Card>
+  );
+};
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack }) => {
-  const [profile, setProfile] = useState(null);
+  const [profile, setProfile]         = useState(null);
   const [predictions, setPredictions] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]         = useState(true);
   const [predsLoading, setPredsLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]             = useState('');
+
+  const isAdmin = currentUser?.email === 'agamital@gmail.com';
 
   useEffect(() => {
     if (!username) return;
@@ -73,21 +186,14 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
     setError('');
     setPredictions(null);
 
-    console.time(`[profile] ${username}`);
     api.getUserProfile(username)
       .then(prof => {
-        console.timeEnd(`[profile] ${username}`);
         setProfile(prof);
         setLoading(false);
-        // Load predictions in background after profile is visible
         setPredsLoading(true);
-        console.time(`[profile-preds] ${username}`);
-        return api.getMyPredictions(prof.user_id, '2026');
+        return api.getMyPredictions(prof.user_id, '2026', currentUser?.user_id ?? null);
       })
-      .then(preds => {
-        console.timeEnd(`[profile-preds] ${username}`);
-        setPredictions(preds);
-      })
+      .then(preds => setPredictions(preds))
       .catch(err => {
         setError(err.response?.status === 404 ? 'User not found.' : 'Failed to load profile.');
         setLoading(false);
@@ -98,7 +204,6 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
-        {/* Profile header skeleton */}
         <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-6 mb-8 animate-pulse">
           <div className="flex items-center gap-5">
             <div className="w-28 h-28 rounded-full bg-slate-800 shrink-0" />
@@ -121,13 +226,17 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
   }
 
   const isOwnProfile = currentUser?.username === profile.username;
-  const playoff  = predictions?.playoff_predictions || [];
-  const playin   = predictions?.playin_predictions  || [];
-  const futures  = predictions?.futures_prediction;
-  const leaders  = predictions?.leaders_prediction  || null;
-  const correctCount = playoff.filter(p => p.is_correct === 1).length;
+  const canSeeAll    = isAdmin || isOwnProfile;
 
-  // Risk / underdog metrics
+  const playoff = predictions?.playoff_predictions || [];
+  const playin  = predictions?.playin_predictions  || [];
+  const futures = predictions?.futures_prediction;
+  const leaders = predictions?.leaders_prediction  || null;
+
+  const correctCount = playoff.filter(p => p.is_correct === 1).length;
+  const pointsFromPicks = playoff.reduce((s, p) => s + (p.points_earned || 0), 0)
+    + playin.reduce((s, p) => s + (p.points_earned || 0), 0);
+
   const underdogPicks = playoff.filter(p => {
     const hSeed = p.home_team?.seed ?? null;
     const aSeed = p.away_team?.seed ?? null;
@@ -145,10 +254,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {onBack && (
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-slate-400 hover:text-white mb-4 transition-colors text-sm font-bold"
-        >
+        <button onClick={onBack} className="flex items-center gap-1.5 text-slate-400 hover:text-white mb-4 transition-colors text-sm font-bold">
           <ArrowLeft className="w-4 h-4" /> Back to Leaderboard
         </button>
       )}
@@ -162,6 +268,11 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
               <h1 className="text-2xl md:text-3xl font-black text-white truncate">{profile.username}</h1>
               {isOwnProfile && (
                 <span className="px-2 py-0.5 rounded-full bg-orange-500/20 border border-orange-500/30 text-orange-400 text-xs font-black">You</span>
+              )}
+              {isAdmin && !isOwnProfile && (
+                <span className="px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-black flex items-center gap-1">
+                  <Eye className="w-3 h-3" /> Admin View
+                </span>
               )}
               {riskProfile && (
                 <span className={`px-2.5 py-0.5 rounded-full border text-xs font-black ${riskProfile.cls}`}>{riskProfile.label}</span>
@@ -190,12 +301,19 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
         </div>
       </Card>
 
+      {/* ── Hidden bets notice for other users ── */}
+      {!canSeeAll && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-slate-800/60 border border-slate-700 text-slate-400 text-sm mb-6">
+          <EyeOff className="w-4 h-4 shrink-0 text-slate-500" />
+          Picks for games that haven't started yet are hidden until the game tips off.
+        </div>
+      )}
+
       {/* ── Stats Section ── */}
       {(profile.points > 0 || playoff.length > 0) && (
         <div className="mb-8">
           <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-            <BarChart2 className="w-5 h-5 text-cyan-400" />
-            Stats
+            <BarChart2 className="w-5 h-5 text-cyan-400" /> Stats
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card className="p-4 text-center">
@@ -217,12 +335,15 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
               </Card>
             )}
             {(() => {
-              const best = playoff.filter(p => p.points_earned > 0).sort((a, b) => b.points_earned - a.points_earned)[0];
+              const best = [...playoff, ...playin].filter(p => p.points_earned > 0).sort((a, b) => b.points_earned - a.points_earned)[0];
               return best ? (
                 <Card className="p-4 text-center border-yellow-500/30 bg-yellow-500/5">
                   <p className="text-3xl font-black text-yellow-400">+{best.points_earned}</p>
                   <p className="text-xs text-yellow-500/80 font-bold uppercase mt-1">Best Pick</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{best.predicted_winner?.abbreviation} · {best.round?.replace('Conference ', 'Conf ')}</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {best.predicted_winner?.abbreviation}
+                    {best.round ? ` · ${best.round.replace('Conference ', 'Conf ')}` : ' · Play-In'}
+                  </p>
                 </Card>
               ) : null;
             })()}
@@ -260,22 +381,24 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
             </div>
           )}
 
-          {futures?.points_earned > 0 && (
+          {(futures?.points_earned > 0 || pointsFromPicks > 0) && (
             <div className="mt-3 grid grid-cols-2 gap-3">
               <Card className="p-3 flex items-center gap-3">
                 <Trophy className="w-5 h-5 text-orange-400 shrink-0" />
                 <div>
-                  <p className="text-sm font-black text-white">{playoff.reduce((s, p) => s + (p.points_earned || 0), 0)}</p>
-                  <p className="text-[10px] text-slate-500 font-bold">Series Points</p>
+                  <p className="text-sm font-black text-white">{pointsFromPicks}</p>
+                  <p className="text-[10px] text-slate-500 font-bold">Pick Points</p>
                 </div>
               </Card>
-              <Card className="p-3 flex items-center gap-3">
-                <Star className="w-5 h-5 text-yellow-400 shrink-0" />
-                <div>
-                  <p className="text-sm font-black text-white">{futures.points_earned}</p>
-                  <p className="text-[10px] text-slate-500 font-bold">Futures Points</p>
-                </div>
-              </Card>
+              {futures?.points_earned > 0 && (
+                <Card className="p-3 flex items-center gap-3">
+                  <Star className="w-5 h-5 text-yellow-400 shrink-0" />
+                  <div>
+                    <p className="text-sm font-black text-white">{futures.points_earned}</p>
+                    <p className="text-[10px] text-slate-500 font-bold">Futures Points</p>
+                  </div>
+                </Card>
+              )}
             </div>
           )}
         </div>
@@ -296,61 +419,16 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="p-4 space-y-3">
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Champions</p>
-              <FuturesPick label="NBA Champion"      color="text-yellow-400" team={futures.champion_team}   isCorrect={futures.is_correct_champion} />
-              <FuturesPick label="Western Champion"  color="text-red-400"    team={futures.west_champ_team} isCorrect={futures.is_correct_west} />
-              <FuturesPick label="Eastern Champion"  color="text-blue-400"   team={futures.east_champ_team} isCorrect={futures.is_correct_east} />
+              <FuturesPick label="NBA Champion"     color="text-yellow-400" team={futures.champion_team}   isCorrect={futures.is_correct_champion} />
+              <FuturesPick label="Western Champion" color="text-red-400"    team={futures.west_champ_team} isCorrect={futures.is_correct_west} />
+              <FuturesPick label="Eastern Champion" color="text-blue-400"   team={futures.east_champ_team} isCorrect={futures.is_correct_east} />
             </Card>
             <Card className="p-4 space-y-3">
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">MVPs</p>
-              <FuturesPick label="Finals MVP"        color="text-yellow-400" mvp={futures.finals_mvp} />
-              <FuturesPick label="West Finals MVP"   color="text-red-400"    mvp={futures.west_finals_mvp} />
-              <FuturesPick label="East Finals MVP"   color="text-blue-400"   mvp={futures.east_finals_mvp} />
+              <FuturesPick label="Finals MVP"       color="text-yellow-400" mvp={futures.finals_mvp} />
+              <FuturesPick label="West Finals MVP"  color="text-red-400"    mvp={futures.west_finals_mvp} />
+              <FuturesPick label="East Finals MVP"  color="text-blue-400"   mvp={futures.east_finals_mvp} />
             </Card>
-          </div>
-        </div>
-      )}
-
-      {/* ── Playoff Predictions ── */}
-      {playoff.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-orange-400" /> Playoff Predictions
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {playoff.map(pred => (
-              <Card key={pred.id} className="p-4">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1.5">{pred.conference} · {pred.round}</p>
-                    <div className="flex items-center gap-2">
-                      <img src={pred.home_team?.logo_url} alt="" className="w-6 h-6" onError={e=>e.target.style.display='none'} />
-                      <span className="text-xs text-slate-300 font-bold">{pred.home_team?.abbreviation}</span>
-                      <span className="text-slate-600 text-xs">vs</span>
-                      <img src={pred.away_team?.logo_url} alt="" className="w-6 h-6" onError={e=>e.target.style.display='none'} />
-                      <span className="text-xs text-slate-300 font-bold">{pred.away_team?.abbreviation}</span>
-                    </div>
-                  </div>
-                  {pred.is_correct === 1 && <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />}
-                  {pred.is_correct === 0 && <XCircle    className="w-5 h-5 text-red-400   shrink-0" />}
-                </div>
-                <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-slate-800">
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/20 border border-orange-500/30">
-                    <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5" onError={e=>e.target.style.display='none'} />
-                    <span className="text-orange-400 text-xs font-black">{pred.predicted_winner?.name}</span>
-                  </div>
-                  {pred.predicted_games && (
-                    <span className="px-3 py-1.5 rounded-lg bg-blue-500/20 border border-blue-500/30 text-blue-400 text-xs font-bold">
-                      in {pred.predicted_games}G
-                    </span>
-                  )}
-                  {pred.points_earned > 0 && (
-                    <span className="ml-auto px-3 py-1.5 rounded-lg bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-black">
-                      +{pred.points_earned} pts
-                    </span>
-                  )}
-                </div>
-              </Card>
-            ))}
           </div>
         </div>
       )}
@@ -359,21 +437,34 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
       {playin.length > 0 && (
         <div className="mb-8">
           <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-purple-400" /> Play-In Predictions
+            <Trophy className="w-5 h-5 text-purple-400" />
+            Play-In Predictions
+            {playin.filter(p => p.is_correct === 1).length > 0 && (
+              <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
+                {playin.filter(p => p.is_correct === 1).length}/{playin.length} correct
+              </span>
+            )}
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {playin.map(pred => (
-              <Card key={pred.id} className="p-4">
-                <p className="text-xs text-slate-400 mb-2">{pred.conference} · {pred.game_type}</p>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-300">{pred.team1?.name} vs {pred.team2?.name}</span>
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/20 border border-orange-500/30">
-                    <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5" onError={e=>e.target.style.display='none'} />
-                    <span className="text-orange-400 text-xs font-black">{pred.predicted_winner?.abbreviation}</span>
-                  </div>
-                </div>
-              </Card>
-            ))}
+            {playin.map(pred => <PlayinPredCard key={pred.id} pred={pred} />)}
+          </div>
+        </div>
+      )}
+
+      {/* ── Playoff Predictions ── */}
+      {playoff.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+            <Trophy className="w-5 h-5 text-orange-400" />
+            Playoff Predictions
+            {correctCount > 0 && (
+              <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
+                {correctCount}/{playoff.length} correct
+              </span>
+            )}
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {playoff.map(pred => <PlayoffPredCard key={pred.id} pred={pred} />)}
           </div>
         </div>
       )}
@@ -439,7 +530,9 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
       {!predsLoading && !futures && !leaders && playoff.length === 0 && playin.length === 0 && predictions !== null && (
         <Card className="p-12 text-center">
           <Trophy className="w-14 h-14 text-slate-700 mx-auto mb-4" />
-          <p className="text-slate-400 font-bold">No predictions yet</p>
+          <p className="text-slate-400 font-bold">
+            {canSeeAll ? 'No predictions yet' : 'No predictions visible yet — check back after games tip off'}
+          </p>
         </Card>
       )}
     </div>
