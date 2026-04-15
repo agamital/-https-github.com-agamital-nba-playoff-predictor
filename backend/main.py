@@ -4099,7 +4099,7 @@ async def startup():
 
     # ── 5) Daily email reminders — 10:00 UTC (1 PM Israel) + 17:00 UTC (8 PM Israel) ──
     # 20-hour per-user dedup prevents double-sending within the same day.
-    for _remind_hr, _remind_id in ((10, 'daily_email_reminders'), (17, 'daily_email_reminders_eve')):
+    for _remind_hr, _remind_id in ((7, 'daily_email_reminders'), (17, 'daily_email_reminders_eve')):
         _scheduler.add_job(
             _send_daily_email_reminders,
             CronTrigger.from_crontab(f'0 {_remind_hr} * * *'),
