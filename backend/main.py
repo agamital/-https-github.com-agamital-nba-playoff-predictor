@@ -3545,7 +3545,10 @@ def generate_matchups(force_conference=None):
         c.execute('SELECT COUNT(*) FROM playin_games WHERE season = %s AND conference = %s', ('2026', conf_full))
         playin_count = c.fetchone()[0]
 
-        need_series = (existing_r1 != expected)
+        # Only regenerate the middle-seed (3v6, 4v5) matchups.
+        # Play-in winner series (1v8, 2v7) are created separately by
+        # _try_create_r1_from_playin and must NOT be touched here.
+        need_series = not expected.issubset(existing_r1)
         need_playin = (playin_count < 2)
 
         # Safety: don't auto-regenerate if any First Round series is no longer active
@@ -3561,12 +3564,19 @@ def generate_matchups(force_conference=None):
             continue
 
         if need_series or force_conference:
-            # Clean up predictions on series being deleted to avoid orphans
-            c.execute("SELECT id FROM series WHERE season = %s AND conference = %s", ('2026', conf_full))
+            # Only delete the seeds-3v6 and seeds-4v5 series.
+            # Preserve 1v8 and 2v7 play-in winner series + their predictions.
+            c.execute('''SELECT id FROM series
+                         WHERE season = %s AND conference = %s AND round = 'First Round'
+                           AND home_seed NOT IN (1, 2) AND away_seed NOT IN (7, 8)''',
+                      ('2026', conf_full))
             old_ids = [r[0] for r in c.fetchall()]
             if old_ids:
                 c.execute("DELETE FROM predictions WHERE series_id = ANY(%s)", (old_ids,))
-            c.execute('DELETE FROM series WHERE season = %s AND conference = %s', ('2026', conf_full))
+            c.execute('''DELETE FROM series
+                         WHERE season = %s AND conference = %s AND round = 'First Round'
+                           AND home_seed NOT IN (1, 2) AND away_seed NOT IN (7, 8)''',
+                      ('2026', conf_full))
             matchups = [(teams[2], teams[5]), (teams[3], teams[4])]
             bracket_groups = ['B', 'A']  # 3v6 → Group B, 4v5 → Group A
             for (home, away), bg in zip(matchups, bracket_groups):
