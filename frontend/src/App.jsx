@@ -1160,6 +1160,12 @@ const PlayinVoteBar = ({ g, currentUser }) => {
   const total  = g.total_votes;
   const noVotes = total === 0;
 
+  // Picks unlock once the backend confirms started OR start_time has passed
+  // client-side — guards against sync worker failures (API quota exceeded etc.)
+  const startMs = g.start_time ? new Date(g.start_time + (g.start_time.endsWith('Z') ? '' : 'Z')).getTime() : null;
+  const picksVisible = g.picks_visible || (startMs != null && Date.now() >= startMs);
+  const gameStarted  = startMs != null && Date.now() >= startMs;
+
   const handleToggle = async () => {
     const next = !expanded;
     setExpanded(next);
@@ -1195,7 +1201,7 @@ const PlayinVoteBar = ({ g, currentUser }) => {
           {g.status === 'completed' && (
             <span className="text-[9px] font-black uppercase tracking-widest text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">Completed</span>
           )}
-          {g.status === 'active' && g.start_time && (
+          {g.status === 'active' && g.start_time && !gameStarted && (
             <span className="text-[9px] font-black text-slate-500 flex items-center gap-1"><Lock className="w-2.5 h-2.5" />Picks locked after tip-off</span>
           )}
         </div>
@@ -1237,7 +1243,7 @@ const PlayinVoteBar = ({ g, currentUser }) => {
         {/* Toggle row */}
         <div className="flex items-center justify-between mt-2 px-1">
           <span className="text-[10px] text-purple-400 font-black">{g.team1.abbreviation}</span>
-          {g.picks_visible ? (
+          {picksVisible ? (
             <button onClick={handleToggle}
               className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors">
               <Users className="w-3 h-3" />
@@ -1255,7 +1261,7 @@ const PlayinVoteBar = ({ g, currentUser }) => {
       </div>
 
       {/* Expandable per-user picks */}
-      {g.picks_visible && expanded && (
+      {picksVisible && expanded && (
         <div className="border-t border-slate-800/80 bg-slate-950/40">
           {loadingPicks ? (
             <div className="flex justify-center py-5">

@@ -5156,7 +5156,15 @@ async def global_stats(season: str = "2026"):
                 t2_v = int(row[17]) if row[17] else 0
                 total = int(row[18]) if row[18] else 0
                 start_time = row[4].isoformat() if row[4] else None
-                picks_visible = row[3] != 'active'  # visible once game has started
+                # Picks unlock once status != 'active' OR start_time has passed.
+                # Checking start_time client-side handles the case where the sync
+                # worker can't mark the game completed (e.g. API quota exceeded).
+                _st_row = row[4]
+                if _st_row:
+                    _st_dt = _st_row if hasattr(_st_row, 'hour') else datetime.fromisoformat(str(_st_row))
+                    picks_visible = row[3] != 'active' or datetime.utcnow() >= _st_dt
+                else:
+                    picks_visible = row[3] != 'active'
                 playin_stats.append({
                     'game_id':       row[0],
                     'conference':    row[1],
