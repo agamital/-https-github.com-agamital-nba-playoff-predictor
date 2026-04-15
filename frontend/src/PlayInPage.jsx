@@ -189,7 +189,7 @@ const GameCard = ({ game, currentUser, onPrediction }) => {
         );
       })()}
 
-      <CommunityInsights gameId={game.id} homeTeam={game.team1} awayTeam={game.team2} initialStats={null} status={game.status} />
+      <CommunityInsights gameId={game.id} homeTeam={game.team1} awayTeam={game.team2} initialStats={null} status={game.status} startZ={startTimeZ} />
     </Card>
   );
 };
