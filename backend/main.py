@@ -2090,7 +2090,7 @@ def _send_daily_email_reminders() -> dict:
 
         open_series_ids = [r[0] for r in open_series]
         open_playin_ids = [r[0] for r in open_playin]
-        series_label    = {r[0]: f"{r[2]} vs {r[1]} ({r[3]})" for r in open_series}
+        series_label    = {r[0]: f"{r[1]} vs {r[2]} ({r[3]})" for r in open_series}
         playin_label    = {r[0]: f"{r[1]} vs {r[2]} (Play-In)" for r in open_playin}
 
         # ── 3. Eligible users: missing picks + 20-hour dedup ─────────────
@@ -3699,15 +3699,16 @@ def _clean_allstar_data_from_db():
         conn = get_db_conn()
         c = conn.cursor()
         like_clauses = " OR ".join(
-            [f"LOWER(team_name) LIKE '%{kw}%'" for kw in _ALLSTAR_KEYWORDS]
+            ["LOWER(team_name) LIKE %s" for _ in _ALLSTAR_KEYWORDS]
         )
+        like_params = tuple(f"%{kw}%" for kw in _ALLSTAR_KEYWORDS)
         c.execute(f"""
             DELETE FROM cached_standings
             WHERE {like_clauses}
                OR conference NOT IN ('East', 'West')
                OR team_name IS NULL
                OR team_name = ''
-        """)
+        """, like_params)
         deleted = c.rowcount
         conn.commit()
         conn.close()
@@ -4401,7 +4402,7 @@ async def admin_player_stats_sync():
                  games_played, pts_per_game, ast_per_game, reb_per_game,
                  stl_per_game, blk_per_game, fg3m_per_game, updated_at)
             SELECT
-                COALESCE(ps.player_id, 0),
+                ps.player_id,
                 agg.player_name,
                 agg.team_abbr,
                 '2026',
@@ -4430,7 +4431,7 @@ async def admin_player_stats_sync():
                 GROUP BY player_name
                 HAVING COUNT(DISTINCT espn_game_id) >= 5
             ) agg
-            LEFT JOIN player_stats ps
+            JOIN player_stats ps
                 ON LOWER(ps.player_name) = LOWER(agg.player_name)
                AND ps.season = '2026'
             ON CONFLICT (player_id, season) DO UPDATE SET
@@ -4824,7 +4825,7 @@ async def get_me(user_id: int):
     conn.close()
     if not row:
         raise HTTPException(404, "User not found")
-    return {"user_id": row[0], "username": row[1], "email": row[2], "role": row[4], "points": row[5]}
+    return {"user_id": row[0], "username": row[1], "email": row[2], "role": row[4], "points": row[5], "avatar_url": row[6] or ""}
 
 @app.post("/api/auth/reset-password")
 async def reset_password(data: PasswordReset):
@@ -4874,7 +4875,7 @@ async def login(creds: UserLogin):
         c.execute("UPDATE users SET role='admin' WHERE id=%s", (row[0],))
         conn.commit()
     conn.close()
-    return {"user_id": row[0], "username": row[1], "email": row[2], "role": role, "points": row[5]}
+    return {"user_id": row[0], "username": row[1], "email": row[2], "role": role, "points": row[5], "avatar_url": row[6] or ""}
 
 @app.post("/api/auth/google")
 async def google_auth(email: str, name: str = "", avatar_url: str = ""):
@@ -5678,9 +5679,32 @@ async def notifications_summary(user_id: int, season: str = "2026"):
                 if not vals[i]:
                     missing_leaders.append({'key': key, 'label': label})
 
-        total = len(missing_series) + len(missing_futures) + len(missing_leaders)
+        # ── 4. Active play-in games with no prediction ──────────────────────
+        c.execute("""
+            SELECT pg.id, ht.abbreviation, at.abbreviation
+            FROM playin_games pg
+            JOIN teams ht ON pg.home_team_id = ht.id
+            JOIN teams at ON pg.away_team_id = at.id
+            WHERE pg.season = %s AND pg.status = 'scheduled'
+            AND NOT EXISTS (
+                SELECT 1 FROM playin_predictions pp
+                WHERE pp.user_id = %s AND pp.game_id = pg.id
+            )
+            ORDER BY pg.id
+        """, (season, user_id))
+        missing_playin = []
+        for row in c.fetchall():
+            gid, h_abbr, a_abbr = row
+            missing_playin.append({
+                'id':       gid,
+                'label':    f"{h_abbr} vs {a_abbr}",
+                'sublabel': 'Play-In',
+            })
+
+        total = len(missing_series) + len(missing_playin) + len(missing_futures) + len(missing_leaders)
         return {
             'missing_series':  missing_series,
+            'missing_playin':  missing_playin,
             'missing_futures': missing_futures,
             'missing_leaders': missing_leaders,
             'futures_locked':  futures_locked,
@@ -5689,7 +5713,7 @@ async def notifications_summary(user_id: int, season: str = "2026"):
 
     except Exception as e:
         print(f"notifications_summary error: {e}")
-        return {'missing_series': [], 'missing_futures': [], 'missing_leaders': [],
+        return {'missing_series': [], 'missing_playin': [], 'missing_futures': [], 'missing_leaders': [],
                 'futures_locked': False, 'total': 0}
     finally:
         if conn:
