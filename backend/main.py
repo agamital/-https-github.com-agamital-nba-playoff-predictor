@@ -5681,11 +5681,11 @@ async def notifications_summary(user_id: int, season: str = "2026"):
 
         # ── 4. Active play-in games with no prediction ──────────────────────
         c.execute("""
-            SELECT pg.id, ht.abbreviation, at.abbreviation
+            SELECT pg.id, t1.abbreviation, t2.abbreviation
             FROM playin_games pg
-            JOIN teams ht ON pg.home_team_id = ht.id
-            JOIN teams at ON pg.away_team_id = at.id
-            WHERE pg.season = %s AND pg.status = 'scheduled'
+            JOIN teams t1 ON t1.id = pg.team1_id
+            JOIN teams t2 ON t2.id = pg.team2_id
+            WHERE pg.season = %s AND pg.status = 'active' AND pg.winner_id IS NULL
             AND NOT EXISTS (
                 SELECT 1 FROM playin_predictions pp
                 WHERE pp.user_id = %s AND pp.game_id = pg.id
