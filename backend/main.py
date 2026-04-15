@@ -3559,12 +3559,12 @@ def generate_matchups(force_conference=None):
                 print(f"  -> {conf_full} has locked/completed R1 series — skipping auto-regeneration")
                 need_series = False
 
-        # Safety: don't wipe series if users have already placed predictions on them
+        # Safety: don't wipe series if ANY R1 series has user predictions
+        # (covers 3v6/4v5 now AND 1v8/2v7 once play-in winners are picked)
         if need_series and not force_conference:
             c.execute('''SELECT COUNT(*) FROM predictions p
                          JOIN series s ON s.id = p.series_id
-                         WHERE s.season = %s AND s.conference = %s AND s.round = 'First Round'
-                           AND s.home_seed NOT IN (1, 2) AND s.away_seed NOT IN (7, 8)''',
+                         WHERE s.season = %s AND s.conference = %s AND s.round = 'First Round' ''',
                       ('2026', conf_full))
             if c.fetchone()[0] > 0:
                 print(f"  -> {conf_full} R1 series have user predictions — skipping regeneration to protect picks")
@@ -3575,19 +3575,29 @@ def generate_matchups(force_conference=None):
             continue
 
         if need_series or force_conference:
-            # Only delete the seeds-3v6 and seeds-4v5 series.
-            # Preserve 1v8 and 2v7 play-in winner series + their predictions.
+            # Only delete 3v6 and 4v5 series that have NO user predictions.
+            # Series with picks are NEVER deleted, regardless of force flag —
+            # this is the last line of defence so picks can never be lost.
             c.execute('''SELECT id FROM series
                          WHERE season = %s AND conference = %s AND round = 'First Round'
-                           AND home_seed NOT IN (1, 2) AND away_seed NOT IN (7, 8)''',
+                           AND home_seed NOT IN (1, 2) AND away_seed NOT IN (7, 8)
+                           AND id NOT IN (SELECT DISTINCT series_id FROM predictions)''',
                       ('2026', conf_full))
             old_ids = [r[0] for r in c.fetchall()]
             if old_ids:
+                # Double-check: no predictions exist on these ids (belt-and-suspenders)
                 c.execute("DELETE FROM predictions WHERE series_id = ANY(%s)", (old_ids,))
-            c.execute('''DELETE FROM series
+                c.execute('''DELETE FROM series WHERE id = ANY(%s)''', (old_ids,))
+                print(f"  -> Deleted {len(old_ids)} empty R1 series for {conf_full}")
+            # Log any series that were skipped because they had predictions
+            c.execute('''SELECT id FROM series
                          WHERE season = %s AND conference = %s AND round = 'First Round'
-                           AND home_seed NOT IN (1, 2) AND away_seed NOT IN (7, 8)''',
+                           AND home_seed NOT IN (1, 2) AND away_seed NOT IN (7, 8)
+                           AND id IN (SELECT DISTINCT series_id FROM predictions)''',
                       ('2026', conf_full))
+            protected = [r[0] for r in c.fetchall()]
+            if protected:
+                print(f"  -> Kept {len(protected)} R1 series with predictions (protected from deletion)")
             matchups = [(teams[2], teams[5]), (teams[3], teams[4])]
             bracket_groups = ['B', 'A']  # 3v6 → Group B, 4v5 → Group A
             for (home, away), bg in zip(matchups, bracket_groups):
