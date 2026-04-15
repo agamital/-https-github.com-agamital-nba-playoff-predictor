@@ -1163,7 +1163,7 @@ const PlayinVoteBar = ({ g, currentUser }) => {
   // Picks unlock once the backend confirms started OR start_time has passed
   // client-side — guards against sync worker failures (API quota exceeded etc.)
   const startMs = g.start_time ? new Date(g.start_time + (g.start_time.endsWith('Z') ? '' : 'Z')).getTime() : null;
-  const picksVisible = g.picks_visible || (startMs != null && Date.now() >= startMs);
+  const picksVisible = g.picks_visible || (startMs != null && Date.now() >= startMs) || picksRevealed();
   const gameStarted  = startMs != null && Date.now() >= startMs;
 
   const handleToggle = async () => {
