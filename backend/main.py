@@ -6454,6 +6454,31 @@ async def reset_playin_result(game_id: int):
     return {"message": "Play-in result reset — scores recalculated"}
 
 
+@app.delete("/api/admin/playin/{game_id}")
+async def delete_playin_game(game_id: int):
+    """Delete a play-in game row (ONLY if it has zero user predictions).
+    Used to remove incorrectly-auto-created elimination games so the system
+    can recreate them correctly once the real results arrive."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT game_type, conference, status FROM playin_games WHERE id = %s", (game_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Play-in game not found")
+    game_type, conference, status = row
+    # Safety: refuse to delete if any user has placed predictions on this game
+    c.execute("SELECT COUNT(*) FROM playin_predictions WHERE game_id = %s", (game_id,))
+    pred_count = c.fetchone()[0]
+    if pred_count > 0:
+        conn.close()
+        raise HTTPException(400, f"Cannot delete — {pred_count} user predictions exist on this game")
+    c.execute("DELETE FROM playin_games WHERE id = %s", (game_id,))
+    conn.commit()
+    conn.close()
+    return {"message": f"Deleted {conference} {game_type} play-in game (id={game_id})"}
+
+
 @app.post("/api/admin/playin/sync")
 async def sync_playin(season: str = "2026"):
     """Manually trigger all play-in bracket progressions for the season (idempotent)."""
