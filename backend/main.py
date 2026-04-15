@@ -3559,6 +3559,17 @@ def generate_matchups(force_conference=None):
                 print(f"  -> {conf_full} has locked/completed R1 series — skipping auto-regeneration")
                 need_series = False
 
+        # Safety: don't wipe series if users have already placed predictions on them
+        if need_series and not force_conference:
+            c.execute('''SELECT COUNT(*) FROM predictions p
+                         JOIN series s ON s.id = p.series_id
+                         WHERE s.season = %s AND s.conference = %s AND s.round = 'First Round'
+                           AND s.home_seed NOT IN (1, 2) AND s.away_seed NOT IN (7, 8)''',
+                      ('2026', conf_full))
+            if c.fetchone()[0] > 0:
+                print(f"  -> {conf_full} R1 series have user predictions — skipping regeneration to protect picks")
+                need_series = False
+
         if not need_series and not need_playin and not force_conference:
             print(f"  -> {conf_full} already matches current standings, skipping")
             continue
