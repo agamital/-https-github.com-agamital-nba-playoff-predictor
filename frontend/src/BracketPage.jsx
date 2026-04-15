@@ -609,37 +609,32 @@ const PlayInPicker = ({ game, pick, onSave, saved }) => {
   const piSecs = usePlayInCountdown(startZ);
   const betsClosed = !game || game.status === 'completed' || (piSecs !== null && piSecs <= 0);
 
-  if (betsClosed) {
-    return (
-      <div className="w-40 rounded-xl px-2 py-2 bg-slate-950/80 border border-red-500/20 flex items-center justify-center gap-1.5">
-        <Lock className="w-3 h-3 text-red-400 shrink-0" />
-        <span className="text-[9px] font-black text-red-400">Bets Closed</span>
-      </div>
-    );
-  }
-
   return (
     <div className={`w-40 rounded-xl px-2 py-2 space-y-1.5 shadow-lg ${
+      betsClosed ? 'bg-slate-950/80 border border-red-500/15' :
       isUnderdogPick
         ? 'bg-slate-950/90 border border-amber-500/30 shadow-amber-500/10'
         : 'bg-slate-950/80 border border-orange-500/20'
     }`}>
-      {isUnderdogPick ? (
+      {!betsClosed && (isUnderdogPick ? (
         <div className="text-center">
           <p className="text-[9px] font-black text-amber-400">🔥 Underdog Bonus!</p>
           <p className="text-[8px] text-amber-400/60 font-bold">+{pts} pts if correct</p>
         </div>
       ) : (
         <p className="text-[9px] text-cyan-400/80 font-black text-center">+{pts} pts if correct</p>
-      )}
-      <button onClick={() => onSave(game?.id)} disabled={!pick?.teamId}
-        className={`w-full py-1.5 rounded-lg text-xs font-black tracking-wide transition-all ${
+      ))}
+      <button onClick={betsClosed ? undefined : () => onSave(game?.id)}
+        disabled={betsClosed || !pick?.teamId}
+        className={`w-full py-1.5 rounded-lg text-xs font-black tracking-wide transition-all flex items-center justify-center gap-1 ${
+          betsClosed ? 'bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed' :
           saved ? 'bg-green-500/20 border border-green-500/40 text-green-400' :
           !pick?.teamId ? 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed' :
           isUnderdogPick ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md shadow-amber-500/30' :
           'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-500/30'
         }`}>
-        {saved ? '✓ Saved!' : `Save Pick • +${pts} pts`}
+        {betsClosed ? <><Lock className="w-3 h-3 shrink-0" /> Bets Closed</> :
+         saved ? '✓ Saved!' : `Save Pick • +${pts} pts`}
       </button>
     </div>
   );
@@ -745,10 +740,9 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
                 {picks[s.id]?.teamId && s.status === 'active' && (
                   <div style={{ position: 'absolute', top: CH + 26, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
                     {s.picks_locked ? (
-                      <div className="w-44 rounded-xl px-3 py-2 bg-slate-950/90 border border-red-500/20 flex items-center justify-center gap-1.5 whitespace-nowrap">
-                        <Lock className="w-3 h-3 text-red-400 shrink-0" />
-                        <span className="text-[9px] font-black text-red-400">Bets Locked · Game Started</span>
-                      </div>
+                      <button disabled className="w-44 py-1.5 rounded-lg text-[10px] font-black bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed flex items-center justify-center gap-1.5 whitespace-nowrap">
+                        <Lock className="w-3 h-3 shrink-0" /> Bets Locked
+                      </button>
                     ) : confirmed[s.id] ? (
                       <button
                         onClick={() => onEdit(s.id)}
@@ -847,20 +841,21 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
       {teamBtn(team1, p1, betsClosed ? undefined : () => onTeamClick(game, team1?.id))}
       <div className="text-center text-xs text-slate-600 font-bold">VS</div>
       {teamBtn(team2, p2, betsClosed ? undefined : () => onTeamClick(game, team2?.id))}
-      {betsClosed ? (
-        <div className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-black">
-          <Lock className="w-3.5 h-3.5 shrink-0" /> Bets Closed — Game Started
-        </div>
-      ) : (p1 || p2) && (
-        <button onClick={() => onSave(game.id)}
-          className={`w-full py-3 rounded-xl font-black text-sm transition-all mt-1 ${
-            saved ? 'bg-green-500 text-white' :
-            pickedIsUnderdog ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/25' :
-            'bg-gradient-to-r from-orange-500 to-red-500 text-white'
-          }`}>
-          {saved ? '✓ Saved!' : `Save Pick • +${pickedPts} pts`}
-        </button>
-      )}
+      <button
+        onClick={betsClosed ? undefined : () => onSave(game.id)}
+        disabled={betsClosed || !(p1 || p2)}
+        className={`w-full py-3 rounded-xl font-black text-sm transition-all mt-1 flex items-center justify-center gap-2 ${
+          betsClosed ? 'bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed' :
+          saved ? 'bg-green-500 text-white' :
+          !(p1 || p2) ? 'bg-slate-800 border border-slate-700 text-slate-600 cursor-not-allowed' :
+          pickedIsUnderdog ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/25' :
+          'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+        }`}>
+        {betsClosed ? <><Lock className="w-4 h-4 shrink-0" /> Bets Closed</> :
+         saved ? '✓ Saved!' :
+         !(p1 || p2) ? 'Pick a team to save' :
+         `Save Pick • +${pickedPts} pts`}
+      </button>
       <CommunityInsights
         gameId={game.id}
         homeTeam={team1}
@@ -1019,9 +1014,9 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
         </div>
       )}
       {picked && !isCompleted && isLocked && (
-        <div className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-black">
-          <Lock className="w-3.5 h-3.5 shrink-0" /> Bets Locked · Game 1 Started
-        </div>
+        <button disabled className="w-full py-2.5 rounded-xl font-black text-sm bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed flex items-center justify-center gap-2">
+          <Lock className="w-4 h-4 shrink-0" /> Bets Locked
+        </button>
       )}
       {picked && !isCompleted && !isLocked && confirmed && (
         <button
