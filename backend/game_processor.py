@@ -72,14 +72,91 @@ def _log(msg: str):
 # ---------------------------------------------------------------------------
 # RapidAPI scoreboard — Play-In detection
 # ---------------------------------------------------------------------------
-# Endpoint: nba-api-free-data scoreboard
-# Response shape: { "response": { "Events": [ <event>, ... ] } }
-# Play-In events: event['season']['type'] == 5  OR  slug == 'play-in-season'
-# Finished:       event['status']['type']['name'] == 'STATUS_FINAL'
-#                 event['status']['type']['completed'] == True
+# ESPN free scoreboard — same event format as the RapidAPI proxy, no key needed.
+# Query by date: ?dates=YYYYMMDD
+_ESPN_SCOREBOARD_URL = (
+    "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+)
+
+# RapidAPI fallback (used only if ESPN is unreachable)
 _RAPIDAPI_SCOREBOARD_URL = (
     "https://nba-api-free-data.p.rapidapi.com/nba-scoreboard"
 )
+
+
+def _fetch_nba_events_for_sync(summary: dict) -> list:
+    """
+    Return a flat list of NBA scoreboard events covering today + the past 7 days.
+
+    Tries ESPN's free API first (no quota, same ESPN-format JSON).
+    Falls back to RapidAPI only if every ESPN request fails.
+
+    On total failure, appends to summary['errors'] and returns [].
+    """
+    import requests as _http
+    from datetime import datetime, timedelta
+
+    headers_espn = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0",
+    }
+    today      = datetime.utcnow().date()
+    all_events = []
+    espn_ok    = False
+
+    for days_ago in range(7):          # today + 6 previous days
+        check_date = today - timedelta(days=days_ago)
+        date_str   = check_date.strftime("%Y%m%d")
+        try:
+            resp = _http.get(
+                _ESPN_SCOREBOARD_URL,
+                params={"dates": date_str},
+                headers=headers_espn,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data       = resp.json()
+                day_events = data.get("events") or []
+                all_events.extend(day_events)
+                espn_ok    = True
+                _log(f"ESPN {date_str}: {len(day_events)} events")
+            else:
+                _log(f"ESPN {date_str}: HTTP {resp.status_code} — skipping")
+        except Exception as e:
+            _log(f"ESPN {date_str} fetch error: {type(e).__name__}: {e}")
+
+    if espn_ok:
+        _log(f"ESPN total events (7-day window): {len(all_events)}")
+        return all_events
+
+    # ── RapidAPI fallback ────────────────────────────────────────────────
+    _log("ESPN unavailable — falling back to RapidAPI")
+    try:
+        from main import _RAPIDAPI_KEY, _RAPIDAPI_HOST
+        if not _RAPIDAPI_KEY:
+            raise ValueError("RAPIDAPI_KEY not set")
+        resp = _http.get(
+            _RAPIDAPI_SCOREBOARD_URL,
+            headers={"x-rapidapi-key": _RAPIDAPI_KEY,
+                     "x-rapidapi-host": _RAPIDAPI_HOST},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data     = resp.json()
+        resp_obj = data.get("response", data)
+        if isinstance(resp_obj, dict):
+            events = resp_obj.get("Events") or resp_obj.get("events") or []
+        elif isinstance(resp_obj, list):
+            events = resp_obj
+        else:
+            events = []
+        _log(f"RapidAPI fallback: {len(events)} events")
+        return events
+    except Exception as e:
+        err = f"All scoreboard sources failed: {type(e).__name__}: {e}"
+        _log(err)
+        summary["errors"].append(err)
+        return []
 
 # Seed-pair → stage mapping for stage inference when DB lookup fails
 _SEED_PAIR_TO_STAGE = {
@@ -240,50 +317,14 @@ def sync_playin_results_from_api(season: str = "2026") -> dict:
         "details":   list,  per-game processing log
       }
     """
-    import requests as _http
-
-    try:
-        from main import _RAPIDAPI_KEY, _RAPIDAPI_HOST
-    except ImportError as e:
-        return {"processed": 0, "promoted": 0, "skipped": 0,
-                "errors": [f"Cannot import main: {e}"], "details": []}
-
     summary = {"processed": 0, "promoted": 0, "skipped": 0, "errors": [], "details": []}
 
-    # ── 1. Fetch scoreboard ──────────────────────────────────────────────
-    if not _RAPIDAPI_KEY:
-        err = "RAPIDAPI_KEY not set — cannot fetch scoreboard"
-        _log(err)
-        summary["errors"].append(err)
+    # ── 1. Fetch events — ESPN free API (7-day window), RapidAPI fallback ─
+    events = _fetch_nba_events_for_sync(summary)
+    if not events:
         return summary
 
-    try:
-        _log(f"GET {_RAPIDAPI_SCOREBOARD_URL} (season={season})")
-        resp = _http.get(
-            _RAPIDAPI_SCOREBOARD_URL,
-            headers={"x-rapidapi-key": _RAPIDAPI_KEY, "x-rapidapi-host": _RAPIDAPI_HOST},
-            timeout=10,
-        )
-        _log(f"Scoreboard HTTP {resp.status_code}")
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        err = f"Scoreboard fetch failed: {type(e).__name__}: {e}"
-        _log(err)
-        summary["errors"].append(err)
-        return summary
-
-    # ── 2. Extract Events array ──────────────────────────────────────────
-    # Shape: data['response']['Events']  (capital E confirmed by user)
-    resp_obj = data.get("response", data)  # handle bare-list or nested
-    if isinstance(resp_obj, dict):
-        events = resp_obj.get("Events") or resp_obj.get("events") or []
-    elif isinstance(resp_obj, list):
-        events = resp_obj
-    else:
-        events = []
-
-    _log(f"Total events in scoreboard: {len(events)}")
+    _log(f"Total events to scan for play-in: {len(events)}")
 
     # ── 3. Filter Play-In events ─────────────────────────────────────────
     playin_events = []
@@ -489,53 +530,18 @@ def sync_playoff_results_from_api(season: str = "2026") -> dict:
       never counted twice even if the endpoint is called multiple times while
       the scoreboard still shows recent finished games.
     """
-    import requests as _http
-
-    try:
-        from main import _RAPIDAPI_KEY, _RAPIDAPI_HOST
-    except ImportError as e:
-        return {"processed": 0, "updated": 0, "completed": 0, "skipped": 0,
-                "errors": [f"Cannot import main: {e}"], "details": []}
-
     summary = {"processed": 0, "updated": 0, "completed": 0,
                "skipped": 0, "errors": [], "details": []}
 
     # ── 0. Ensure dedup table exists ─────────────────────────────────────
     _ensure_processed_events_table()
 
-    # ── 1. Fetch scoreboard ──────────────────────────────────────────────
-    if not _RAPIDAPI_KEY:
-        err = "RAPIDAPI_KEY not set — cannot fetch scoreboard"
-        _log(err)
-        summary["errors"].append(err)
+    # ── 1. Fetch events — ESPN free API (7-day window), RapidAPI fallback ─
+    events = _fetch_nba_events_for_sync(summary)
+    if not events:
         return summary
 
-    try:
-        _log(f"GET {_RAPIDAPI_SCOREBOARD_URL} [playoff sync, season={season}]")
-        resp = _http.get(
-            _RAPIDAPI_SCOREBOARD_URL,
-            headers={"x-rapidapi-key": _RAPIDAPI_KEY, "x-rapidapi-host": _RAPIDAPI_HOST},
-            timeout=10,
-        )
-        _log(f"Scoreboard HTTP {resp.status_code}")
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        err = f"Scoreboard fetch failed: {type(e).__name__}: {e}"
-        _log(err)
-        summary["errors"].append(err)
-        return summary
-
-    # ── 2. Extract Events array ──────────────────────────────────────────
-    resp_obj = data.get("response", data)
-    if isinstance(resp_obj, dict):
-        events = resp_obj.get("Events") or resp_obj.get("events") or []
-    elif isinstance(resp_obj, list):
-        events = resp_obj
-    else:
-        events = []
-
-    _log(f"Total events in scoreboard: {len(events)}")
+    _log(f"Total events to scan for playoffs: {len(events)}")
 
     # ── 3. Filter Playoff events ─────────────────────────────────────────
     playoff_events = []

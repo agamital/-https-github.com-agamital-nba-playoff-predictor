@@ -21,8 +21,10 @@ from main import (  # noqa: E402
     _auto_sync_leaders_actuals, NBA_API_AVAILABLE,
 )
 
-# Fire at these UTC hours each day
-_SYNC_HOURS = (4, 5, 6, 7, 8, 9)
+# Fire at these UTC hours each day.
+# Play-in / playoff games typically end 01:00–05:00 UTC, so we cover
+# that window plus the morning hours for a quick catch-up.
+_SYNC_HOURS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
 
 
 def _seconds_until_next_fire() -> tuple[float, int]:
