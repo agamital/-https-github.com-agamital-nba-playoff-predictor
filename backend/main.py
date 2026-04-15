@@ -3811,6 +3811,24 @@ async def startup():
         except Exception as e:
             print(f"[Auto-Sync {label}] Play-In ERROR: {type(e).__name__}: {e}")
 
+        # Step 4b — Re-apply bracket promotions for all completed play-in games
+        # (idempotent gap-filler in case sync missed a game earlier)
+        try:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute('''SELECT id, winner_id FROM playin_games
+                         WHERE season = '2026' AND status = 'completed' AND winner_id IS NOT NULL''')
+            completed_pi = c.fetchall()
+            for gid, wid in completed_pi:
+                _try_create_r1_from_playin(c, gid, wid, '2026')
+            _try_create_playin_game3(c, '2026')
+            conn.commit()
+            conn.close()
+            if completed_pi:
+                print(f"[Auto-Sync {label}] Bracket re-sync — {len(completed_pi)} completed play-in game(s)")
+        except Exception as e:
+            print(f"[Auto-Sync {label}] Bracket re-sync ERROR: {type(e).__name__}: {e}")
+
         # Step 5 — Playoff results + bracket advancement + prediction scoring
         # Leaders are already computed (step 3), so _finalize_series() will
         # include leader points in the prediction scores automatically.
@@ -6173,18 +6191,34 @@ def _try_create_r1_from_playin(c, game_id, winner_id, season):
 
     if game_type == '7v8':
         # Winner is the 7-seed → plays 2-seed in R1 Group B
-        c.execute('SELECT id FROM series WHERE season = %s AND conference = %s AND round = %s AND bracket_group = %s',
-                  (season, conf, 'First Round', 'B'))
-        if not c.fetchone():
+        # Check by seed pair, NOT bracket_group (generate_matchups also uses group 'B' for 3v6)
+        c.execute('''SELECT id FROM series WHERE season = %s AND conference = %s
+                     AND round = 'First Round' AND home_seed = 2 AND away_seed = 7''',
+                  (season, conf))
+        existing = c.fetchone()
+        if existing:
+            # Series slot exists (possibly pre-created) — update the play-in winner
+            c.execute('''UPDATE series SET away_team_id = %s, status = 'active'
+                         WHERE id = %s AND (away_team_id IS NULL OR away_team_id != %s)''',
+                      (winner_id, existing[0], winner_id))
+        else:
             c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
                          home_seed, away_seed, status, bracket_group)
                          VALUES (%s, 'First Round', %s, %s, %s, 2, 7, 'active', 'B')''',
                       (season, conf, seed2_id, winner_id))
     elif game_type == 'elimination':
         # Winner is the 8-seed → plays 1-seed in R1 Group A
-        c.execute('SELECT id FROM series WHERE season = %s AND conference = %s AND round = %s AND bracket_group = %s',
-                  (season, conf, 'First Round', 'A'))
-        if not c.fetchone():
+        # Check by seed pair, NOT bracket_group (generate_matchups also uses group 'A' for 4v5)
+        c.execute('''SELECT id FROM series WHERE season = %s AND conference = %s
+                     AND round = 'First Round' AND home_seed = 1 AND away_seed = 8''',
+                  (season, conf))
+        existing = c.fetchone()
+        if existing:
+            # Series slot exists — update the play-in winner
+            c.execute('''UPDATE series SET away_team_id = %s, status = 'active'
+                         WHERE id = %s AND (away_team_id IS NULL OR away_team_id != %s)''',
+                      (winner_id, existing[0], winner_id))
+        else:
             c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
                          home_seed, away_seed, status, bracket_group)
                          VALUES (%s, 'First Round', %s, %s, %s, 1, 8, 'active', 'A')''',

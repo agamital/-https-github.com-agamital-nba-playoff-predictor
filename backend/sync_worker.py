@@ -87,6 +87,25 @@ def _run_full_chain():
               f"processed={pi.get('processed',0)} promoted={pi.get('promoted',0)} "
               f"errors={len(pi.get('errors',[]))}")
 
+        # Step 4b — Re-apply bracket promotions for all completed play-in games
+        # (idempotent: fills any gaps where R1 series wasn't created yet)
+        try:
+            from main import get_db_conn, _try_create_r1_from_playin, _try_create_playin_game3
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute('''SELECT id, winner_id FROM playin_games
+                         WHERE season = '2026' AND status = 'completed' AND winner_id IS NOT NULL''')
+            completed_pi = c.fetchall()
+            for gid, wid in completed_pi:
+                _try_create_r1_from_playin(c, gid, wid, '2026')
+            _try_create_playin_game3(c, '2026')
+            conn.commit()
+            conn.close()
+            if completed_pi:
+                print(f"[Auto-Sync {label}] Bracket re-sync — {len(completed_pi)} completed play-in game(s) processed")
+        except Exception as e:
+            print(f"[Auto-Sync {label}] Bracket re-sync ERROR: {type(e).__name__}: {e}")
+
         # Step 5 — Playoff results + bracket advancement + leader scoring
         po = sync_playoff_results_from_api('2026')
         print(f"[Auto-Sync {label}] Playoff — "
