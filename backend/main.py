@@ -6509,7 +6509,7 @@ async def reset_playin_result(game_id: int):
         conn.close()
         raise HTTPException(404, "Play-in game not found")
 
-    c.execute('UPDATE playin_predictions SET is_correct = 0, points_earned = 0 WHERE game_id = %s', (game_id,))
+    c.execute('UPDATE playin_predictions SET is_correct = NULL, points_earned = 0 WHERE game_id = %s', (game_id,))
     c.execute("UPDATE playin_games SET winner_id = NULL, status = 'active' WHERE id = %s", (game_id,))
     _recalculate_all_points(c)
     conn.commit()
