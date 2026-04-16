@@ -1097,8 +1097,8 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const { data: series = [],    isLoading: l1, isError: e1, refetch: r1 } = useQuery({ queryKey: ['series', '2026'],    queryFn: () => api.getSeries('2026'),      staleTime: 60 * 1000, refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000 });
   const { data: playInGames = [], isLoading: l2, isError: e2, refetch: r2 } = useQuery({ queryKey: ['playin', '2026'],  queryFn: () => api.getPlayInGames('2026'), staleTime: 60 * 1000, refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000 });
   const { data: allTeams = [],  isLoading: l3, isError: e3, refetch: r3 } = useQuery({ queryKey: ['teams'],             queryFn: () => api.getTeams() });
-  const { data: standingsRaw,   isLoading: l4, isError: e4, refetch: r4 } = useQuery({ queryKey: ['standings'],         queryFn: () => api.getStandings() });
-  const { data: globalStats }                   = useQuery({ queryKey: ['globalStats'],         queryFn: () => api.getGlobalStats('2026'), staleTime: 5 * 60 * 1000 });
+  const { data: standingsRaw,   isLoading: l4, isError: e4, refetch: r4 } = useQuery({ queryKey: ['standings'],         queryFn: () => api.getStandings(),         staleTime: 2 * 60 * 1000, refetchInterval: 5 * 60 * 1000 });
+  const { data: globalStats }                   = useQuery({ queryKey: ['globalStats'],         queryFn: () => api.getGlobalStats('2026'), staleTime: 2 * 60 * 1000, refetchInterval: 3 * 60 * 1000 });
 
   const standings = standingsRaw || { eastern: [], western: [] };
   const loading   = l1 || l2 || l3 || l4;

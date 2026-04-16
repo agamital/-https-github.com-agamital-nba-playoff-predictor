@@ -1347,6 +1347,7 @@ const GlobalStatsTab = ({ currentUser }) => {
     queryFn:  () => api.getGlobalStats('2026'),
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: true,
+    refetchInterval: 3 * 60 * 1000,
   });
 
   if (loading) return (
@@ -1881,6 +1882,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
     enabled:  !!userId,
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: true,
+    refetchInterval: 3 * 60 * 1000,
   });
 
   // ── SDK readiness + subscription state ───────────────────────────────────
@@ -2326,6 +2328,7 @@ function App() {
     enabled:  !!currentUser?.user_id,
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: true,
+    refetchInterval: 3 * 60 * 1000,
   });
   const navBadgeCount = _navSummary?.total ?? 0;
 
