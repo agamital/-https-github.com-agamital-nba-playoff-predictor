@@ -1455,7 +1455,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
           )}
 
           <div className="space-y-3">
-            {wSlots.filter(Boolean).length > 0 ? wSlots.filter(Boolean).map(s => (
+            {westSlots.filter(Boolean).length > 0 ? westSlots.filter(Boolean).map(s => (
               <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
@@ -1502,7 +1502,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
           )}
 
           <div className="space-y-3">
-            {eSlots.filter(Boolean).length > 0 ? eSlots.filter(Boolean).map(s => (
+            {eastSlots.filter(Boolean).length > 0 ? eastSlots.filter(Boolean).map(s => (
               <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>

@@ -151,16 +151,39 @@ export function loginUser(externalId) {
 }
 
 /**
- * Clears all OneSignal operation-queue entries from localStorage so that
- * a stuck 400-retry loop doesn't survive a page reload.
+ * Clears all OneSignal operation-queue entries from both localStorage AND
+ * IndexedDB so that a stuck "Op failed, pausing" retry loop doesn't survive
+ * a page reload.  OneSignal v16 moved its OperationRepo to IndexedDB
+ * ("ONE_SIGNAL_SDK_DB"), so localStorage-only cleanup is insufficient.
+ *
+ * Only nukes storage when the device is in a "local-…" stuck state (no
+ * permanent onesignalId), so valid subscriptions are never disturbed.
+ *
  * Safe to call even when OneSignal is disabled.
  */
-export function clearStaleOSOperations() {
+export async function clearStaleOSOperations() {
   try {
+    // localStorage cleanup (v15 compat + stale keys)
     const toRemove = Object.keys(localStorage).filter(k =>
-      k.startsWith('onesignal-') || k === 'ONE_SIGNAL_SDK_DB'
+      k.startsWith('onesignal-') || k.startsWith('ONE_SIGNAL')
     );
     toRemove.forEach(k => localStorage.removeItem(k));
-    if (toRemove.length) console.log('[OneSignal] cleared stale operation keys:', toRemove);
+    if (toRemove.length) console.log('[OneSignal] cleared stale localStorage keys:', toRemove);
+  } catch { /* non-fatal */ }
+
+  // IndexedDB cleanup — only when device is stuck in "local-…" state
+  try {
+    const sdk = getOneSignal();
+    const oid = sdk?.User?.onesignalId ?? '';
+    const isStuck = !oid || oid.startsWith('local-');
+    if (isStuck && 'indexedDB' in window) {
+      // Delete the whole OneSignal IDB — it will be recreated cleanly on next init
+      await new Promise((resolve) => {
+        const req = indexedDB.deleteDatabase('ONE_SIGNAL_SDK_DB');
+        req.onsuccess = () => { console.log('[OneSignal] cleared stuck IndexedDB'); resolve(); };
+        req.onerror   = () => resolve();  // non-fatal
+        req.onblocked = () => resolve();
+      });
+    }
   } catch { /* non-fatal */ }
 }
