@@ -1985,9 +1985,33 @@ const AdminPage = ({ currentUser }) => {
       const res = await api.syncAndAdvance();
       const updated = await api.getAdminSeries();
       setSeries(updated);
-      addToast(res.message || 'Sync complete', 'success');
+      const scored = (res.playin_predictions_scored || 0) + (res.series_predictions_scored || 0);
+      addToast(
+        (res.message || 'Sync complete') + (scored > 0 ? ` · ${scored} predictions scored` : ''),
+        'success'
+      );
     } catch (e) {
       addToast('Sync failed: ' + (e.response?.data?.detail || e.message), 'error');
+    }
+  };
+
+  const [backfilling, setBackfilling] = useState(false);
+  const handleBackfillScores = async () => {
+    setBackfilling(true);
+    try {
+      const res = await api.backfillScores();
+      const scored = (res.playin_predictions_scored || 0) + (res.series_predictions_scored || 0);
+      const msg = scored > 0
+        ? `Scored ${scored} predictions (play-in: ${res.playin_predictions_scored}, series: ${res.series_predictions_scored})`
+        : 'All predictions already scored — nothing to update';
+      addToast(msg, scored > 0 ? 'success' : 'info');
+      const [updatedPlayin, updatedSeries] = await Promise.all([api.getAdminPlayin(), api.getAdminSeries()]);
+      setPlayin(updatedPlayin);
+      setSeries(updatedSeries);
+    } catch (e) {
+      addToast('Backfill failed: ' + (e.response?.data?.detail || e.message), 'error');
+    } finally {
+      setBackfilling(false);
     }
   };
 
@@ -2101,13 +2125,22 @@ const AdminPage = ({ currentUser }) => {
           </div>
           <p className="text-slate-400 text-sm">Set results — scores update automatically</p>
         </div>
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
           <button onClick={handleSyncAndAdvance}
             className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30 font-bold text-xs sm:text-sm transition-all"
             title="Re-run bracket advancement for all completed series and recalculate all points">
             <Zap className="w-4 h-4" />
             <span className="hidden sm:inline">Sync &amp; Advance</span>
             <span className="sm:hidden">Advance</span>
+          </button>
+          <button
+            onClick={handleBackfillScores}
+            disabled={backfilling}
+            className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30 font-bold text-xs sm:text-sm transition-all disabled:opacity-50"
+            title="Score all unscored predictions for completed games — safe to run multiple times">
+            {backfilling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            <span className="hidden sm:inline">Backfill Scores</span>
+            <span className="sm:hidden">Score</span>
           </button>
           <button onClick={load} className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800/50 transition-all text-xs sm:text-sm font-bold">
             <RefreshCw className="w-4 h-4" />

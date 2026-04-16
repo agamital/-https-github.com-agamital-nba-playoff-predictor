@@ -276,6 +276,11 @@ export const syncAndAdvance = async (season = '2026') => {
   return response.data;
 };
 
+export const backfillScores = async (season = '2026') => {
+  const response = await api.post(`/api/admin/backfill-scores?season=${season}`);
+  return response.data;
+};
+
 export const getAdminPlayin = async (season = '2026') => {
   const response = await api.get('/api/admin/playin', { params: { season } });
   return response.data;

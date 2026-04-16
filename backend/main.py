@@ -4051,8 +4051,7 @@ async def startup():
             misfire_grace_time=600,
             max_instances=1,
         )
-    # Extra play-in window syncs — games finish 23:30–02:00 UTC so we need
-    # results picked up before the 04:00 job.  Fire at 00:30 and 02:30 UTC.
+    # Extra play-in / early-overnight syncs: 00:30 and 02:30 UTC
     for _hhmm, _jid in [('30 0', 'full_chain_sync_0030'), ('30 2', 'full_chain_sync_0230')]:
         _scheduler.add_job(
             _full_chain_sync,
@@ -4062,6 +4061,20 @@ async def startup():
             misfire_grace_time=600,
             max_instances=1,
         )
+    # Evening game-window syncs — NBA games tip off from ~17:00 UTC (1PM ET)
+    # through midnight.  Fire hourly so results land within 1 hour of any game.
+    # These close the previous 09:00–00:30 UTC gap (15.5 h with no cron).
+    for _hr in (17, 18, 19, 20, 21, 22, 23):
+        _scheduler.add_job(
+            _full_chain_sync,
+            CronTrigger.from_crontab(f'0 {_hr} * * *'),
+            id=f'full_chain_sync_{_hr:02d}00',
+            replace_existing=True,
+            misfire_grace_time=600,
+            max_instances=1,
+        )
+    print("[Scheduler] Added evening game-window syncs at "
+          "17:00, 18:00, 19:00, 20:00, 21:00, 22:00, 23:00 UTC")
     print("[Scheduler] Full-chain sync scheduled at 04:00–09:00 UTC + 00:30 + 02:30 UTC (play-in window)")
 
     # ── 2c) Auto-lock futures + leaders at first First Round tip-off ─────────
@@ -6675,7 +6688,9 @@ async def reset_series_result(series_id: int):
 
 @app.post("/api/admin/sync-and-advance")
 async def sync_and_advance(season: str = "2026"):
-    """Re-run bracket advancement for all completed series and recalculate all points."""
+    """Re-run bracket advancement for all completed series, score any unscored
+    predictions, and recalculate all user points.  Use this as the admin backup
+    trigger when the automatic system needs a nudge."""
     conn = get_db_conn()
     c = conn.cursor()
 
@@ -6694,7 +6709,40 @@ async def sync_and_advance(season: str = "2026"):
     _recalculate_all_points(c)
     conn.commit()
     conn.close()
-    return {"message": f"Synced {len(completed)} completed series — points recalculated", "completed_count": len(completed)}
+
+    # Also run DB-driven score backfill for any unscored predictions
+    pi_bf = _backfill_playin_scores(season)
+    s_bf  = _backfill_series_scores(season)
+
+    return {
+        "message": f"Synced {len(completed)} completed series — points recalculated",
+        "completed_count": len(completed),
+        "playin_predictions_scored": pi_bf.get("rows_scored", 0),
+        "series_predictions_scored": s_bf.get("rows_scored", 0),
+    }
+
+
+@app.post("/api/admin/backfill-scores")
+async def admin_backfill_scores(season: str = "2026"):
+    """
+    Admin backup: score all unscored predictions for completed play-in games
+    and series, then recalculate every user's total points.
+
+    This is the manual safety net — use it when the automatic backfill
+    (which runs on startup and every sync cycle) hasn't kicked in yet,
+    or to verify that all predictions are correctly scored.
+    Idempotent: re-running never double-awards points.
+    """
+    pi_bf = _backfill_playin_scores(season)
+    s_bf  = _backfill_series_scores(season)
+    return {
+        "message": "Score backfill complete",
+        "playin_games_checked":        pi_bf.get("games_checked", 0),
+        "playin_predictions_scored":   pi_bf.get("rows_scored",   0),
+        "series_checked":              s_bf.get("series_checked", 0),
+        "series_predictions_scored":   s_bf.get("rows_scored",    0),
+        "points_recalculated":         pi_bf.get("points_recalculated") or s_bf.get("points_recalculated"),
+    }
 
 @app.get("/api/admin/playin")
 async def admin_get_playin(season: str = "2026"):
