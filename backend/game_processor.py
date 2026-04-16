@@ -547,6 +547,14 @@ def sync_playin_results_from_api(season: str = "2026") -> dict:
             summary["skipped"] += 1
             continue
 
+        # Score playin_predictions and recalculate user points
+        try:
+            from main import _score_playin_game
+            scored = _score_playin_game(row_id, verified_winner)
+            _log(f"Event {event_id}: prediction scoring {'ran' if scored else 'skipped (game not found)'}")
+        except Exception as _se:
+            _log(f"Event {event_id}: prediction scoring error (non-fatal): {_se}")
+
         # Promote winner in bracket
         result = promote_team_in_bracket(verified_winner, stage, season=season)
         detail = {

@@ -5312,8 +5312,15 @@ async def global_stats(season: str = "2026"):
                 ORDER BY s.conference, s.round
             """, (season,))
             series_stats = []
+            _seen_matchups = set()  # dedup guard for duplicate DB rows
             _now_utc = datetime.utcnow().replace(tzinfo=__import__('datetime').timezone.utc)
             for row in c.fetchall():
+                # Deduplicate: same two teams in same round+conference → keep first row only
+                _matchup_key = (row[2], row[1], min(row[3], row[8]), max(row[3], row[8]))
+                if _matchup_key in _seen_matchups:
+                    continue
+                _seen_matchups.add(_matchup_key)
+
                 home_v    = int(row[14]) if row[14] else 0
                 away_v    = int(row[15]) if row[15] else 0
                 total     = int(row[16]) if row[16] else 0
@@ -6149,6 +6156,58 @@ def _recalculate_all_points(c):
     ), 0)''')
 
 
+def _score_playin_game(game_id: int, winner_id: int) -> bool:
+    """
+    Score playin_predictions for a completed play-in game and recalculate
+    all user points.  Idempotent — safe to call multiple times.
+
+    Returns True if scoring ran, False if the game row was not found.
+    Called by game_processor.sync_playin_results_from_api so that the
+    automated sync pipeline awards points without requiring an admin action.
+    """
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+
+        c.execute(
+            'SELECT team1_id, team1_seed, team2_id, team2_seed FROM playin_games WHERE id = %s',
+            (game_id,)
+        )
+        row = c.fetchone()
+        if not row:
+            return False
+
+        t1_id, t1_seed, t2_id, t2_seed = row
+        winner_seed = t1_seed if winner_id == t1_id else (t2_seed if winner_id == t2_id else None)
+        other_seed  = t2_seed if winner_id == t1_id else (t1_seed if winner_id == t2_id else None)
+        is_underdog = bool(winner_seed and other_seed and winner_seed > other_seed)
+
+        correct_pts = calculate_play_in_points(True, is_underdog=is_underdog)
+
+        c.execute(
+            '''UPDATE playin_predictions
+               SET is_correct   = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END,
+                   points_earned = CASE WHEN predicted_winner_id = %s THEN %s ELSE 0 END
+               WHERE game_id = %s
+                 AND is_correct IS NULL''',
+            (winner_id, winner_id, correct_pts, game_id)
+        )
+        _recalculate_all_points(c)
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[_score_playin_game] error scoring game {game_id}: {e}")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        return False
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
 def _try_advance_bracket(c, completed_series_id, season, round_name, conf, bracket_group,
                          winner_team_id, winner_seed=None):
     """After a series completes, auto-create the next-round matchup if both bracket partners are done."""
@@ -6514,16 +6573,18 @@ def _try_create_r1_from_playin(c, game_id, winner_id, season):
                      )''',
                   (season, conf, seed2_id, winner_id))
         existing = c.fetchone()
+        _g1_time_7 = _GAME1_SCHEDULE_UTC.get((conf, 2, 7))
         if existing:
-            # Series slot exists (possibly pre-created) — update the play-in winner
-            c.execute('''UPDATE series SET away_team_id = %s, home_seed = 2, away_seed = 7, status = 'active'
+            # Series slot exists (possibly pre-created) — update the play-in winner + start time
+            c.execute('''UPDATE series SET away_team_id = %s, home_seed = 2, away_seed = 7, status = 'active',
+                         game1_start_time = COALESCE(game1_start_time, %s)
                          WHERE id = %s AND (away_team_id IS NULL OR away_team_id != %s)''',
-                      (winner_id, existing[0], winner_id))
+                      (winner_id, _g1_time_7, existing[0], winner_id))
         else:
             c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
-                         home_seed, away_seed, status, bracket_group)
-                         VALUES (%s, 'First Round', %s, %s, %s, 2, 7, 'active', 'B')''',
-                      (season, conf, seed2_id, winner_id))
+                         home_seed, away_seed, status, bracket_group, game1_start_time)
+                         VALUES (%s, 'First Round', %s, %s, %s, 2, 7, 'active', 'B', %s)''',
+                      (season, conf, seed2_id, winner_id, _g1_time_7))
     elif game_type == 'elimination':
         # Winner is the 8-seed → plays 1-seed in R1 Group A
         # Check by seed pair OR by team IDs to prevent duplicates
@@ -6535,16 +6596,18 @@ def _try_create_r1_from_playin(c, game_id, winner_id, season):
                      )''',
                   (season, conf, seed1_id, winner_id))
         existing = c.fetchone()
+        _g1_time_8 = _GAME1_SCHEDULE_UTC.get((conf, 1, 8))
         if existing:
-            # Series slot exists — update the play-in winner
-            c.execute('''UPDATE series SET away_team_id = %s, home_seed = 1, away_seed = 8, status = 'active'
+            # Series slot exists — update the play-in winner + start time
+            c.execute('''UPDATE series SET away_team_id = %s, home_seed = 1, away_seed = 8, status = 'active',
+                         game1_start_time = COALESCE(game1_start_time, %s)
                          WHERE id = %s AND (away_team_id IS NULL OR away_team_id != %s)''',
-                      (winner_id, existing[0], winner_id))
+                      (winner_id, _g1_time_8, existing[0], winner_id))
         else:
             c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
-                         home_seed, away_seed, status, bracket_group)
-                         VALUES (%s, 'First Round', %s, %s, %s, 1, 8, 'active', 'A')''',
-                      (season, conf, seed1_id, winner_id))
+                         home_seed, away_seed, status, bracket_group, game1_start_time)
+                         VALUES (%s, 'First Round', %s, %s, %s, 1, 8, 'active', 'A', %s)''',
+                      (season, conf, seed1_id, winner_id, _g1_time_8))
 
 
 @app.post("/api/admin/playin/{game_id}/result")
