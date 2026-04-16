@@ -3503,6 +3503,16 @@ def _run_live_sync_bg(season: str = "2026"):
         except Exception as e:
             print(f"[LiveSync] Playoff ERROR: {type(e).__name__}: {e}")
 
+        # DB-driven backfill — scores any predictions the API steps may have missed
+        try:
+            pi_bf = _backfill_playin_scores(season)
+            s_bf  = _backfill_series_scores(season)
+            if pi_bf.get('rows_scored', 0) or s_bf.get('rows_scored', 0):
+                print(f"[LiveSync] Backfill — "
+                      f"playin_rows={pi_bf['rows_scored']} series_rows={s_bf['rows_scored']}")
+        except Exception as e:
+            print(f"[LiveSync] Backfill ERROR: {type(e).__name__}: {e}")
+
         _live_sync_last = _time.time()
         print(f"[LiveSync] Done — cooldown reset")
     finally:
@@ -3884,6 +3894,23 @@ async def startup():
         except Exception as e:
             print(f"[Startup] Bracket gap-filler ERROR: {e}")
 
+        # Score any unscored predictions for completed play-in games + series.
+        # Runs every restart so results processed before a deploy are never missed.
+        try:
+            pi_bf = _backfill_playin_scores('2026')
+            if pi_bf.get('rows_scored', 0) > 0:
+                print(f"[Startup] Backfill play-in: scored {pi_bf['rows_scored']} predictions "
+                      f"across {pi_bf['games_checked']} games")
+        except Exception as e:
+            print(f"[Startup] Backfill play-in ERROR: {e}")
+        try:
+            s_bf = _backfill_series_scores('2026')
+            if s_bf.get('rows_scored', 0) > 0:
+                print(f"[Startup] Backfill series: scored {s_bf['rows_scored']} predictions "
+                      f"across {s_bf['series_checked']} series")
+        except Exception as e:
+            print(f"[Startup] Backfill series ERROR: {e}")
+
     threading.Thread(target=_background_init, daemon=True).start()
 
     # APScheduler cron jobs
@@ -4000,6 +4027,18 @@ async def startup():
                   f"errors={len(po.get('errors',[]))}")
         except Exception as e:
             print(f"[Auto-Sync {label}] Playoff ERROR: {type(e).__name__}: {e}")
+
+        # Step 6 — DB-driven backfill: score any predictions that the API-driven
+        # steps missed (e.g. ESPN no longer showing old events, or prior deploy
+        # lacked scoring logic).  Fast, DB-only, idempotent.
+        try:
+            pi_bf = _backfill_playin_scores('2026')
+            s_bf  = _backfill_series_scores('2026')
+            if pi_bf.get('rows_scored', 0) or s_bf.get('rows_scored', 0):
+                print(f"[Auto-Sync {label}] Backfill — "
+                      f"playin_rows={pi_bf['rows_scored']} series_rows={s_bf['rows_scored']}")
+        except Exception as e:
+            print(f"[Auto-Sync {label}] Backfill ERROR: {type(e).__name__}: {e}")
 
         print(f"[Auto-Sync {label}] ── complete ({datetime.utcnow().strftime('%H:%M')} UTC) ──")
 
@@ -6254,6 +6293,189 @@ def _score_playin_game(game_id: int, winner_id: int) -> bool:
             try: conn.rollback()
             except Exception: pass
         return False
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _backfill_playin_scores(season: str = "2026") -> dict:
+    """
+    DB-driven backfill: scores any unscored playin_predictions for completed
+    play-in games, then recalculates all user points.
+
+    Does NOT need the ESPN API — reads winner_id directly from playin_games.
+    Safe to call on every startup and every sync run (idempotent: only
+    touches rows where is_correct IS NULL).
+
+    Returns a summary dict with how many games and rows were processed.
+    """
+    conn = None
+    summary = {"games_checked": 0, "rows_scored": 0, "points_recalculated": False}
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+
+        # Find completed play-in games that still have unscored predictions
+        c.execute("""
+            SELECT pg.id, pg.winner_id, pg.team1_id, pg.team1_seed,
+                   pg.team2_id, pg.team2_seed
+            FROM playin_games pg
+            WHERE pg.season = %s
+              AND pg.status = 'completed'
+              AND pg.winner_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM playin_predictions pp
+                  WHERE pp.game_id = pg.id AND pp.is_correct IS NULL
+              )
+        """, (season,))
+        games = c.fetchall()
+        summary["games_checked"] = len(games)
+
+        for game_id, winner_id, t1_id, t1_seed, t2_id, t2_seed in games:
+            winner_seed = t1_seed if winner_id == t1_id else (t2_seed if winner_id == t2_id else None)
+            other_seed  = t2_seed if winner_id == t1_id else (t1_seed if winner_id == t2_id else None)
+            is_underdog = bool(winner_seed and other_seed and winner_seed > other_seed)
+            correct_pts = calculate_play_in_points(True, is_underdog=is_underdog)
+
+            c.execute(
+                """UPDATE playin_predictions
+                   SET is_correct    = CASE WHEN predicted_winner_id = %s THEN 1 ELSE 0 END,
+                       points_earned = CASE WHEN predicted_winner_id = %s THEN %s ELSE 0 END
+                   WHERE game_id = %s AND is_correct IS NULL""",
+                (winner_id, winner_id, correct_pts, game_id)
+            )
+            summary["rows_scored"] += c.rowcount
+            print(f"[BackfillPlayin] game {game_id}: scored {c.rowcount} predictions "
+                  f"(winner={winner_id}, pts={correct_pts})")
+
+        if summary["rows_scored"] > 0:
+            _recalculate_all_points(c)
+            summary["points_recalculated"] = True
+
+        conn.commit()
+        if summary["games_checked"]:
+            print(f"[BackfillPlayin] season={season}: "
+                  f"games={summary['games_checked']} rows={summary['rows_scored']}")
+        return summary
+
+    except Exception as e:
+        print(f"[BackfillPlayin] error: {e}")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        return summary
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _backfill_series_scores(season: str = "2026") -> dict:
+    """
+    DB-driven backfill: scores any unscored predictions for completed playoff
+    series, then recalculates all user points.
+
+    Uses the same scoring logic as game_processor._finalize_series so points
+    are consistent. Reads winner_team_id / actual_games / actual leaders
+    directly from the series table — no ESPN API needed.
+    Idempotent: only touches rows where is_correct IS NULL.
+
+    Returns a summary dict.
+    """
+    conn = None
+    summary = {"series_checked": 0, "rows_scored": 0, "points_recalculated": False}
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+
+        # Find completed series that still have unscored predictions
+        c.execute("""
+            SELECT s.id, s.round, s.conference,
+                   s.winner_team_id, s.home_team_id, s.home_seed,
+                   s.away_team_id, s.away_seed, s.actual_games,
+                   s.actual_leading_scorer, s.actual_leading_rebounder,
+                   s.actual_leading_assister
+            FROM series s
+            WHERE s.season = %s
+              AND s.status = 'completed'
+              AND s.winner_team_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM predictions p
+                  WHERE p.series_id = s.id AND p.is_correct IS NULL
+              )
+        """, (season,))
+        series_rows = c.fetchall()
+        summary["series_checked"] = len(series_rows)
+
+        for (series_id, round_name, conf,
+             winner_id, home_id, home_seed, away_id, away_seed, actual_games,
+             actual_scorer, actual_rebounder, actual_assister) in series_rows:
+
+            games = actual_games or 4  # default if not recorded yet
+            actual_leaders = {
+                "scorer":    actual_scorer,
+                "rebounder": actual_rebounder,
+                "assister":  actual_assister,
+            }
+
+            # Fetch predictions that need scoring
+            c.execute(
+                """SELECT id, predicted_winner_id, predicted_games,
+                          leading_scorer, leading_rebounder, leading_assister
+                   FROM predictions
+                   WHERE series_id = %s AND is_correct IS NULL""",
+                (series_id,)
+            )
+            for pred_id, pw_id, pred_games, pred_scorer, pred_rebounder, pred_assister \
+                    in c.fetchall():
+                winner_correct = pw_id == winner_id
+                games_correct  = pred_games == games
+                games_diff     = abs(pred_games - games) if pred_games is not None else None
+                pred_seed      = (home_seed if pw_id == home_id else
+                                  away_seed if pw_id == away_id else None)
+
+                pts = calculate_series_points(
+                    round_name, home_seed, away_seed, pred_seed,
+                    winner_correct=winner_correct,
+                    games_correct=games_correct,
+                    games_diff=games_diff,
+                )
+                pts += calculate_series_leader_points(
+                    predicted={"scorer":    pred_scorer,
+                               "rebounder": pred_rebounder,
+                               "assister":  pred_assister},
+                    actual=actual_leaders,
+                )
+
+                c.execute(
+                    """UPDATE predictions
+                       SET is_correct    = %s,
+                           points_earned = %s
+                       WHERE id = %s""",
+                    (1 if winner_correct else 0, pts, pred_id)
+                )
+                summary["rows_scored"] += c.rowcount
+
+            print(f"[BackfillSeries] series {series_id} ({round_name}): backfilled predictions "
+                  f"(winner={winner_id}, games={games})")
+
+        if summary["rows_scored"] > 0:
+            _recalculate_all_points(c)
+            summary["points_recalculated"] = True
+
+        conn.commit()
+        if summary["series_checked"]:
+            print(f"[BackfillSeries] season={season}: "
+                  f"series={summary['series_checked']} rows={summary['rows_scored']}")
+        return summary
+
+    except Exception as e:
+        print(f"[BackfillSeries] error: {e}")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        return summary
     finally:
         if conn:
             try: conn.close()

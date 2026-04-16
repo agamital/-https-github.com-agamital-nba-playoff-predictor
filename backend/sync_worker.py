@@ -110,6 +110,14 @@ def _run_full_chain():
         po = sync_playoff_results_from_api('2026')
         print(f"[Auto-Sync {label}] Playoff — "
               f"updated={po.get('updated',0)} completed={po.get('completed',0)}")
+
+        # Step 6 — DB-driven backfill: score any predictions the API steps missed
+        from main import _backfill_playin_scores, _backfill_series_scores
+        pi_bf = _backfill_playin_scores('2026')
+        s_bf  = _backfill_series_scores('2026')
+        if pi_bf.get('rows_scored', 0) or s_bf.get('rows_scored', 0):
+            print(f"[Auto-Sync {label}] Backfill — "
+                  f"playin_rows={pi_bf['rows_scored']} series_rows={s_bf['rows_scored']}")
     except Exception as e:
         print(f"[Auto-Sync {label}] Results ERROR: {type(e).__name__}: {e}")
 
