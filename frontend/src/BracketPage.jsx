@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info, Clock, Lock } from 'lucide-react';
+import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info, Clock, Lock, CheckCircle, XCircle, Edit2 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS, PLAYIN_UNDERDOG_PTS } from './scoringConstants';
@@ -791,7 +791,7 @@ const CFCol = ({ label }) => (
 
 // ── Mobile cards ──────────────────────────────────────────────────────────────
 
-const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communityStats }) => {
+const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communityStats, predData }) => {
   if (!game) return null;
   const { team1, team2 } = game;
   const p1 = pick?.teamId === team1?.id;
@@ -799,6 +799,8 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
   const underdogId = (team1?.seed ?? 0) > (team2?.seed ?? 0) ? team1?.id : team2?.id;
   const pickedIsUnderdog = (p1 && team1?.id === underdogId) || (p2 && team2?.id === underdogId);
   const pickedPts = pickedIsUnderdog ? PLAYIN_UNDERDOG_PTS : PLAYIN_PTS;
+  // Already-saved: team in UI matches what's in the DB → show as confirmed
+  const alreadySaved = predData && pick?.teamId === predData.predicted_winner_id;
 
   const teamBtn = (team, picked, onClick) => {
     const isUnderdog = team?.id === underdogId;
@@ -830,7 +832,18 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-2">
       <div className="flex items-center justify-between mb-1">
         <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Play-In</span>
-        <span className="text-[10px] font-bold text-slate-500">Fav <span className="text-slate-400 font-black">+{PLAYIN_PTS}</span> · Underdog <span className="text-amber-400 font-black">+{PLAYIN_UNDERDOG_PTS}</span></span>
+        {game.status === 'completed' && predData
+          ? predData.is_correct === 1
+            ? <span className="text-[10px] font-bold text-green-400 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Correct</span>
+            : predData.is_correct === 0
+            ? <span className="text-[10px] font-bold text-red-400 flex items-center gap-1"><XCircle className="w-3 h-3" /> Wrong</span>
+            : <span className="text-[10px] font-bold text-slate-500">Pending</span>
+          : predData && !betsClosed
+          ? <span className="text-[10px] font-bold text-orange-400">✓ Predicted</span>
+          : !predData && !betsClosed
+          ? <span className="text-[10px] font-bold text-blue-400">Tap to predict</span>
+          : <span className="text-[10px] font-bold text-slate-500">Fav <span className="text-slate-400 font-black">+{PLAYIN_PTS}</span> · Dog <span className="text-amber-400 font-black">+{PLAYIN_UNDERDOG_PTS}</span></span>
+        }
       </div>
       {game.status !== 'completed' && startZ && (
         <div className="flex items-center justify-between px-1">
@@ -847,15 +860,61 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
         className={`w-full py-3 rounded-xl font-black text-sm transition-all mt-1 flex items-center justify-center gap-2 ${
           betsClosed ? 'bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed' :
           saved ? 'bg-green-500 text-white' :
+          alreadySaved ? 'bg-green-500/15 border border-green-500/30 text-green-400' :
           !(p1 || p2) ? 'bg-slate-800 border border-slate-700 text-slate-600 cursor-not-allowed' :
           pickedIsUnderdog ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/25' :
           'bg-gradient-to-r from-orange-500 to-red-500 text-white'
         }`}>
         {betsClosed ? <><Lock className="w-4 h-4 shrink-0" /> Bets Closed</> :
          saved ? '✓ Saved!' :
+         alreadySaved ? <><CheckCircle className="w-4 h-4 shrink-0" /> Bet Saved — tap to update</> :
          !(p1 || p2) ? 'Pick a team to save' :
          `Save Pick • +${pickedPts} pts`}
       </button>
+
+      {/* ── Your Bet summary ── */}
+      {predData && (
+        <div className={`rounded-xl p-3 border ${
+          game.status === 'completed' && predData.is_correct === 1 ? 'bg-green-500/10 border-green-500/30' :
+          game.status === 'completed' && predData.is_correct === 0 ? 'bg-red-500/10 border-red-500/30' :
+          game.status === 'completed' ? 'bg-slate-800/40 border-slate-700/30' :
+          betsClosed ? 'bg-amber-500/5 border-amber-500/20' :
+          'bg-orange-500/5 border-orange-500/15'
+        }`}>
+          <div className="flex items-center gap-3">
+            {game.status === 'completed' && predData.is_correct === 1 && <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />}
+            {game.status === 'completed' && predData.is_correct === 0 && <XCircle className="w-5 h-5 text-red-400 shrink-0" />}
+            {game.status !== 'completed' && (
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-white text-[9px] font-black ${betsClosed ? 'bg-amber-500/60' : 'bg-orange-500'}`}>✓</div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className={`text-[9px] font-black uppercase tracking-wider mb-1 ${
+                game.status === 'completed' && predData.is_correct === 1 ? 'text-green-400' :
+                game.status === 'completed' && predData.is_correct === 0 ? 'text-red-400' :
+                betsClosed ? 'text-amber-400/70' : 'text-orange-400/70'
+              }`}>
+                {game.status === 'completed'
+                  ? predData.is_correct === 1 ? 'Correct Pick!'
+                  : predData.is_correct === 0 ? 'Wrong Pick'
+                  : 'Result Pending'
+                  : betsClosed ? '🔒 Your Locked Bet' : 'Your Bet'}
+              </p>
+              <div className="flex items-center gap-1.5">
+                <img src={predData.predicted_winner?.logo_url} alt=""
+                  className="w-6 h-6 shrink-0" onError={e => e.target.style.display='none'} />
+                <span className="text-sm font-black text-white">{predData.predicted_winner?.abbreviation}</span>
+              </div>
+            </div>
+            {predData.points_earned > 0 && (
+              <div className="text-right shrink-0">
+                <p className="text-xl font-black text-green-400 leading-none">+{predData.points_earned}</p>
+                <p className="text-[9px] text-green-400/50 font-bold">pts</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <CommunityInsights
         gameId={game.id}
         homeTeam={team1}
@@ -868,7 +927,7 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
   );
 };
 
-const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, communityStats, confirmed, onEdit }) => {
+const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, communityStats, confirmed, onEdit, predData }) => {
   const { home_team: h, away_team: a } = series;
   const hp = pick?.teamId === h.id;
   const ap = pick?.teamId === a.id;
@@ -962,9 +1021,21 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
             );
           })()}
         </div>
-        {series.status === 'completed' && <span className="text-xs font-bold text-green-400 flex items-center gap-1">✓ Complete</span>}
+        {series.status === 'completed' && (
+          predData
+            ? predData.is_correct === 1
+              ? <span className="text-xs font-bold text-green-400 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Correct</span>
+              : predData.is_correct === 0
+              ? <span className="text-xs font-bold text-red-400 flex items-center gap-1"><XCircle className="w-3.5 h-3.5" /> Wrong</span>
+              : <span className="text-xs font-bold text-slate-400">✓ Complete</span>
+            : <span className="text-xs font-bold text-slate-400">✓ Complete</span>
+        )}
         {series.status === 'locked' && <span className="text-xs font-bold text-yellow-400 flex items-center gap-1">🔒 Locked</span>}
-        {series.status === 'active' && <span className="text-xs font-bold text-blue-400">Predictions Open</span>}
+        {series.status === 'active' && (
+          predData
+            ? <span className="text-xs font-bold text-orange-400 flex items-center gap-1">✓ Predicted</span>
+            : <span className="text-xs font-bold text-blue-400">Tap to predict</span>
+        )}
       </div>
       {/* Game 1 countdown — First Round series (uses backend field or frontend fallback) */}
       {(() => {
@@ -1013,12 +1084,13 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
           </div>
         </div>
       )}
-      {picked && !isCompleted && isLocked && (
+      {/* Bets Locked / Edit — only shown when there's no predData panel (predData panel embeds these) */}
+      {picked && !isCompleted && isLocked && !predData && (
         <button disabled className="w-full py-2.5 rounded-xl font-black text-sm bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed flex items-center justify-center gap-2">
           <Lock className="w-4 h-4 shrink-0" /> Bets Locked
         </button>
       )}
-      {picked && !isCompleted && !isLocked && confirmed && (
+      {picked && !isCompleted && !isLocked && confirmed && !predData && (
         <button
           onClick={onEdit}
           className="w-full py-2.5 rounded-xl font-bold text-sm border border-slate-700 bg-slate-800/60 text-slate-300 hover:border-orange-500/50 hover:text-orange-400 transition-all flex items-center justify-center gap-2"
@@ -1067,6 +1139,78 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
           </button>
         </div>
       )}
+      {/* ── Your Bet summary — always visible when user has a prediction ── */}
+      {predData && (
+        <div className={`rounded-xl p-3 border ${
+          isCompleted && predData.is_correct === 1 ? 'bg-green-500/10 border-green-500/30' :
+          isCompleted && predData.is_correct === 0 ? 'bg-red-500/10 border-red-500/30' :
+          isCompleted ? 'bg-slate-800/40 border-slate-700/30' :
+          isLocked    ? 'bg-amber-500/5 border-amber-500/20' :
+                        'bg-orange-500/5 border-orange-500/15'
+        }`}>
+          <div className="flex items-center gap-3">
+            {isCompleted && predData.is_correct === 1 && <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />}
+            {isCompleted && predData.is_correct === 0 && <XCircle className="w-5 h-5 text-red-400 shrink-0" />}
+            {!isCompleted && (
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-white text-[9px] font-black ${isLocked ? 'bg-amber-500/60' : 'bg-orange-500'}`}>✓</div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className={`text-[9px] font-black uppercase tracking-wider mb-1 ${
+                isCompleted && predData.is_correct === 1 ? 'text-green-400' :
+                isCompleted && predData.is_correct === 0 ? 'text-red-400' :
+                isLocked ? 'text-amber-400/70' : 'text-orange-400/70'
+              }`}>
+                {isCompleted
+                  ? predData.is_correct === 1 ? 'Correct Prediction!'
+                  : predData.is_correct === 0 ? 'Wrong Prediction'
+                  : 'Result Pending'
+                  : isLocked ? '🔒 Your Locked Bet' : 'Your Bet'}
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <img src={predData.predicted_winner?.logo_url} alt=""
+                    className="w-5 h-5 shrink-0" onError={e => e.target.style.display='none'} />
+                  <span className="text-sm font-black text-white">{predData.predicted_winner?.name}</span>
+                </div>
+                {predData.predicted_games && (
+                  <span className="text-[10px] text-slate-500 font-bold">in {predData.predicted_games} games</span>
+                )}
+              </div>
+              {/* Leaders */}
+              {(predData.leading_scorer || predData.leading_rebounder || predData.leading_assister) && (
+                <div className="flex gap-3 mt-1.5 flex-wrap">
+                  {predData.leading_scorer && (
+                    <span className="text-[9px] text-slate-500">PTS: <span className="text-slate-400 font-bold">{predData.leading_scorer.split(' ').slice(-1)[0]}</span></span>
+                  )}
+                  {predData.leading_rebounder && (
+                    <span className="text-[9px] text-slate-500">REB: <span className="text-slate-400 font-bold">{predData.leading_rebounder.split(' ').slice(-1)[0]}</span></span>
+                  )}
+                  {predData.leading_assister && (
+                    <span className="text-[9px] text-slate-500">AST: <span className="text-slate-400 font-bold">{predData.leading_assister.split(' ').slice(-1)[0]}</span></span>
+                  )}
+                </div>
+              )}
+            </div>
+            {/* Points earned */}
+            {predData.points_earned > 0 && (
+              <div className="text-right shrink-0">
+                <p className="text-xl font-black text-green-400 leading-none">+{predData.points_earned}</p>
+                <p className="text-[9px] text-green-400/50 font-bold">pts</p>
+              </div>
+            )}
+          </div>
+          {/* Edit button for active unlocked games */}
+          {!isCompleted && !isLocked && (
+            <button
+              onClick={onEdit}
+              className="w-full mt-2 pt-2 border-t border-slate-800/50 flex items-center justify-center gap-1.5 text-[10px] text-slate-500 hover:text-orange-400 transition-colors font-bold"
+            >
+              <Edit2 className="w-3 h-3" /> Edit prediction
+            </button>
+          )}
+        </div>
+      )}
+
       <CommunityInsights
         seriesId={series.id}
         homeTeam={h}
@@ -1099,6 +1243,56 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const { data: allTeams = [],  isLoading: l3, isError: e3, refetch: r3 } = useQuery({ queryKey: ['teams'],             queryFn: () => api.getTeams() });
   const { data: standingsRaw,   isLoading: l4, isError: e4, refetch: r4 } = useQuery({ queryKey: ['standings'],         queryFn: () => api.getStandings(),         staleTime: 2 * 60 * 1000, refetchInterval: 5 * 60 * 1000 });
   const { data: globalStats }                   = useQuery({ queryKey: ['globalStats'],         queryFn: () => api.getGlobalStats('2026'), staleTime: 2 * 60 * 1000, refetchInterval: 3 * 60 * 1000 });
+
+  // Load the current user's saved predictions so picks are pre-populated on page load
+  const { data: myPredictions } = useQuery({
+    queryKey: ['myPredictions', currentUser?.user_id],
+    queryFn:  () => api.getMyPredictions(currentUser.user_id, '2026'),
+    staleTime: 30 * 1000,
+    enabled:  !!currentUser,
+  });
+
+  // One-shot hydration: populate local pick/confirmed state from API data on first load.
+  // Using a ref ensures we don't reset state mid-edit when myPredictions re-fetches.
+  const didHydrate = useRef(false);
+  useEffect(() => {
+    if (!myPredictions || didHydrate.current) return;
+    didHydrate.current = true;
+
+    const newPicks = {};
+    const newConfirmed = {};
+    (myPredictions.playoff_predictions || []).forEach(pred => {
+      newPicks[pred.series_id] = {
+        teamId:    pred.predicted_winner_id,
+        games:     pred.predicted_games,
+        scorer:    pred.leading_scorer    || '',
+        rebounder: pred.leading_rebounder || '',
+        assister:  pred.leading_assister  || '',
+      };
+      newConfirmed[pred.series_id] = true;
+    });
+    setPicks(newPicks);
+    setConfirmed(newConfirmed);
+
+    const newPiPicks = {};
+    (myPredictions.playin_predictions || []).forEach(pred => {
+      newPiPicks[pred.game_id] = { teamId: pred.predicted_winner_id };
+    });
+    setPiPicks(newPiPicks);
+  }, [myPredictions]);
+
+  // Prediction detail maps — keyed by series_id / game_id — used for "Your Bet" panels
+  const myPredMap = useMemo(() => {
+    const map = {};
+    (myPredictions?.playoff_predictions || []).forEach(pred => { map[pred.series_id] = pred; });
+    return map;
+  }, [myPredictions]);
+
+  const myPiPredMap = useMemo(() => {
+    const map = {};
+    (myPredictions?.playin_predictions || []).forEach(pred => { map[pred.game_id] = pred; });
+    return map;
+  }, [myPredictions]);
 
   const standings = standingsRaw || { eastern: [], western: [] };
   const loading   = l1 || l2 || l3 || l4;
@@ -1194,6 +1388,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
       );
       setConfirmed(p => ({ ...p, [seriesId]: true }));
       setTimeout(() => setSaved(p => ({ ...p, [seriesId]: false })), 2000);
+      qc.invalidateQueries({ queryKey: ['myPredictions', currentUser.user_id] });
       qc.invalidateQueries({ queryKey: ['notifications', currentUser.user_id] });
       qc.invalidateQueries({ queryKey: ['globalStats'] });
       qc.invalidateQueries({ queryKey: ['leaderboard'] });
@@ -1218,6 +1413,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
     try {
       await api.makePlayInPrediction(currentUser.user_id, gameId, pick.teamId);
       setTimeout(() => setPiSaved(p => ({ ...p, [gameId]: false })), 2000);
+      qc.invalidateQueries({ queryKey: ['myPredictions', currentUser.user_id] });
       qc.invalidateQueries({ queryKey: ['notifications', currentUser.user_id] });
       qc.invalidateQueries({ queryKey: ['globalStats'] });
       qc.invalidateQueries({ queryKey: ['leaderboard'] });
@@ -1441,7 +1637,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} />
                     </div>
                   );
                 })}
@@ -1456,7 +1652,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {westSlots.filter(Boolean).length > 0 ? westSlots.filter(Boolean).map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
@@ -1488,7 +1684,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} />
                     </div>
                   );
                 })}
@@ -1503,7 +1699,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {eastSlots.filter(Boolean).length > 0 ? eastSlots.filter(Boolean).map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
