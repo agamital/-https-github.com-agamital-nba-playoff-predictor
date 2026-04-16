@@ -791,7 +791,7 @@ const CFCol = ({ label }) => (
 
 // ── Mobile cards ──────────────────────────────────────────────────────────────
 
-const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communityStats, predData }) => {
+const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communityStats, predData, highlighted }) => {
   if (!game) return null;
   const { team1, team2 } = game;
   const p1 = pick?.teamId === team1?.id;
@@ -829,7 +829,11 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
   const betsClosed = game.status === 'completed' || (piSecs !== null && piSecs <= 0);
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-2">
+    <div id={`playin-${game.id}`} className={`border rounded-2xl p-4 space-y-2 transition-all duration-500 ${
+      highlighted
+        ? 'bg-orange-500/8 border-orange-500/60 shadow-lg shadow-orange-500/20 ring-2 ring-orange-500/30'
+        : 'bg-slate-900/60 border-slate-800'
+    }`}>
       <div className="flex items-center justify-between mb-1">
         <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Play-In</span>
         {game.status === 'completed' && predData
@@ -927,7 +931,7 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
   );
 };
 
-const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, communityStats, confirmed, onEdit, predData }) => {
+const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, communityStats, confirmed, onEdit, predData, highlighted }) => {
   const { home_team: h, away_team: a } = series;
   const hp = pick?.teamId === h.id;
   const ap = pick?.teamId === a.id;
@@ -992,7 +996,11 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
   });
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-3">
+    <div id={`series-${series.id}`} className={`border rounded-2xl p-4 space-y-3 transition-all duration-500 ${
+      highlighted
+        ? 'bg-orange-500/8 border-orange-500/60 shadow-lg shadow-orange-500/20 ring-2 ring-orange-500/30'
+        : 'bg-slate-900/60 border-slate-800'
+    }`}>
       <div className="flex items-center justify-between">
         <div>
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{series.round}</span>
@@ -1225,7 +1233,7 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-const BracketPage = ({ currentUser, onNavigate }) => {
+const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const qc = useQueryClient();
   const [picks, setPicks]             = useState({});
   const [saved, setSaved]             = useState({});
@@ -1236,6 +1244,30 @@ const BracketPage = ({ currentUser, onNavigate }) => {
     try { return localStorage.getItem('bracketShowFull') === 'true'; } catch { return false; }
   });
   const [saveError, setSaveError]     = useState('');
+  // Deep-link highlight — set when navigating from a notification
+  const [highlightedId, setHighlightedId] = useState(null);
+
+  // ── Deep-link scroll — when navigating from a notification, scroll to and
+  //    briefly highlight the specific series or play-in card.  Retries every
+  //    200ms for up to 2s so the element is guaranteed to exist in the DOM.
+  useEffect(() => {
+    if (!scrollTo) return;
+    const key = `${scrollTo.type}-${scrollTo.id}`;
+    let attempts = 0;
+    const tryScroll = () => {
+      attempts++;
+      const el = document.getElementById(key);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setHighlightedId(key);
+        setTimeout(() => setHighlightedId(null), 2500);
+      } else if (attempts < 10) {
+        setTimeout(tryScroll, 200);
+      }
+    };
+    const t = setTimeout(tryScroll, 300);
+    return () => clearTimeout(t);
+  }, [scrollTo?.type, scrollTo?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Cached data queries ──────────────────────────────────────────────────────
   const { data: series = [],    isLoading: l1, isError: e1, refetch: r1 } = useQuery({ queryKey: ['series', '2026'],    queryFn: () => api.getSeries('2026'),      staleTime: 60 * 1000, refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000 });
@@ -1637,7 +1669,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} />
                     </div>
                   );
                 })}
@@ -1652,7 +1684,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {westSlots.filter(Boolean).length > 0 ? westSlots.filter(Boolean).map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
@@ -1684,7 +1716,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} />
                     </div>
                   );
                 })}
@@ -1699,7 +1731,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
 
           <div className="space-y-3">
             {eastSlots.filter(Boolean).length > 0 ? eastSlots.filter(Boolean).map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}

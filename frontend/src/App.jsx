@@ -2020,7 +2020,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
     }
   };
 
-  const goTo = (page) => { setOpen(false); onNavigate(page); };
+  const goTo = (page, opts = {}) => { setOpen(false); onNavigate(page, opts); };
 
   // Navigate to the home page then scroll to the futures/leaders section
   const goToFutures = () => {
@@ -2075,6 +2075,22 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
           </div>
         ) : (
           <div className="py-1.5">
+            {(summary.missing_playin?.length > 0) && (
+              <>
+                <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                  Play-In Picks
+                </p>
+                {summary.missing_playin.map(g => (
+                  <_BellNavItem key={g.id}
+                    emoji="⚡"
+                    label={g.label}
+                    sublabel={g.sublabel}
+                    accent="bg-purple-500/15 border border-purple-500/25"
+                    onClick={() => goTo('betting', { scrollTo: { type: 'playin', id: g.id } })}
+                  />
+                ))}
+              </>
+            )}
             {(summary.missing_series?.length > 0) && (
               <>
                 <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">
@@ -2086,7 +2102,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                     label={s.label}
                     sublabel={s.sublabel}
                     accent="bg-orange-500/15 border border-orange-500/25"
-                    onClick={() => goTo('betting')}
+                    onClick={() => goTo('betting', { scrollTo: { type: 'series', id: s.id } })}
                   />
                 ))}
               </>
@@ -2223,11 +2239,19 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                   </div>
                 ) : (
                   <div className="py-1.5">
+                    {(summary.missing_playin?.length > 0) && (
+                      <>
+                        <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Play-In Picks</p>
+                        {summary.missing_playin.map(g => (
+                          <_BellNavItem key={g.id} emoji="⚡" label={g.label} sublabel={g.sublabel} accent="bg-purple-500/15 border border-purple-500/25" onClick={() => goTo('betting', { scrollTo: { type: 'playin', id: g.id } })} />
+                        ))}
+                      </>
+                    )}
                     {(summary.missing_series?.length > 0) && (
                       <>
                         <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Bracket Picks</p>
                         {summary.missing_series.map(s => (
-                          <_BellNavItem key={s.id} emoji="🏀" label={s.label} sublabel={s.sublabel} accent="bg-orange-500/15 border border-orange-500/25" onClick={() => goTo('betting')} />
+                          <_BellNavItem key={s.id} emoji="🏀" label={s.label} sublabel={s.sublabel} accent="bg-orange-500/15 border border-orange-500/25" onClick={() => goTo('betting', { scrollTo: { type: 'series', id: s.id } })} />
                         ))}
                       </>
                     )}
@@ -2235,7 +2259,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                       <>
                         <p className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">Futures Picks</p>
                         {summary.missing_futures.map(f => (
-                          <_BellNavItem key={f.key} emoji={leadingEmoji(f.label, '🏆')} label={stripLeadingEmoji(f.label)} accent="bg-purple-500/15 border border-purple-500/25" onClick={goToFutures} />
+                          <_BellNavItem key={f.key} emoji={leadingEmoji(f.label, '🏆')} label={stripLeadingEmoji(f.label)} accent="bg-yellow-500/15 border border-yellow-500/25" onClick={goToFutures} />
                         ))}
                       </>
                     )}
@@ -2331,6 +2355,8 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [profileUsername, setProfileUsername] = useState(null);
+  // Deep-link scroll target for the bracket/betting page
+  const [bracketTarget, setBracketTarget] = useState(null);
   // PWA install prompt — lifted here so sidebar + AccountPage can share it
   const [installPrompt, setInstallPrompt] = useState(null);
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
@@ -2452,6 +2478,9 @@ function App() {
     setCurrentPage(page);
     setMobileMenuOpen(false);
     if (opts.username) setProfileUsername(opts.username);
+    // scrollTo: { type: 'series'|'playin', id: number } — deep-links into BracketPage
+    if (opts.scrollTo) setBracketTarget(opts.scrollTo);
+    else if (page !== 'betting') setBracketTarget(null); // clear when leaving bracket
     if (page !== 'user-predictions') setSelectedUser(null);
     // Persist current page in URL hash so refresh returns to same page
     window.location.hash = page === 'home' ? '' : page;
@@ -2476,7 +2505,7 @@ function App() {
     switch (currentPage) {
       case 'home':             return <HomePage {...props} />;
       case 'standings':        return <StandingsPage currentUser={currentUser} />;
-      case 'betting':          return <BracketPage currentUser={currentUser} onNavigate={navigate} />;
+      case 'betting':          return <BracketPage currentUser={currentUser} onNavigate={navigate} scrollTo={bracketTarget} />;
       case 'leaderboard':      return <LeaderboardPage onUserClick={handleUserClick} currentUser={currentUser} />;
       case 'mypredictions':    return <MyPredictionsPage currentUser={currentUser} />;
       case 'profile':          return <UserProfilePage username={profileUsername || currentUser?.username} currentUser={currentUser} onBack={profileUsername && profileUsername !== currentUser?.username ? () => navigate('leaderboard') : undefined} />;
