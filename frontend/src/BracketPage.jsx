@@ -344,7 +344,7 @@ const FinalsCard = () => (
 
 // ── Playoff match card ────────────────────────────────────────────────────────
 
-const MatchCard = ({ series, pick, onTeamClick }) => {
+const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
   const { home_team: h, away_team: a, status, winner_team_id, actual_games } = series;
   const isCompleted = status === 'completed';
   const isLocked = status === 'locked' || series.picks_locked;
@@ -365,6 +365,7 @@ const MatchCard = ({ series, pick, onTeamClick }) => {
       onClick={isCompleted || isLocked ? undefined : onClick}
       className={`flex-1 flex items-center gap-2 px-3 w-full transition-all ${
         won ? 'bg-green-500/20' :
+        picked && !isCompleted && hasBet ? 'bg-yellow-500/15' :
         picked && !isCompleted ? (isUnderdog ? 'bg-amber-500/20' : 'bg-orange-500/25') :
         isCompleted && !won ? 'opacity-40' :
         isLocked ? '' :
@@ -374,19 +375,25 @@ const MatchCard = ({ series, pick, onTeamClick }) => {
       style={{ cursor: isCompleted || isLocked ? 'default' : 'pointer' }}
     >
       <span className="text-xs text-slate-500 w-4 shrink-0 font-bold">{team.seed}</span>
-      {isUnderdog && !isCompleted && (
+      {isUnderdog && !isCompleted && !hasBet && (
         <span className="text-[7px] font-black text-amber-400/60 shrink-0 uppercase tracking-tight">DOG</span>
       )}
       <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
       <span className={`text-sm font-bold truncate ${
         won ? 'text-green-400' :
+        picked && !isCompleted && hasBet ? 'text-yellow-400' :
         picked && !isCompleted ? (isUnderdog ? 'text-amber-400' : 'text-orange-400') :
         'text-white'
       }`}>
         {team.abbreviation}
       </span>
       {won && actual_games && <span className="ml-auto text-[10px] text-green-400 font-black shrink-0">in {actual_games}</span>}
-      {picked && !isCompleted && !isLocked && (
+      {picked && !isCompleted && hasBet && (
+        <span className="ml-auto text-[7px] font-black shrink-0 px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/30 text-yellow-400">
+          MY BET
+        </span>
+      )}
+      {picked && !isCompleted && !hasBet && !isLocked && (
         <span className={`ml-auto text-[7px] font-black shrink-0 px-1 py-0.5 rounded ${
           isUnderdog ? 'text-amber-400 bg-amber-500/15' : 'text-orange-400/70'
         }`}>
@@ -400,6 +407,7 @@ const MatchCard = ({ series, pick, onTeamClick }) => {
     <div style={{ height: CH }}
       className={`w-44 border-2 rounded-xl flex flex-col overflow-hidden transition-all ${
         isCompleted ? 'border-green-500/40 shadow-md shadow-green-500/10' :
+        hasBet && (hp || ap) ? 'border-yellow-500/50 shadow-md shadow-yellow-500/15 cursor-pointer' :
         isLocked ? 'border-yellow-500/30 opacity-75' :
         pickedUnderdog && !isCompleted ? 'border-amber-400/60 underdog-glow' :
         (hp || ap) ? 'border-orange-500/40 shadow-md shadow-orange-500/10 cursor-pointer' :
@@ -423,7 +431,7 @@ const MatchCard = ({ series, pick, onTeamClick }) => {
 
 // ── Play-In match card ────────────────────────────────────────────────────────
 
-const PlayInCard = ({ game, pick, onTeamClick }) => {
+const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
   if (!game) return <TBDCard width="w-40" />;
   const { team1, team2 } = game;
   const p1 = pick?.teamId === team1?.id;
@@ -445,14 +453,17 @@ const PlayInCard = ({ game, pick, onTeamClick }) => {
         className={`flex-1 flex items-center gap-2 px-2 w-full transition-all ${
           isWinner ? 'bg-green-500/20' :
           betsClosed && !isWinner ? 'opacity-50' :
+          picked && hasBet ? 'bg-yellow-500/15' :
           picked && isUnderdog ? 'bg-amber-500/20' :
           picked ? 'bg-orange-500/25' : 'hover:bg-slate-800/70'
         }`}>
         <span className="text-[11px] text-slate-500 w-4 shrink-0 font-bold">{team?.seed}</span>
         <img src={team?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
-        <span className={`text-xs font-bold truncate flex-1 ${isWinner ? 'text-green-400' : picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-white'}`}>{team?.abbreviation}</span>
+        <span className={`text-xs font-bold truncate flex-1 ${isWinner ? 'text-green-400' : picked && hasBet ? 'text-yellow-400' : picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-white'}`}>{team?.abbreviation}</span>
         {betsClosed
           ? isWinner ? <span className="text-[9px] font-black text-green-400 shrink-0">✓</span> : null
+          : picked && hasBet
+          ? <span className="text-[7px] font-black px-1 py-0.5 rounded shrink-0 bg-yellow-500/20 border border-yellow-500/30 text-yellow-400">MY BET</span>
           : <span className={`text-[9px] font-black px-1 py-0.5 rounded shrink-0 ${isUnderdog ? 'text-amber-400 bg-amber-500/15' : 'text-slate-500 bg-slate-800'}`}>+{pts}</span>
         }
       </button>
@@ -463,6 +474,7 @@ const PlayInCard = ({ game, pick, onTeamClick }) => {
     <div style={{ height: CH }}
       className={`w-40 border-2 rounded-xl flex flex-col overflow-hidden transition-all bg-slate-900/80 ${
         betsClosed ? 'border-slate-700/40 cursor-default' :
+        hasBet && (p1 || p2) ? 'border-yellow-500/50 shadow-md shadow-yellow-500/15 cursor-pointer' :
         (p1 || p2) ? 'border-orange-500/40 shadow-md shadow-orange-500/10 cursor-pointer' :
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
       }`}>
@@ -659,7 +671,7 @@ const SeedBadge = ({ team, seed }) => (
   </div>
 );
 
-const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team, seed2Team }) => {
+const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team, seed2Team, confirmed }) => {
   const slotH = (BH + 28) / PI_SLOTS;
   const seedBySlot = { elimination: seed1Team, '7v8': seed2Team };
   return (
@@ -678,7 +690,7 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
               {gameStartZ && game?.status !== 'completed' && <PlayInCountdown startZ={gameStartZ} />}
               {seedTeam && <SeedBadge team={seedTeam} seed={type === 'elimination' ? 1 : 2} />}
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
-                <PlayInCard game={game} pick={pick} onTeamClick={onTeamClick} />
+                <PlayInCard game={game} pick={pick} onTeamClick={onTeamClick} hasBet={!!(confirmed && game && confirmed[game.id])} />
                 {game && pick?.teamId && (
                   <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
                     <PlayInPicker game={game} pick={pick} onSave={onSave} saved={saved[game.id]} />
@@ -726,7 +738,7 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
           <div key={i} style={{ height: (BH + 28) / 4, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
             {s ? (
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
-                <MatchCard series={s} pick={picks[s.id]} onTeamClick={onTeamClick} />
+                <MatchCard series={s} pick={picks[s.id]} onTeamClick={onTeamClick} hasBet={!!confirmed[s.id]} />
                 {/* Game 1 timer badge — shown below card on desktop */}
                 {s.status === 'active' && (() => {
                   const g1z = getSeriesGame1Z(s);
@@ -810,18 +822,23 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
     return (
       <button onClick={onClick}
         className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all w-full ${
+          picked && confirmed ? 'border-yellow-500/70 bg-yellow-500/10' :
           picked && isUnderdog ? 'border-amber-500 bg-amber-500/15' :
           picked ? 'border-orange-500 bg-orange-500/15' :
           isUnderdog ? 'border-amber-500/25 bg-amber-500/5 hover:border-amber-400/50' :
           'border-slate-700 bg-slate-900/60 hover:border-slate-600'
         }`}>
-        <span className={`text-xs font-black w-5 ${picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-slate-500'}`}>{team?.seed}</span>
+        <span className={`text-xs font-black w-5 ${picked && confirmed ? 'text-yellow-400' : picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-slate-500'}`}>{team?.seed}</span>
         <img src={team?.logo_url} alt="" className="w-9 h-9 shrink-0" onError={e => e.target.style.display = 'none'} />
-        <p className={`font-black text-sm flex-1 text-left ${picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-white'}`}>{team?.name}</p>
-        <span className={`text-[10px] font-black px-2 py-0.5 rounded border shrink-0 ${
-          isUnderdog ? 'text-amber-400 bg-amber-500/10 border-amber-500/25' : 'text-slate-500 bg-slate-800 border-slate-700'
-        }`}>+{pts}</span>
-        {picked && <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${isUnderdog ? 'bg-amber-500' : 'bg-orange-500'}`}><span className="text-white text-[10px] font-black">✓</span></div>}
+        <p className={`font-black text-sm flex-1 text-left ${picked && confirmed ? 'text-yellow-400' : picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-white'}`}>{team?.name}</p>
+        {picked && confirmed
+          ? <span className="text-[8px] font-black px-1.5 py-0.5 rounded shrink-0 bg-yellow-500/20 border border-yellow-500/30 text-yellow-400">MY BET</span>
+          : <span className={`text-[10px] font-black px-2 py-0.5 rounded border shrink-0 ${
+              isUnderdog ? 'text-amber-400 bg-amber-500/10 border-amber-500/25' : 'text-slate-500 bg-slate-800 border-slate-700'
+            }`}>+{pts}</span>
+        }
+        {picked && confirmed && <div className="w-5 h-5 rounded-full bg-yellow-500 flex items-center justify-center shrink-0"><span className="text-white text-[10px] font-black">✓</span></div>}
+        {picked && !confirmed && <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${isUnderdog ? 'bg-amber-500' : 'bg-orange-500'}`}><span className="text-white text-[10px] font-black">✓</span></div>}
       </button>
     );
   };
@@ -834,6 +851,8 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
     <div id={`playin-${game.id}`} className={`border rounded-2xl p-4 space-y-2 transition-all duration-500 ${
       highlighted
         ? 'bg-orange-500/8 border-orange-500/60 shadow-lg shadow-orange-500/20 ring-2 ring-orange-500/30'
+        : confirmed && !betsClosed && game.status !== 'completed'
+        ? 'bg-yellow-500/5 border-yellow-500/30 shadow-sm shadow-yellow-500/10'
         : 'bg-slate-900/60 border-slate-800'
     }`}>
       <div className="flex items-center justify-between mb-1">
@@ -955,16 +974,17 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
     <button onClick={isCompleted || isLocked ? undefined : onClick}
       className={`flex items-center gap-3 p-4 rounded-xl border-2 transition-all w-full ${
         isWon ? 'border-green-500 bg-green-500/15' :
+        isPicked && !isCompleted && confirmed ? 'border-yellow-500/70 bg-yellow-500/10' :
         isPicked && !isCompleted && isTeamUnderdog ? 'border-amber-500 bg-amber-500/15 underdog-glow' :
         isPicked && !isCompleted ? 'border-orange-500 bg-orange-500/15' :
         isCompleted && !isWon ? 'border-slate-700 bg-slate-900/60 opacity-40' :
         !isWon && !isPicked && !isCompleted && isTeamUnderdog ? 'border-amber-500/20 bg-amber-500/5 hover:border-amber-400/40' :
         'border-slate-700 bg-slate-900/60 hover:border-slate-600'
       }`}>
-      <span className={`text-xs font-black w-5 shrink-0 ${isWon ? 'text-green-400' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-slate-500'}`}>{team.seed}</span>
+      <span className={`text-xs font-black w-5 shrink-0 ${isWon ? 'text-green-400' : isPicked && !isCompleted && confirmed ? 'text-yellow-400' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-slate-500'}`}>{team.seed}</span>
       <img src={team.logo_url} alt="" className="w-10 h-10 shrink-0" onError={e => e.target.style.display = 'none'} />
       <div className="text-left flex-1 min-w-0">
-        <p className={`font-black text-base leading-tight truncate ${isWon ? 'text-green-400' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>{team.name}</p>
+        <p className={`font-black text-base leading-tight truncate ${isWon ? 'text-green-400' : isPicked && !isCompleted && confirmed ? 'text-yellow-400' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>{team.name}</p>
         <p className="text-xs text-slate-500">{isWon && series.actual_games ? `Won in ${series.actual_games}` : isTeamUnderdog && !isCompleted ? '🔥 Underdog — higher reward' : `Seed #${team.seed}`}</p>
       </div>
       {!isCompleted && !isLocked && !isPicked && (() => {
@@ -975,8 +995,12 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
           }`}>{previewPts != null ? `+${previewPts}` : isTeamUnderdog ? 'RISKY' : 'SAFE'}</span>
         );
       })()}
+      {isPicked && !isCompleted && confirmed && (
+        <span className="text-[8px] font-black shrink-0 px-1.5 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/30 text-yellow-400">MY BET</span>
+      )}
       {isWon && <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shrink-0"><span className="text-white text-xs font-black">✓</span></div>}
-      {isPicked && !isCompleted && !isWon && <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isTeamUnderdog ? 'bg-amber-500' : 'bg-orange-500'}`}><span className="text-white text-xs font-black">✓</span></div>}
+      {isPicked && !isCompleted && !isWon && !confirmed && <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isTeamUnderdog ? 'bg-amber-500' : 'bg-orange-500'}`}><span className="text-white text-xs font-black">✓</span></div>}
+      {isPicked && !isCompleted && !isWon && confirmed && <div className="w-6 h-6 rounded-full bg-yellow-500 flex items-center justify-center shrink-0"><span className="text-white text-xs font-black">✓</span></div>}
     </button>
   );
 
@@ -1003,6 +1027,8 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
     <div id={`series-${series.id}`} className={`border rounded-2xl p-4 space-y-3 transition-all duration-500 ${
       highlighted
         ? 'bg-orange-500/8 border-orange-500/60 shadow-lg shadow-orange-500/20 ring-2 ring-orange-500/30'
+        : confirmed && !isCompleted
+        ? 'bg-yellow-500/5 border-yellow-500/30 shadow-sm shadow-yellow-500/10'
         : 'bg-slate-900/60 border-slate-800'
     }`}>
       <div className="flex items-center justify-between">
@@ -1606,6 +1632,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
               saved={piSaved}
               seed1Team={westSeed1}
               seed2Team={westSeed2}
+              confirmed={piConfirmed}
             />
             <HLine width={20} />
 
@@ -1643,6 +1670,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
               saved={piSaved}
               seed1Team={eastSeed1}
               seed2Team={eastSeed2}
+              confirmed={piConfirmed}
             />
           </div>
         </div>
