@@ -1162,11 +1162,25 @@ const PlayinVoteBar = ({ g, currentUser }) => {
 
   // Picks unlock once the backend confirms started OR start_time has passed
   // client-side — guards against sync worker failures (API quota exceeded etc.)
+  // NOTE: picksRevealed() (global play-in start date) is intentionally NOT used
+  // here because it would expose picks for future games once any game has started.
   const startMs = g.start_time ? new Date(g.start_time + (g.start_time.endsWith('Z') ? '' : 'Z')).getTime() : null;
-  const picksVisible = g.picks_visible || (startMs != null && Date.now() >= startMs) || picksRevealed();
-  const gameStarted  = startMs != null && Date.now() >= startMs;
+  const timerPast    = startMs != null && Date.now() >= startMs;
+  const picksVisible = Boolean(g.picks_visible) || timerPast;
+  const gameStarted  = timerPast;
+
+  // Schedule a one-shot re-render exactly at tipoff if the timer hasn't fired yet
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    if (picksVisible || !startMs) return;
+    const ms = startMs - Date.now();
+    if (ms <= 0) return;
+    const t = setTimeout(() => forceUpdate(n => n + 1), ms);
+    return () => clearTimeout(t);
+  }, [startMs, picksVisible]);
 
   const handleToggle = async () => {
+    if (!picksVisible) return;   // guard: clicks before tipoff are no-ops
     const next = !expanded;
     setExpanded(next);
     if (next && !picks) {
