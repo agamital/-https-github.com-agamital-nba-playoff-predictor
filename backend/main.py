@@ -4999,6 +4999,8 @@ async def api_series(season: str = "2026", background_tasks: BackgroundTasks = N
         c = conn.cursor()
 
         # CRITICAL: Column order must match team table structure!
+        # ORDER: rows with existing bets first (pred_count DESC) so the
+        # dedup step below keeps the row users actually placed bets on.
         c.execute('''SELECT
                      s.id, s.season, s.round, s.conference,
                      s.home_team_id, s.home_seed, s.home_wins,
@@ -5008,17 +5010,26 @@ async def api_series(season: str = "2026", background_tasks: BackgroundTasks = N
                      at.name, at.abbreviation, at.logo_url,
                      s.actual_leading_scorer, s.actual_leading_rebounder,
                      s.actual_leading_assister,
-                     s.game1_start_time
+                     s.game1_start_time,
+                     (SELECT COUNT(*) FROM predictions p WHERE p.series_id = s.id) AS pred_count
                      FROM series s
                      JOIN teams ht ON s.home_team_id = ht.id
                      JOIN teams at ON s.away_team_id = at.id
-                     WHERE s.season = %s''', (season,))
+                     WHERE s.season = %s
+                     ORDER BY pred_count DESC, s.id ASC''', (season,))
 
         from datetime import timezone as _tz
         _now_utc = datetime.now(_tz.utc)
 
         series = []
+        _seen_series_matchups = set()   # dedup: same two teams in same round+conf → keep first
         for row in c.fetchall():
+            # row[23] = pred_count (used for ordering, not exposed in response)
+            _mkey = (row[3], row[2], min(row[4], row[7]), max(row[4], row[7]))
+            if _mkey in _seen_series_matchups:
+                continue
+            _seen_series_matchups.add(_mkey)
+
             g1_start = row[22]
             # A series is picks_locked when game1_start_time has passed OR status != active
             if g1_start:
@@ -5076,17 +5087,27 @@ async def api_playin(season: str = "2026", background_tasks: BackgroundTasks = N
         conn = get_db_conn()
         c = conn.cursor()
 
+        # ORDER: rows with existing bets first so dedup keeps the canonical row
         c.execute('''SELECT p.id, p.season, p.conference, p.game_type,
                      p.team1_id, p.team1_seed, p.team2_id, p.team2_seed,
                      p.winner_id, p.status, p.start_time,
                      t1.name, t1.abbreviation, t1.logo_url,
-                     t2.name, t2.abbreviation, t2.logo_url
+                     t2.name, t2.abbreviation, t2.logo_url,
+                     (SELECT COUNT(*) FROM playin_predictions pp WHERE pp.game_id = p.id) AS pred_count
                      FROM playin_games p
                      JOIN teams t1 ON p.team1_id = t1.id
-                     JOIN teams t2 ON p.team2_id = t2.id WHERE p.season = %s''', (season,))
+                     JOIN teams t2 ON p.team2_id = t2.id
+                     WHERE p.season = %s
+                     ORDER BY pred_count DESC, p.id ASC''', (season,))
 
         games = []
+        _seen_playin = set()   # dedup: one row per (conference, game_type)
         for row in c.fetchall():
+            _pgkey = (row[2], row[3])   # (conference, game_type)
+            if _pgkey in _seen_playin:
+                continue
+            _seen_playin.add(_pgkey)
+
             start_time = row[10]
             games.append({
                 'id': row[0],
@@ -5389,10 +5410,16 @@ async def global_stats(season: str = "2026"):
                 WHERE pg.season = %s
                 GROUP BY pg.id, t1.name, t1.abbreviation, t1.logo_url,
                          t2.name, t2.abbreviation, t2.logo_url
-                ORDER BY pg.conference, pg.game_type
+                ORDER BY COUNT(pp.id) DESC, pg.id ASC
             """, (season,))
             playin_stats = []
+            _seen_playin_gs = set()   # dedup guard: one row per (conference, game_type)
             for row in c.fetchall():
+                _pgkey = (row[1], row[2])   # (conference, game_type)
+                if _pgkey in _seen_playin_gs:
+                    continue
+                _seen_playin_gs.add(_pgkey)
+
                 t1_v = int(row[16]) if row[16] else 0
                 t2_v = int(row[17]) if row[17] else 0
                 total = int(row[18]) if row[18] else 0
@@ -5650,8 +5677,14 @@ async def notifications_summary(user_id: int, season: str = "2026"):
         c    = conn.cursor()
 
         # ── 1. Active series with no prediction ─────────────────────────────
+        # Uses DISTINCT ON to deduplicate same-matchup duplicate DB rows, and
+        # checks NOT EXISTS across ALL rows for the same matchup so a prediction
+        # on any duplicate series counts as "covered" (prevents false alerts).
         c.execute("""
-            SELECT s.id, s.round, s.conference,
+            SELECT DISTINCT ON (s.conference, s.round,
+                                LEAST(s.home_team_id, s.away_team_id),
+                                GREATEST(s.home_team_id, s.away_team_id))
+                   s.id, s.round, s.conference,
                    ht.abbreviation, at.abbreviation
             FROM series s
             JOIN teams ht ON s.home_team_id = ht.id
@@ -5659,9 +5692,20 @@ async def notifications_summary(user_id: int, season: str = "2026"):
             WHERE s.season = %s AND s.status = 'active'
             AND NOT EXISTS (
                 SELECT 1 FROM predictions p
-                WHERE p.user_id = %s AND p.series_id = s.id
+                JOIN series s2 ON p.series_id = s2.id
+                WHERE p.user_id = %s
+                  AND s2.season = s.season
+                  AND s2.round = s.round
+                  AND s2.conference = s.conference
+                  AND LEAST(s2.home_team_id, s2.away_team_id)
+                      = LEAST(s.home_team_id, s.away_team_id)
+                  AND GREATEST(s2.home_team_id, s2.away_team_id)
+                      = GREATEST(s.home_team_id, s.away_team_id)
             )
-            ORDER BY s.conference, s.round
+            ORDER BY s.conference, s.round,
+                     LEAST(s.home_team_id, s.away_team_id),
+                     GREATEST(s.home_team_id, s.away_team_id),
+                     s.id ASC
         """, (season, user_id))
 
         _ROUND_LABELS = {
@@ -5734,17 +5778,25 @@ async def notifications_summary(user_id: int, season: str = "2026"):
                     missing_leaders.append({'key': key, 'label': label})
 
         # ── 4. Active play-in games with no prediction ──────────────────────
+        # DISTINCT ON (conference, game_type) deduplicates same-slot duplicate
+        # rows.  NOT EXISTS checks across all rows for the same slot so a
+        # prediction on any duplicate counts as "covered".
         c.execute("""
-            SELECT pg.id, t1.abbreviation, t2.abbreviation
+            SELECT DISTINCT ON (pg.conference, pg.game_type)
+                   pg.id, t1.abbreviation, t2.abbreviation
             FROM playin_games pg
             JOIN teams t1 ON t1.id = pg.team1_id
             JOIN teams t2 ON t2.id = pg.team2_id
             WHERE pg.season = %s AND pg.status = 'active' AND pg.winner_id IS NULL
             AND NOT EXISTS (
                 SELECT 1 FROM playin_predictions pp
-                WHERE pp.user_id = %s AND pp.game_id = pg.id
+                JOIN playin_games pg2 ON pp.game_id = pg2.id
+                WHERE pp.user_id = %s
+                  AND pg2.season = pg.season
+                  AND pg2.conference = pg.conference
+                  AND pg2.game_type = pg.game_type
             )
-            ORDER BY pg.id
+            ORDER BY pg.conference, pg.game_type, pg.id ASC
         """, (season, user_id))
         missing_playin = []
         for row in c.fetchall():
