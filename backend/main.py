@@ -4459,6 +4459,53 @@ async def admin_player_stats_sync():
         conn.close()
 
 
+@app.post("/api/admin/cleanup-duplicate-series")
+async def cleanup_duplicate_series(season: str = "2026"):
+    """
+    One-time cleanup: remove duplicate First Round series rows that share the same
+    (conference, home_seed, away_seed) slot. Keeps the row with the most predictions
+    (or highest id if tied), deletes the rest. Safe to run multiple times.
+    """
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        # Find duplicate slots: same conference + round + (home_seed, away_seed)
+        c.execute('''
+            SELECT conference, home_seed, away_seed, array_agg(id ORDER BY
+                (SELECT COUNT(*) FROM predictions p WHERE p.series_id = s.id) DESC,
+                id DESC
+            ) AS ids
+            FROM series s
+            WHERE season = %s AND round = 'First Round'
+            GROUP BY conference, home_seed, away_seed
+            HAVING COUNT(*) > 1
+        ''', (season,))
+        rows = c.fetchall()
+        deleted_total = 0
+        for conf, hs, as_, ids in rows:
+            keep_id   = ids[0]        # first = most predictions, then highest id
+            drop_ids  = ids[1:]
+            # Re-attach any predictions from drop rows to the kept row
+            for drop_id in drop_ids:
+                c.execute('''UPDATE predictions SET series_id = %s
+                             WHERE series_id = %s
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM predictions p2
+                                 WHERE p2.series_id = %s AND p2.user_id = predictions.user_id
+                             )''', (keep_id, drop_id, keep_id))
+                c.execute('DELETE FROM predictions WHERE series_id = %s', (drop_id,))
+                c.execute('DELETE FROM series WHERE id = %s', (drop_id,))
+                deleted_total += 1
+            print(f"[DeduplicateSeries] Kept {keep_id}, removed {drop_ids} ({conf} {hs}v{as_})")
+        conn.commit()
+        return {"deleted": deleted_total, "groups_fixed": len(rows)}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
 @app.post("/api/admin/cleanup-duplicate-players")
 async def cleanup_duplicate_players(season: str = "2026"):
     """
@@ -6458,14 +6505,18 @@ def _try_create_r1_from_playin(c, game_id, winner_id, season):
 
     if game_type == '7v8':
         # Winner is the 7-seed → plays 2-seed in R1 Group B
-        # Check by seed pair, NOT bracket_group (generate_matchups also uses group 'B' for 3v6)
+        # Check by seed pair OR by team IDs to prevent duplicates
         c.execute('''SELECT id FROM series WHERE season = %s AND conference = %s
-                     AND round = 'First Round' AND home_seed = 2 AND away_seed = 7''',
-                  (season, conf))
+                     AND round = 'First Round'
+                     AND (
+                         (home_seed = 2 AND away_seed = 7)
+                         OR (home_team_id = %s AND away_team_id = %s)
+                     )''',
+                  (season, conf, seed2_id, winner_id))
         existing = c.fetchone()
         if existing:
             # Series slot exists (possibly pre-created) — update the play-in winner
-            c.execute('''UPDATE series SET away_team_id = %s, status = 'active'
+            c.execute('''UPDATE series SET away_team_id = %s, home_seed = 2, away_seed = 7, status = 'active'
                          WHERE id = %s AND (away_team_id IS NULL OR away_team_id != %s)''',
                       (winner_id, existing[0], winner_id))
         else:
@@ -6475,14 +6526,18 @@ def _try_create_r1_from_playin(c, game_id, winner_id, season):
                       (season, conf, seed2_id, winner_id))
     elif game_type == 'elimination':
         # Winner is the 8-seed → plays 1-seed in R1 Group A
-        # Check by seed pair, NOT bracket_group (generate_matchups also uses group 'A' for 4v5)
+        # Check by seed pair OR by team IDs to prevent duplicates
         c.execute('''SELECT id FROM series WHERE season = %s AND conference = %s
-                     AND round = 'First Round' AND home_seed = 1 AND away_seed = 8''',
-                  (season, conf))
+                     AND round = 'First Round'
+                     AND (
+                         (home_seed = 1 AND away_seed = 8)
+                         OR (home_team_id = %s AND away_team_id = %s)
+                     )''',
+                  (season, conf, seed1_id, winner_id))
         existing = c.fetchone()
         if existing:
             # Series slot exists — update the play-in winner
-            c.execute('''UPDATE series SET away_team_id = %s, status = 'active'
+            c.execute('''UPDATE series SET away_team_id = %s, home_seed = 1, away_seed = 8, status = 'active'
                          WHERE id = %s AND (away_team_id IS NULL OR away_team_id != %s)''',
                       (winner_id, existing[0], winner_id))
         else:

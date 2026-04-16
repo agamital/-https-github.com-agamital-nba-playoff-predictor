@@ -1579,6 +1579,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
     queryFn:  () => api.getLeaderboard('2026'),
     staleTime: 60 * 1000,
     refetchOnWindowFocus: true,
+    refetchInterval: 3 * 60 * 1000,   // auto-refresh every 3 min after game results arrive
   });
 
   const medals = ['🥇', '🥈', '🥉'];

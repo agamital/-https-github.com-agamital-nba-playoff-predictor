@@ -1094,8 +1094,8 @@ const BracketPage = ({ currentUser, onNavigate }) => {
   const [saveError, setSaveError]     = useState('');
 
   // ── Cached data queries ──────────────────────────────────────────────────────
-  const { data: series = [],    isLoading: l1, isError: e1, refetch: r1 } = useQuery({ queryKey: ['series', '2026'],    queryFn: () => api.getSeries('2026') });
-  const { data: playInGames = [], isLoading: l2, isError: e2, refetch: r2 } = useQuery({ queryKey: ['playin', '2026'],  queryFn: () => api.getPlayInGames('2026') });
+  const { data: series = [],    isLoading: l1, isError: e1, refetch: r1 } = useQuery({ queryKey: ['series', '2026'],    queryFn: () => api.getSeries('2026'),      staleTime: 60 * 1000, refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000 });
+  const { data: playInGames = [], isLoading: l2, isError: e2, refetch: r2 } = useQuery({ queryKey: ['playin', '2026'],  queryFn: () => api.getPlayInGames('2026'), staleTime: 60 * 1000, refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000 });
   const { data: allTeams = [],  isLoading: l3, isError: e3, refetch: r3 } = useQuery({ queryKey: ['teams'],             queryFn: () => api.getTeams() });
   const { data: standingsRaw,   isLoading: l4, isError: e4, refetch: r4 } = useQuery({ queryKey: ['standings'],         queryFn: () => api.getStandings() });
   const { data: globalStats }                   = useQuery({ queryKey: ['globalStats'],         queryFn: () => api.getGlobalStats('2026'), staleTime: 5 * 60 * 1000 });
@@ -1455,7 +1455,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
           )}
 
           <div className="space-y-3">
-            {westSeries.length > 0 ? westSeries.map(s => (
+            {wSlots.filter(Boolean).length > 0 ? wSlots.filter(Boolean).map(s => (
               <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
@@ -1502,7 +1502,7 @@ const BracketPage = ({ currentUser, onNavigate }) => {
           )}
 
           <div className="space-y-3">
-            {eastSeries.length > 0 ? eastSeries.map(s => (
+            {eSlots.filter(Boolean).length > 0 ? eSlots.filter(Boolean).map(s => (
               <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
