@@ -209,11 +209,11 @@ function FuturesLockTimer() {
       </p>
       <div className={`flex items-center justify-center gap-3 font-black font-mono
         ${urgent ? 'text-red-400' : soon ? 'text-amber-400' : 'text-orange-400'}`}>
-        {dv > 1 && (
+        {dv > 0 && (
           <>
             <div className="flex flex-col items-center">
               <span className="text-3xl sm:text-4xl leading-none">{dv}</span>
-              <span className="text-[10px] text-slate-500 font-normal mt-0.5">DAYS</span>
+              <span className="text-[10px] text-slate-500 font-normal mt-0.5">DAY{dv !== 1 ? 'S' : ''}</span>
             </div>
             <span className="text-2xl text-slate-600 mb-3">:</span>
           </>
