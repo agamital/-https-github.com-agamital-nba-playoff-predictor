@@ -3872,7 +3872,7 @@ async def startup():
     # Apply series schema migration (manual_override + game1_start_time columns)
     _apply_series_migration()
     try:
-        _backfill_game1_start_times()
+        _backfill_game1_start_times(force=True)
     except Exception as e:
         print(f"ERROR _backfill_game1_start_times: {e}")
 

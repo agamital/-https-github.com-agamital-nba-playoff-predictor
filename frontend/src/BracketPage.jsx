@@ -438,14 +438,6 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
         noPick       ? 'border-cyan-500/50 cursor-pointer' :
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
       } bg-slate-900/80`}>
-      {/* "PICK?" overlay for series with no bet placed yet */}
-      {noPick && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-          <span className="text-[9px] font-black text-cyan-300 bg-slate-900/85 border border-cyan-500/50 px-2 py-1 rounded-lg tracking-wider">
-            PICK?
-          </span>
-        </div>
-      )}
       {teamRow(h, hp, hWon, hIsUnderdog, () => onTeamClick(series, h.id))}
       {/* Series score divider */}
       <div className="relative h-px bg-slate-800">
@@ -534,14 +526,6 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
         noPick     ? 'border-cyan-500/50 cursor-pointer' :
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
       }`}>
-      {/* "PICK?" overlay for games with no bet placed yet */}
-      {noPick && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-          <span className="text-[9px] font-black text-cyan-300 bg-slate-900/85 border border-cyan-500/50 px-2 py-1 rounded-lg tracking-wider">
-            PICK?
-          </span>
-        </div>
-      )}
       {teamRow(team1, p1, () => onTeamClick(game, team1?.id))}
       <div className="h-px bg-slate-800" />
       {teamRow(team2, p2, () => onTeamClick(game, team2?.id))}
