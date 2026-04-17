@@ -719,7 +719,7 @@ const SeedBadge = ({ team, seed }) => (
   </div>
 );
 
-const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team, seed2Team, confirmed, predMap }) => {
+const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team, seed2Team, confirmed, predMap, editing, onEdit }) => {
   const slotH = (BH + 28) / PI_SLOTS;
   const seedBySlot = { elimination: seed1Team, '7v8': seed2Team };
   return (
@@ -744,14 +744,33 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
               {seedTeam && <SeedBadge team={seedTeam} seed={type === 'elimination' ? 1 : 2} />}
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
                 <PlayInCard game={game} pick={pick} onTeamClick={onTeamClick} hasBet={hasBet} />
-                {/* Only show the picker after the user actively clicks a team (localPick),
-                    not just because a DB prediction exists — and only while bets are open */}
-                {game && localPick?.teamId && game.status !== 'completed' &&
-                  (!gameStartZ || new Date(gameStartZ) > new Date()) && (
-                  <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
-                    <PlayInPicker game={game} pick={pick} onSave={onSave} saved={saved[game.id]} hasBet={hasBet} />
-                  </div>
-                )}
+                {/* Show Edit button when bet is saved and bets are still open.
+                    Show picker only after user clicks Edit (or hasn't bet yet and clicked a team). */}
+                {game && game.status !== 'completed' && (!gameStartZ || new Date(gameStartZ) > new Date()) && (() => {
+                  const inEditMode = editing?.[game.id];
+                  if (hasBet && !inEditMode) {
+                    // Bet saved — show Edit button (same pattern as R1)
+                    return (
+                      <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
+                        <button
+                          onClick={() => onEdit(game.id)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:border-yellow-500/50 hover:text-yellow-400 text-[10px] font-bold transition-all whitespace-nowrap"
+                        >
+                          ✏ Edit pick
+                        </button>
+                      </div>
+                    );
+                  }
+                  if (localPick?.teamId) {
+                    // User actively clicked a team — show picker
+                    return (
+                      <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
+                        <PlayInPicker game={game} pick={pick} onSave={onSave} saved={saved[game.id]} hasBet={hasBet} />
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
             </div>
           );
@@ -1339,6 +1358,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const [piPicks, setPiPicks]         = useState({});
   const [piSaved, setPiSaved]         = useState({});
   const [piConfirmed, setPiConfirmed] = useState({});
+  const [piEditing, setPiEditing]     = useState({});
   const [showFull, setShowFull]       = useState(() => {
     try { return localStorage.getItem('bracketShowFull') === 'true'; } catch { return false; }
   });
@@ -1541,6 +1561,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     if (!currentUser) return;
     setPiPicks(p => ({ ...p, [game.id]: { ...p[game.id], teamId } }));
   };
+  const handlePIEdit = (gameId) => setPiEditing(p => ({ ...p, [gameId]: true }));
   const handlePISave = async (gameId) => {
     if (!currentUser) return;
     const pick = piPicks[gameId];
@@ -1550,6 +1571,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     try {
       await api.makePlayInPrediction(currentUser.user_id, gameId, pick.teamId);
       setPiConfirmed(p => ({ ...p, [gameId]: true }));
+      setPiEditing(p => ({ ...p, [gameId]: false }));  // close edit mode after save
       setTimeout(() => setPiSaved(p => ({ ...p, [gameId]: false })), 2000);
       qc.invalidateQueries({ queryKey: ['myPredictions', currentUser.user_id] });
       qc.invalidateQueries({ queryKey: ['notifications', currentUser.user_id] });
@@ -1743,6 +1765,8 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
               seed2Team={westSeed2}
               confirmed={piConfirmed}
               predMap={myPiPredMap}
+              editing={piEditing}
+              onEdit={handlePIEdit}
             />
             <HLine width={20} />
 
@@ -1782,6 +1806,8 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
               seed2Team={eastSeed2}
               confirmed={piConfirmed}
               predMap={myPiPredMap}
+              editing={piEditing}
+              onEdit={handlePIEdit}
             />
           </div>
         </div>
