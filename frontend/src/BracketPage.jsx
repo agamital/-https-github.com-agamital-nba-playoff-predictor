@@ -347,119 +347,104 @@ const FinalsCard = () => (
 const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
   const { home_team: h, away_team: a, status, winner_team_id, actual_games } = series;
   const isCompleted = status === 'completed';
-  const isLocked = status === 'locked' || series.picks_locked;
-  const hp = pick?.teamId === h.id;
-  const ap = pick?.teamId === a.id;
+  const isLocked    = status === 'locked' || series.picks_locked;
+  const hp   = pick?.teamId === h.id;
+  const ap   = pick?.teamId === a.id;
   const hWon = winner_team_id === h.id;
   const aWon = winner_team_id === a.id;
 
-  const homeSeed = series.home_seed ?? h.seed ?? null;
-  const awaySeed = series.away_seed ?? a.seed ?? null;
-  const underdogSeed = (homeSeed != null && awaySeed != null) ? Math.max(homeSeed, awaySeed) : null;
-  const hIsUnderdog = underdogSeed != null && homeSeed === underdogSeed;
-  const aIsUnderdog = underdogSeed != null && awaySeed === underdogSeed;
-  const pickedUnderdog = (hp && hIsUnderdog) || (ap && aIsUnderdog);
-  const noPick = !isCompleted && !isLocked && !hp && !ap && !hasBet;
-  const hasLocalUnsaved = (hp || ap) && !hasBet && !isCompleted && !isLocked;
-
-  // ── Status header strip ──────────────────────────────────────────────────────
-  const statusStrip = isCompleted ? (
-    <div className="h-[15px] bg-green-500/20 border-b border-green-500/25 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-green-400 tracking-widest">✓ COMPLETED</span>
-    </div>
-  ) : hasBet ? (
-    <div className="h-[15px] bg-yellow-400/20 border-b border-yellow-400/30 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-yellow-300 tracking-widest">★ YOUR PICK IS SAVED</span>
-    </div>
-  ) : isLocked ? (
-    <div className="h-[15px] bg-red-500/10 border-b border-red-500/20 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-red-400/70 tracking-widest">🔒 LOCKED — NO PICK</span>
-    </div>
-  ) : hasLocalUnsaved ? (
-    <div className="h-[15px] bg-orange-500/15 border-b border-orange-500/20 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-orange-400 tracking-widest">↑ SAVE TO CONFIRM</span>
-    </div>
-  ) : (
-    <div className="h-[15px] bg-cyan-500/8 border-b border-cyan-500/15 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-cyan-400/80 tracking-widest">· OPEN — TAP TO PICK</span>
-    </div>
-  );
+  // Inline timer inside the card divider
+  const g1z      = status === 'active' ? getSeriesGame1Z(series) : null;
+  const timerSecs = useSeriesCountdown(g1z);
 
   // ── Team row ─────────────────────────────────────────────────────────────────
-  const teamRow = (team, picked, won, isUnderdog, onClick) => {
-    // Fade the unchosen team strongly so the saved pick stands out at a glance
-    const dimmed = hasBet && !picked && !isCompleted;
+  const teamRow = (team, picked, won, onClick) => {
+    const dimmed = hasBet && !picked && !isCompleted; // fade unchosen when bet is saved
     return (
       <button
         onClick={isCompleted || isLocked ? undefined : onClick}
         className={`relative flex-1 flex items-center gap-2 px-3 w-full transition-all ${
-          won                              ? 'bg-green-500/20' :
-          isCompleted && !won             ? 'opacity-30' :
-          isLocked                        ? '' :
-          !picked && !hasBet && isUnderdog ? 'hover:bg-amber-500/10' :
-          !picked && !hasBet              ? 'hover:bg-slate-800/60' : ''
+          won                        ? 'bg-green-500/20' :
+          isCompleted && !won        ? 'opacity-30' :
+          !isCompleted && !isLocked && !picked ? 'hover:bg-slate-800/60' : ''
         } ${dimmed ? 'opacity-20' : ''}`}
         style={{
           cursor: isCompleted || isLocked ? 'default' : 'pointer',
           background: picked && !isCompleted && hasBet
-            ? 'linear-gradient(90deg,rgba(234,179,8,0.40) 0%,rgba(234,179,8,0.15) 60%,transparent 100%)'
-            : picked && !isCompleted
-            ? isUnderdog ? 'rgba(245,158,11,0.18)' : 'rgba(249,115,22,0.20)'
+            ? 'linear-gradient(90deg,rgba(234,179,8,0.38) 0%,rgba(234,179,8,0.12) 65%,transparent 100%)'
             : undefined,
         }}
       >
-        {/* Gold left accent stripe on saved pick */}
+        {/* Gold left accent stripe — only when bet is saved */}
         {picked && !isCompleted && hasBet && (
           <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-yellow-400 rounded-l" />
         )}
-        <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
+        <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0"
+          onError={e => e.target.style.display = 'none'} />
         <span className={`text-sm font-black truncate flex-1 ${
-          won                                  ? 'text-green-300' :
-          picked && !isCompleted && hasBet     ? 'text-yellow-100' :
-          picked && !isCompleted && isUnderdog ? 'text-amber-400' :
-          picked && !isCompleted               ? 'text-orange-300' :
-          dimmed                               ? 'text-slate-500' :
-                                                 'text-white'
+          won                              ? 'text-green-300' :
+          picked && !isCompleted && hasBet ? 'text-yellow-300' :
+          dimmed                           ? 'text-slate-500' :
+                                             'text-white'
         }`}>{team.abbreviation}</span>
-        <span className={`text-[10px] font-bold shrink-0 ${
-          picked && !isCompleted && hasBet ? 'text-yellow-400/80' :
-          won ? 'text-green-400/60' : 'text-slate-600'
-        }`}>{team.seed}</span>
+        {/* Gold star for saved pick, seed number otherwise */}
+        {picked && !isCompleted && hasBet
+          ? <span className="text-yellow-400 text-sm shrink-0">★</span>
+          : <span className={`text-[10px] shrink-0 ${won ? 'text-green-400/60' : 'text-slate-600'}`}>{team.seed}</span>
+        }
         {won && actual_games && (
-          <span className="text-[9px] text-green-400 font-black shrink-0">in {actual_games}</span>
+          <span className="text-[9px] text-green-400 font-black shrink-0 ml-0.5">in {actual_games}</span>
         )}
       </button>
     );
   };
 
+  // ── Middle divider — timer or live score ─────────────────────────────────────
+  const hasScore = !isCompleted && (series.home_wins > 0 || series.away_wins > 0);
+  const showTimer = !isCompleted && !hasScore && g1z && timerSecs !== null;
+  const dividerTall = hasScore || showTimer;
+
+  const dividerContent = hasScore ? (
+    <span className="text-[9px] font-black tabular-nums px-1.5 bg-slate-950 border border-blue-500/30 text-blue-400 rounded leading-none">
+      {series.home_wins}–{series.away_wins}
+    </span>
+  ) : showTimer ? (() => {
+    const pad = n => String(n).padStart(2, '0');
+    if (timerSecs <= 0 || series.picks_locked) {
+      return <span className="text-[8px] font-black text-red-400/80 flex items-center gap-0.5"><Lock className="w-2 h-2" />Locked</span>;
+    }
+    const dv = Math.floor(timerSecs / 86400);
+    const hv = Math.floor((timerSecs % 86400) / 3600);
+    const mv = Math.floor((timerSecs % 3600) / 60);
+    const sv = timerSecs % 60;
+    const urgent = timerSecs < 3600;
+    return (
+      <span className={`text-[8px] font-black font-mono flex items-center gap-0.5 ${urgent ? 'text-red-400' : 'text-cyan-400/80'}`}>
+        <Clock className="w-2 h-2 shrink-0" />
+        {dv > 0 ? `${dv}d ` : ''}{pad(hv)}:{pad(mv)}:{pad(sv)}
+      </span>
+    );
+  })() : null;
+
   const cardStyle = hasBet
-    ? { height: CH, boxShadow: '0 0 0 1px rgba(234,179,8,0.75), 0 0 20px rgba(234,179,8,0.40)' }
+    ? { height: CH, boxShadow: '0 0 0 2px rgba(234,179,8,0.85), 0 0 22px rgba(234,179,8,0.35)' }
     : { height: CH };
 
   return (
     <div style={cardStyle}
       className={`w-44 border-2 relative rounded-xl flex flex-col overflow-hidden transition-all ${
-        isCompleted    ? 'border-green-500/50 shadow-md shadow-green-500/10' :
-        hasBet         ? 'border-yellow-400 cursor-pointer' :
-        isLocked       ? 'border-slate-600/40 opacity-60' :
-        pickedUnderdog ? 'border-amber-400/60 underdog-glow' :
-        (hp || ap)     ? 'border-orange-500/60 shadow-md shadow-orange-500/15 cursor-pointer' :
-        noPick         ? 'border-cyan-500/50 cursor-pointer' :
-        'border-slate-700/60 hover:border-slate-600 cursor-pointer'
+        isCompleted ? 'border-green-500/50 shadow-sm shadow-green-500/10' :
+        hasBet      ? 'border-yellow-400 cursor-pointer' :
+        isLocked    ? 'border-slate-600/40 opacity-60' :
+        'border-slate-700/50 cursor-pointer hover:border-slate-600/80'
       } bg-slate-900/90`}>
-      {statusStrip}
-      {teamRow(h, hp, hWon, hIsUnderdog, () => onTeamClick(series, h.id))}
-      {/* Series score divider */}
-      <div className="relative h-px bg-slate-800">
-        {!isCompleted && (series.home_wins > 0 || series.away_wins > 0) && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-[9px] font-black tabular-nums px-1.5 rounded bg-slate-900 border border-blue-500/30 text-blue-400 leading-4">
-              {series.home_wins}–{series.away_wins}
-            </span>
-          </div>
-        )}
+      {teamRow(h, hp, hWon, () => onTeamClick(series, h.id))}
+      <div
+        className={`relative shrink-0 flex items-center justify-center bg-slate-950 border-y border-slate-800/70 ${dividerTall ? 'h-[14px]' : 'h-px'}`}
+      >
+        {dividerContent}
       </div>
-      {teamRow(a, ap, aWon, aIsUnderdog, () => onTeamClick(series, a.id))}
+      {teamRow(a, ap, aWon, () => onTeamClick(series, a.id))}
     </div>
   );
 };
@@ -477,50 +462,21 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
   const betsClosed = game.status === 'completed' || (piSecs !== null && piSecs <= 0);
   const winner = game.status === 'completed' && game.winner_id
     ? (game.winner_id === team1?.id ? team1 : team2) : null;
-  const noPick = !betsClosed && !p1 && !p2 && !hasBet;
-  const hasLocalUnsaved = (p1 || p2) && !hasBet && !betsClosed;
 
-  // ── Status header strip ──────────────────────────────────────────────────────
-  const statusStrip = game.status === 'completed' ? (
-    <div className="h-[15px] bg-green-500/20 border-b border-green-500/25 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-green-400 tracking-widest">✓ COMPLETED</span>
-    </div>
-  ) : hasBet ? (
-    <div className="h-[15px] bg-yellow-400/20 border-b border-yellow-400/30 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-yellow-300 tracking-widest">★ YOUR PICK IS SAVED</span>
-    </div>
-  ) : betsClosed ? (
-    <div className="h-[15px] bg-red-500/10 border-b border-red-500/20 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-red-400/70 tracking-widest">🔒 LOCKED — NO PICK</span>
-    </div>
-  ) : hasLocalUnsaved ? (
-    <div className="h-[15px] bg-orange-500/15 border-b border-orange-500/20 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-orange-400 tracking-widest">↑ SAVE TO CONFIRM</span>
-    </div>
-  ) : (
-    <div className="h-[15px] bg-cyan-500/8 border-b border-cyan-500/15 flex items-center justify-center shrink-0">
-      <span className="text-[8px] font-black text-cyan-400/80 tracking-widest">· OPEN — TAP TO PICK</span>
-    </div>
-  );
-
-  // ── Team row ─────────────────────────────────────────────────────────────────
   const teamRow = (team, picked, onClick) => {
-    const isUnderdog = team?.id === underdogId;
     const isWinner = winner?.id === team?.id;
     const dimmed = hasBet && !picked && !betsClosed;
     return (
       <button onClick={betsClosed ? undefined : onClick}
         className={`relative flex-1 flex items-center gap-2 px-2 w-full transition-all ${
-          isWinner                    ? 'bg-green-500/20' :
-          betsClosed && !isWinner    ? 'opacity-40' :
-          !picked && !hasBet         ? 'hover:bg-slate-800/60' : ''
+          isWinner                  ? 'bg-green-500/20' :
+          betsClosed && !isWinner  ? 'opacity-40' :
+          !picked && !hasBet       ? 'hover:bg-slate-800/60' : ''
         } ${dimmed ? 'opacity-20' : ''}`}
         style={{
           cursor: betsClosed ? 'default' : 'pointer',
           background: picked && hasBet && !betsClosed
-            ? 'linear-gradient(90deg,rgba(234,179,8,0.40) 0%,rgba(234,179,8,0.15) 60%,transparent 100%)'
-            : picked && !betsClosed
-            ? isUnderdog ? 'rgba(245,158,11,0.18)' : 'rgba(249,115,22,0.20)'
+            ? 'linear-gradient(90deg,rgba(234,179,8,0.38) 0%,rgba(234,179,8,0.12) 65%,transparent 100%)'
             : undefined,
         }}>
         {picked && hasBet && !betsClosed && (
@@ -528,39 +484,53 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
         )}
         <img src={team?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
         <span className={`text-xs font-black truncate flex-1 ${
-          isWinner                            ? 'text-green-300' :
-          picked && hasBet && !betsClosed     ? 'text-yellow-100' :
-          picked && isUnderdog && !betsClosed ? 'text-amber-400' :
-          picked && !betsClosed               ? 'text-orange-300' :
-          dimmed                              ? 'text-slate-500' :
-                                                'text-white'
+          isWinner                        ? 'text-green-300' :
+          picked && hasBet && !betsClosed ? 'text-yellow-300' :
+          dimmed                          ? 'text-slate-500' :
+                                            'text-white'
         }`}>{team?.abbreviation}</span>
-        <span className={`text-[10px] font-bold shrink-0 ${
-          picked && hasBet && !betsClosed ? 'text-yellow-400/80' :
-          isWinner ? 'text-green-400/60' : 'text-slate-600'
-        }`}>{team?.seed}</span>
+        {picked && hasBet && !betsClosed
+          ? <span className="text-yellow-400 text-sm shrink-0">★</span>
+          : <span className={`text-[10px] shrink-0 ${isWinner ? 'text-green-400/60' : 'text-slate-600'}`}>{team?.seed}</span>
+        }
         {isWinner && <span className="text-[9px] font-black text-green-400 shrink-0">✓</span>}
       </button>
     );
   };
 
+  // Countdown inside divider
+  const dividerContent = (() => {
+    if (betsClosed || !startZ || piSecs === null) return null;
+    const pad = n => String(n).padStart(2, '0');
+    const dv = Math.floor(piSecs / 86400);
+    const hv = Math.floor((piSecs % 86400) / 3600);
+    const mv = Math.floor((piSecs % 3600) / 60);
+    const sv = piSecs % 60;
+    const urgent = piSecs < 3600;
+    return (
+      <span className={`text-[8px] font-black font-mono flex items-center gap-0.5 ${urgent ? 'text-red-400' : 'text-cyan-400/80'}`}>
+        <Clock className="w-2 h-2 shrink-0" />
+        {dv > 0 ? `${dv}d ` : ''}{pad(hv)}:{pad(mv)}:{pad(sv)}
+      </span>
+    );
+  })();
+
   const cardStyle = hasBet
-    ? { height: CH, boxShadow: '0 0 0 1px rgba(234,179,8,0.75), 0 0 20px rgba(234,179,8,0.40)' }
+    ? { height: CH, boxShadow: '0 0 0 2px rgba(234,179,8,0.85), 0 0 22px rgba(234,179,8,0.35)' }
     : { height: CH };
 
   return (
     <div style={cardStyle}
       className={`w-40 border-2 relative rounded-xl flex flex-col overflow-hidden transition-all bg-slate-900/90 ${
-        game.status === 'completed' ? 'border-green-500/40 shadow-md shadow-green-500/10' :
-        hasBet     ? 'border-yellow-400 cursor-pointer' :
-        betsClosed ? 'border-slate-600/40 opacity-60' :
-        (p1 || p2) ? 'border-orange-500/60 shadow-md shadow-orange-500/15 cursor-pointer' :
-        noPick     ? 'border-cyan-500/50 cursor-pointer' :
-        'border-slate-700/60 hover:border-slate-600 cursor-pointer'
+        game.status === 'completed' ? 'border-green-500/40 shadow-sm shadow-green-500/10' :
+        hasBet                      ? 'border-yellow-400 cursor-pointer' :
+        betsClosed                  ? 'border-slate-600/40 opacity-60' :
+        'border-slate-700/50 cursor-pointer hover:border-slate-600/80'
       }`}>
-      {statusStrip}
       {teamRow(team1, p1, () => onTeamClick(game, team1?.id))}
-      <div className="h-px bg-slate-800" />
+      <div className={`relative shrink-0 flex items-center justify-center bg-slate-950 border-y border-slate-800/70 ${dividerContent ? 'h-[14px]' : 'h-px'}`}>
+        {dividerContent}
+      </div>
       {teamRow(team2, p2, () => onTeamClick(game, team2?.id))}
     </div>
   );
@@ -839,18 +809,8 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
               return (
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
                 <MatchCard series={s} pick={effectivePick} onTeamClick={onTeamClick} hasBet={hasBet} />
-                {/* Game 1 timer badge — shown below card on desktop */}
-                {s.status === 'active' && (() => {
-                  const g1z = getSeriesGame1Z(s);
-                  if (!g1z) return null;
-                  return (
-                    <div style={{ position: 'absolute', top: CH + 2, left: '50%', transform: 'translateX(-50%)', zIndex: 20, whiteSpace: 'nowrap' }}>
-                      <DesktopSeriesTimer game1StartZ={g1z} picksLocked={s.picks_locked} />
-                    </div>
-                  );
-                })()}
                 {effectivePick?.teamId && s.status === 'active' && (
-                  <div style={{ position: 'absolute', top: CH + 26, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
+                  <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
                     {s.picks_locked ? (
                       <button disabled className="w-44 py-1.5 rounded-lg text-[10px] font-black bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed flex items-center justify-center gap-1.5 whitespace-nowrap">
                         <Lock className="w-3 h-3 shrink-0" /> Bets Locked
@@ -1432,7 +1392,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     const newConfirmed = {};
     (myPredictions.playoff_predictions || []).forEach(pred => {
       newPicks[pred.series_id] = {
-        teamId:    pred.predicted_winner_id,
+        teamId:    +pred.predicted_winner_id,   // coerce: API returns string, team IDs are numbers
         games:     pred.predicted_games,
         scorer:    pred.leading_scorer    || '',
         rebounder: pred.leading_rebounder || '',
@@ -1446,7 +1406,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     const newPiPicks = {};
     const newPiConfirmed = {};
     (myPredictions.playin_predictions || []).forEach(pred => {
-      newPiPicks[pred.game_id]     = { teamId: pred.predicted_winner_id };
+      newPiPicks[pred.game_id]     = { teamId: +pred.predicted_winner_id };  // coerce
       newPiConfirmed[pred.game_id] = true;
     });
     setPiPicks(newPiPicks);
