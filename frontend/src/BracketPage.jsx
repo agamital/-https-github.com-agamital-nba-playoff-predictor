@@ -467,8 +467,9 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
     const isWinner = winner?.id === team?.id;
     // When hasBet: fade only the unchosen team (regardless of betsClosed)
     // When no bet and betsClosed: fade non-winners (or both if no winner yet)
-    const dimmed = hasBet ? (!picked && !isCompleted) : (betsClosed && !isWinner);
-    const showGold = picked && hasBet && !isCompleted;
+    const isGameCompleted = game.status === 'completed';
+    const dimmed = hasBet ? (!picked && !isGameCompleted) : (betsClosed && !isWinner);
+    const showGold = picked && hasBet && !isGameCompleted;
     return (
       <button onClick={betsClosed ? undefined : onClick}
         className={`relative flex-1 flex items-center gap-2 px-2 w-full transition-all ${
