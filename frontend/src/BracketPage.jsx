@@ -733,7 +733,7 @@ const SeedBadge = ({ team, seed }) => (
   </div>
 );
 
-const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team, seed2Team, confirmed }) => {
+const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team, seed2Team, confirmed, predMap }) => {
   const slotH = (BH + 28) / PI_SLOTS;
   const seedBySlot = { elimination: seed1Team, '7v8': seed2Team };
   return (
@@ -742,7 +742,12 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
       <div style={{ height: BH + 28, display: 'flex', flexDirection: 'column' }}>
         {PLAYIN_ORDER.map(({ type, label: gLabel, sublabel }) => {
           const game = games.find(g => g.game_type === type);
-          const pick = game ? picks[game.id] : null;
+          // Effective pick: local state (real-time) OR DB prediction (page load)
+          const dbPred  = game ? predMap?.[game.id] : null;
+          const localPick = game ? picks[game.id] : null;
+          const pick = localPick || (dbPred ? { teamId: dbPred.predicted_winner_id } : null);
+          // hasBet: true if either local confirmed OR DB has a prediction
+          const hasBet = !!(game && (confirmed?.[game.id] || dbPred));
           const seedTeam = seedBySlot[type];
           const gameStartZ = game ? getPlayInStartZ(game) : null;
           return (
@@ -752,7 +757,7 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
               {gameStartZ && game?.status !== 'completed' && <PlayInCountdown startZ={gameStartZ} />}
               {seedTeam && <SeedBadge team={seedTeam} seed={type === 'elimination' ? 1 : 2} />}
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
-                <PlayInCard game={game} pick={pick} onTeamClick={onTeamClick} hasBet={!!(confirmed && game && confirmed[game.id])} />
+                <PlayInCard game={game} pick={pick} onTeamClick={onTeamClick} hasBet={hasBet} />
                 {game && pick?.teamId && (
                   <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
                     <PlayInPicker game={game} pick={pick} onSave={onSave} saved={saved[game.id]} />
@@ -790,7 +795,7 @@ const SeedWaitingCard = ({ team }) => (
 // slot index → which seed team "owns" that slot (no series yet)
 const SEED_SLOT = { 0: 1, 3: 2 }; // slot 0 = 1-seed, slot 3 = 2-seed
 
-const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, seedTeams, confirmed, onEdit }) => (
+const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved, seedTeams, confirmed, onEdit, predMap }) => (
   <div style={{ flexShrink: 0 }}>
     <p className="text-xs text-slate-500 uppercase font-bold mb-3 text-center tracking-wider">{label}</p>
     <div style={{ height: BH + 28, display: 'flex', flexDirection: 'column' }}>
@@ -798,9 +803,23 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
         const waitingTeam = !s && seedTeams?.[SEED_SLOT[i]];
         return (
           <div key={i} style={{ height: (BH + 28) / 4, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-            {s ? (
+            {s ? (() => {
+              // DB prediction (always reflects saved DB state on page load)
+              const dbPred = predMap?.[s.id];
+              // Effective pick: local state takes priority (real-time edits),
+              // fall back to DB prediction so the tree is populated on page load
+              const effectivePick = picks[s.id] || (dbPred ? {
+                teamId:    dbPred.predicted_winner_id,
+                games:     dbPred.predicted_games,
+                scorer:    dbPred.leading_scorer    || '',
+                rebounder: dbPred.leading_rebounder || '',
+                assister:  dbPred.leading_assister  || '',
+              } : null);
+              // hasBet: true if user has a saved bet (local OR db)
+              const hasBet = !!(confirmed[s.id] || dbPred);
+              return (
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
-                <MatchCard series={s} pick={picks[s.id]} onTeamClick={onTeamClick} hasBet={!!confirmed[s.id]} />
+                <MatchCard series={s} pick={effectivePick} onTeamClick={onTeamClick} hasBet={hasBet} />
                 {/* Game 1 timer badge — shown below card on desktop */}
                 {s.status === 'active' && (() => {
                   const g1z = getSeriesGame1Z(s);
@@ -811,13 +830,13 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
                     </div>
                   );
                 })()}
-                {picks[s.id]?.teamId && s.status === 'active' && (
+                {effectivePick?.teamId && s.status === 'active' && (
                   <div style={{ position: 'absolute', top: CH + 26, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
                     {s.picks_locked ? (
                       <button disabled className="w-44 py-1.5 rounded-lg text-[10px] font-black bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed flex items-center justify-center gap-1.5 whitespace-nowrap">
                         <Lock className="w-3 h-3 shrink-0" /> Bets Locked
                       </button>
-                    ) : confirmed[s.id] ? (
+                    ) : hasBet ? (
                       <button
                         onClick={() => onEdit(s.id)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:border-orange-500/50 hover:text-orange-400 text-[10px] font-bold transition-all whitespace-nowrap"
@@ -825,12 +844,13 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
                         ✏ Edit pick
                       </button>
                     ) : (
-                      <InlinePicker seriesId={s.id} series={s} pick={picks[s.id]} onGamesSelect={onGamesSelect} onLeaderSelect={onLeaderSelect} onSave={onSave} saved={saved[s.id]} />
+                      <InlinePicker seriesId={s.id} series={s} pick={effectivePick} onGamesSelect={onGamesSelect} onLeaderSelect={onLeaderSelect} onSave={onSave} saved={saved[s.id]} />
                     )}
                   </div>
                 )}
               </div>
-            ) : waitingTeam ? (
+            );
+            })() : waitingTeam ? (
               <SeedWaitingCard team={waitingTeam} />
             ) : (
               <TBDCard />
@@ -1695,11 +1715,12 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
               seed1Team={westSeed1}
               seed2Team={westSeed2}
               confirmed={piConfirmed}
+              predMap={myPiPredMap}
             />
             <HLine width={20} />
 
             {/* WEST R1 */}
-            <R1Col label="Round 1" slots={westSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={westSeedTeams} confirmed={confirmed} onEdit={handleEdit} />
+            <R1Col label="Round 1" slots={westSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={westSeedTeams} confirmed={confirmed} onEdit={handleEdit} predMap={myPredMap} />
 
             {/* WEST Semis → Finals (only if showFull) */}
             {showFull && (
@@ -1719,7 +1740,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
             )}
 
             {/* EAST R1 */}
-            <R1Col label="Round 1" slots={eastSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={eastSeedTeams} confirmed={confirmed} onEdit={handleEdit} />
+            <R1Col label="Round 1" slots={eastSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={eastSeedTeams} confirmed={confirmed} onEdit={handleEdit} predMap={myPredMap} />
 
             {/* EAST Play-In */}
             <HLine width={20} />
@@ -1733,6 +1754,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
               seed1Team={eastSeed1}
               seed2Team={eastSeed2}
               confirmed={piConfirmed}
+              predMap={myPiPredMap}
             />
           </div>
         </div>
@@ -1773,7 +1795,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={piConfirmed[game.id]} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!(piConfirmed[game.id] || myPiPredMap[game.id])} />
                     </div>
                   );
                 })}
@@ -1788,7 +1810,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
           <div className="space-y-3">
             {westSlots.filter(Boolean).length > 0 ? westSlots.filter(Boolean).map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!(confirmed[s.id] || myPredMap[s.id])} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
@@ -1820,7 +1842,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id]} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={piConfirmed[game.id]} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!(piConfirmed[game.id] || myPiPredMap[game.id])} />
                     </div>
                   );
                 })}
@@ -1835,7 +1857,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
           <div className="space-y-3">
             {eastSlots.filter(Boolean).length > 0 ? eastSlots.filter(Boolean).map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id]} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!(confirmed[s.id] || myPredMap[s.id])} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
