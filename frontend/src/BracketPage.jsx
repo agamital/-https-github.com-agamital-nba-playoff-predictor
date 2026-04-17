@@ -136,7 +136,7 @@ function DesktopSeriesTimer({ game1StartZ, picksLocked }) {
     <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full border text-[9px] font-black font-mono
       ${urgent ? 'bg-red-500/20 border-red-500/30 text-red-400' : soon ? 'bg-amber-500/15 border-amber-500/30 text-amber-400' : 'bg-slate-800 border-slate-700 text-cyan-400'}`}>
       <Clock className="w-2.5 h-2.5 shrink-0" />
-      {dv > 1 ? `${dv}d ` : ''}{dv > 1 ? pad(hv) : hv}:{pad(mv)}:{pad(sv)}
+      {dv > 0 ? `${dv}d ` : ''}{pad(hv)}:{pad(mv)}:{pad(sv)}
       <span className={`font-normal ${urgent ? 'text-red-400/60' : 'text-slate-600'}`}>· {tipLabel}</span>
     </span>
   );
