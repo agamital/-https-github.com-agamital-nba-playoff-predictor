@@ -744,8 +744,9 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
               {seedTeam && <SeedBadge team={seedTeam} seed={type === 'elimination' ? 1 : 2} />}
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
                 <PlayInCard game={game} pick={pick} onTeamClick={onTeamClick} hasBet={hasBet} />
-                {/* Only show the picker while bets are still open */}
-                {game && pick?.teamId && game.status !== 'completed' &&
+                {/* Only show the picker after the user actively clicks a team (localPick),
+                    not just because a DB prediction exists — and only while bets are open */}
+                {game && localPick?.teamId && game.status !== 'completed' &&
                   (!gameStartZ || new Date(gameStartZ) > new Date()) && (
                   <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
                     <PlayInPicker game={game} pick={pick} onSave={onSave} saved={saved[game.id]} hasBet={hasBet} />
