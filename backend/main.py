@@ -5972,6 +5972,7 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
             playoff_preds.append({
                 'id': row[0],
                 'series_id': row[2],
+                'predicted_winner_id': row[3],   # numeric team ID — needed by frontend to highlight pick
                 'predicted_games': row[7],
                 'leading_scorer': row[8],
                 'leading_rebounder': row[9],
@@ -6028,6 +6029,7 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
             playin_preds.append({
                 'id': row[0],
                 'game_id': row[2],
+                'predicted_winner_id': row[3],   # numeric team ID — needed by frontend to highlight pick
                 'game_type': row[7],
                 'conference': row[8],
                 'team1': {'name': row[12], 'abbreviation': row[13], 'logo_url': row[14]},

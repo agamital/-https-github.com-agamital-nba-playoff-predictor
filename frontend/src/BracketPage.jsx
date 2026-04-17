@@ -1376,7 +1376,10 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   // Load the current user's saved predictions so picks are pre-populated on page load
   const { data: myPredictions } = useQuery({
     queryKey: ['myPredictions', currentUser?.user_id],
-    queryFn:  () => api.getMyPredictions(currentUser.user_id, '2026'),
+    // Pass viewer_id = own user_id so the backend returns ALL of this user's
+    // predictions including ones for series that haven't started yet.
+    // Without viewer_id the backend sets show_all=false and hides unlocked picks.
+    queryFn:  () => api.getMyPredictions(currentUser.user_id, '2026', currentUser.user_id),
     staleTime: 30 * 1000,
     enabled:  !!currentUser,
   });
