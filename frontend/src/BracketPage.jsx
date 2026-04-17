@@ -360,7 +360,8 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
   const aIsUnderdog = underdogSeed != null && awaySeed === underdogSeed;
   const pickedUnderdog = (hp && hIsUnderdog) || (ap && aIsUnderdog);
   // User hasn't placed any pick for this active open series
-  const noPick = !isCompleted && !isLocked && !hp && !ap;
+  // hasBet covers the case where teamId type-mismatch makes hp/ap false
+  const noPick = !isCompleted && !isLocked && !hp && !ap && !hasBet;
 
   const teamRow = (team, picked, won, isUnderdog, onClick) => (
     <button
@@ -420,20 +421,21 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
     </button>
   );
 
-  // Determine card border + glow
-  const cardStyle = hasBet && (hp || ap)
+  // Determine card border + glow — use hasBet alone (not hasBet && (hp||ap))
+  // so yellow shows even when teamId type-mismatch causes hp/ap to be false
+  const cardStyle = hasBet
     ? { height: CH, boxShadow: '0 0 0 1px rgba(234,179,8,0.7), 0 0 18px rgba(234,179,8,0.45)' }
     : { height: CH };
 
   return (
     <div style={cardStyle}
       className={`w-44 border-2 relative rounded-xl flex flex-col overflow-hidden transition-all ${
-        isCompleted      ? 'border-green-500/50 shadow-md shadow-green-500/10' :
-        hasBet && (hp || ap) ? 'border-yellow-400 cursor-pointer' :
-        isLocked         ? 'border-slate-600/50 opacity-70' :
-        pickedUnderdog   ? 'border-amber-400/60 underdog-glow' :
-        (hp || ap)       ? 'border-orange-500/50 shadow-md shadow-orange-500/15 cursor-pointer' :
-        noPick           ? 'border-cyan-500/50 cursor-pointer' :
+        isCompleted  ? 'border-green-500/50 shadow-md shadow-green-500/10' :
+        hasBet       ? 'border-yellow-400 cursor-pointer' :
+        isLocked     ? 'border-slate-600/50 opacity-70' :
+        pickedUnderdog ? 'border-amber-400/60 underdog-glow' :
+        (hp || ap)   ? 'border-orange-500/50 shadow-md shadow-orange-500/15 cursor-pointer' :
+        noPick       ? 'border-cyan-500/50 cursor-pointer' :
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
       } bg-slate-900/80`}>
       {/* "PICK?" overlay for series with no bet placed yet */}
@@ -473,7 +475,7 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
   const betsClosed = game.status === 'completed' || (piSecs !== null && piSecs <= 0);
   const winner = game.status === 'completed' && game.winner_id
     ? (game.winner_id === team1?.id ? team1 : team2) : null;
-  const noPick = !betsClosed && !p1 && !p2;
+  const noPick = !betsClosed && !p1 && !p2 && !hasBet;
 
   const teamRow = (team, picked, onClick) => {
     const isUnderdog = team?.id === underdogId;
@@ -519,17 +521,17 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
     );
   };
 
-  const cardStyle = hasBet && (p1 || p2)
+  const cardStyle = hasBet
     ? { height: CH, boxShadow: '0 0 0 1px rgba(234,179,8,0.7), 0 0 18px rgba(234,179,8,0.45)' }
     : { height: CH };
 
   return (
     <div style={cardStyle}
       className={`w-40 border-2 relative rounded-xl flex flex-col overflow-hidden transition-all bg-slate-900/80 ${
-        betsClosed       ? 'border-slate-700/40 cursor-default' :
-        hasBet && (p1 || p2) ? 'border-yellow-400 cursor-pointer' :
-        (p1 || p2)       ? 'border-orange-500/50 shadow-md shadow-orange-500/15 cursor-pointer' :
-        noPick           ? 'border-cyan-500/50 cursor-pointer' :
+        betsClosed ? 'border-slate-700/40 cursor-default' :
+        hasBet     ? 'border-yellow-400 cursor-pointer' :
+        (p1 || p2) ? 'border-orange-500/50 shadow-md shadow-orange-500/15 cursor-pointer' :
+        noPick     ? 'border-cyan-500/50 cursor-pointer' :
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
       }`}>
       {/* "PICK?" overlay for games with no bet placed yet */}
@@ -745,7 +747,7 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
           // Effective pick: local state (real-time) OR DB prediction (page load)
           const dbPred  = game ? predMap?.[game.id] : null;
           const localPick = game ? picks[game.id] : null;
-          const pick = localPick || (dbPred ? { teamId: dbPred.predicted_winner_id } : null);
+          const pick = localPick || (dbPred ? { teamId: +dbPred.predicted_winner_id } : null);
           // hasBet: true if either local confirmed OR DB has a prediction
           const hasBet = !!(game && (confirmed?.[game.id] || dbPred));
           const seedTeam = seedBySlot[type];
@@ -809,7 +811,7 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
               // Effective pick: local state takes priority (real-time edits),
               // fall back to DB prediction so the tree is populated on page load
               const effectivePick = picks[s.id] || (dbPred ? {
-                teamId:    dbPred.predicted_winner_id,
+                teamId:    +dbPred.predicted_winner_id,   // coerce: API may return string
                 games:     dbPred.predicted_games,
                 scorer:    dbPred.leading_scorer    || '',
                 rebounder: dbPred.leading_rebounder || '',
@@ -1795,7 +1797,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!(piConfirmed[game.id] || myPiPredMap[game.id])} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: +myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!(piConfirmed[game.id] || myPiPredMap[game.id])} />
                     </div>
                   );
                 })}
@@ -1810,7 +1812,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
           <div className="space-y-3">
             {westSlots.filter(Boolean).length > 0 ? westSlots.filter(Boolean).map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!(confirmed[s.id] || myPredMap[s.id])} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!(confirmed[s.id] || myPredMap[s.id])} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}
@@ -1842,7 +1844,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                   return (
                     <div key={type}>
                       <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!(piConfirmed[game.id] || myPiPredMap[game.id])} />
+                      <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: +myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!(piConfirmed[game.id] || myPiPredMap[game.id])} />
                     </div>
                   );
                 })}
@@ -1857,7 +1859,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
           <div className="space-y-3">
             {eastSlots.filter(Boolean).length > 0 ? eastSlots.filter(Boolean).map(s => (
-              <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!(confirmed[s.id] || myPredMap[s.id])} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+              <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!(confirmed[s.id] || myPredMap[s.id])} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
             )) : (
               <div className="text-center py-6 text-slate-500">No matchups yet — check back soon</div>
             )}

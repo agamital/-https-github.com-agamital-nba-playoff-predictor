@@ -3768,15 +3768,28 @@ _GAME1_SCHEDULE_UTC: dict[tuple, str] = {
 FUTURES_LOCK_UTC = '2026-04-18T17:00:00Z'   # CLE vs TOR — earliest Game 1
 
 
-def _backfill_game1_start_times(season: str = '2026'):
-    """Set game1_start_time on First Round series that are missing it."""
+def _backfill_game1_start_times(season: str = '2026', force: bool = False):
+    """Sync game1_start_time on First Round series from the canonical schedule.
+
+    By default only fills NULL entries.  Pass force=True to overwrite any
+    value that was NOT manually set (manual_override IS NOT TRUE) — this
+    corrects wrong times that an admin accidentally entered.
+    """
     try:
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("""SELECT id, conference, home_seed, away_seed
-                     FROM series
-                     WHERE season=%s AND round='First Round' AND game1_start_time IS NULL""",
-                  (season,))
+        if force:
+            c.execute("""SELECT id, conference, home_seed, away_seed
+                         FROM series
+                         WHERE season=%s AND round='First Round'
+                           AND (manual_override IS NOT TRUE)""",
+                      (season,))
+        else:
+            c.execute("""SELECT id, conference, home_seed, away_seed
+                         FROM series
+                         WHERE season=%s AND round='First Round'
+                           AND game1_start_time IS NULL""",
+                      (season,))
         updated = 0
         for sid, conf, hs, aws in c.fetchall():
             t = _GAME1_SCHEDULE_UTC.get((conf, hs, aws))
@@ -3785,10 +3798,11 @@ def _backfill_game1_start_times(season: str = '2026'):
                 updated += 1
         conn.commit()
         conn.close()
-        if updated:
-            print(f"[Schedule] Set game1_start_time on {updated} First Round series")
+        print(f"[Schedule] game1_start_time synced on {updated} First Round series (force={force})")
+        return updated
     except Exception as e:
         print(f"[Schedule] _backfill_game1_start_times error: {e}")
+        return 0
 
 
 @app.on_event("startup")
@@ -5259,6 +5273,19 @@ async def playin_pred(game_id: int, predicted_winner_id: int, user_id: int):
     conn.commit()
     conn.close()
     return {"message": "Saved"}
+
+
+@app.post("/api/admin/reset-game1-times")
+async def admin_reset_game1_times(season: str = "2026"):
+    """Force-reset all game1_start_time values to the canonical schedule
+    (overwrites any admin-entered wrong dates, unless manual_override=true).
+    """
+    updated = _backfill_game1_start_times(season=season, force=True)
+    return {"ok": True, "updated": updated, "schedule": {
+        f"{conf} {hs}v{aws}": t
+        for (conf, hs, aws), t in _GAME1_SCHEDULE_UTC.items()
+    }}
+
 
 @app.post("/api/admin/playin/{game_id}/start-time")
 async def set_playin_start_time(game_id: int, start_time: str | None = None):
