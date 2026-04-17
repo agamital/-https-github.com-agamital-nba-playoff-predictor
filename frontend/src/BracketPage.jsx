@@ -365,7 +365,7 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
       onClick={isCompleted || isLocked ? undefined : onClick}
       className={`flex-1 flex items-center gap-2 px-3 w-full transition-all ${
         won ? 'bg-green-500/20' :
-        picked && !isCompleted && hasBet ? 'bg-yellow-500/15' :
+        picked && !isCompleted && hasBet ? 'bg-yellow-500/20' :
         picked && !isCompleted ? (isUnderdog ? 'bg-amber-500/20' : 'bg-orange-500/25') :
         isCompleted && !won ? 'opacity-40' :
         isLocked ? '' :
@@ -375,13 +375,16 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
       style={{ cursor: isCompleted || isLocked ? 'default' : 'pointer' }}
     >
       <span className="text-xs text-slate-500 w-4 shrink-0 font-bold">{team.seed}</span>
+      {picked && !isCompleted && hasBet && (
+        <span className="text-yellow-400 text-[10px] shrink-0 leading-none">★</span>
+      )}
       {isUnderdog && !isCompleted && !hasBet && (
         <span className="text-[7px] font-black text-amber-400/60 shrink-0 uppercase tracking-tight">DOG</span>
       )}
       <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
       <span className={`text-sm font-bold truncate ${
         won ? 'text-green-400' :
-        picked && !isCompleted && hasBet ? 'text-yellow-400' :
+        picked && !isCompleted && hasBet ? 'text-yellow-300' :
         picked && !isCompleted ? (isUnderdog ? 'text-amber-400' : 'text-orange-400') :
         'text-white'
       }`}>
@@ -389,8 +392,8 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
       </span>
       {won && actual_games && <span className="ml-auto text-[10px] text-green-400 font-black shrink-0">in {actual_games}</span>}
       {picked && !isCompleted && hasBet && (
-        <span className="ml-auto text-[7px] font-black shrink-0 px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/30 text-yellow-400">
-          MY BET
+        <span className="ml-auto text-[8px] font-black shrink-0 px-1 py-0.5 rounded bg-yellow-500/25 border border-yellow-400/50 text-yellow-300 leading-tight">
+          ✓
         </span>
       )}
       {picked && !isCompleted && !hasBet && !isLocked && (
@@ -407,7 +410,7 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
     <div style={{ height: CH }}
       className={`w-44 border-2 rounded-xl flex flex-col overflow-hidden transition-all ${
         isCompleted ? 'border-green-500/40 shadow-md shadow-green-500/10' :
-        hasBet && (hp || ap) ? 'border-yellow-500/50 shadow-md shadow-yellow-500/15 cursor-pointer' :
+        hasBet && (hp || ap) ? 'border-yellow-400/70 shadow-lg shadow-yellow-500/20 cursor-pointer' :
         isLocked ? 'border-yellow-500/30 opacity-75' :
         pickedUnderdog && !isCompleted ? 'border-amber-400/60 underdog-glow' :
         (hp || ap) ? 'border-orange-500/40 shadow-md shadow-orange-500/10 cursor-pointer' :
@@ -453,17 +456,20 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
         className={`flex-1 flex items-center gap-2 px-2 w-full transition-all ${
           isWinner ? 'bg-green-500/20' :
           betsClosed && !isWinner ? 'opacity-50' :
-          picked && hasBet ? 'bg-yellow-500/15' :
+          picked && hasBet ? 'bg-yellow-500/20' :
           picked && isUnderdog ? 'bg-amber-500/20' :
           picked ? 'bg-orange-500/25' : 'hover:bg-slate-800/70'
         }`}>
         <span className="text-[11px] text-slate-500 w-4 shrink-0 font-bold">{team?.seed}</span>
+        {picked && hasBet && !betsClosed && (
+          <span className="text-yellow-400 text-[10px] shrink-0 leading-none">★</span>
+        )}
         <img src={team?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
-        <span className={`text-xs font-bold truncate flex-1 ${isWinner ? 'text-green-400' : picked && hasBet ? 'text-yellow-400' : picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-white'}`}>{team?.abbreviation}</span>
+        <span className={`text-xs font-bold truncate flex-1 ${isWinner ? 'text-green-400' : picked && hasBet ? 'text-yellow-300' : picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-white'}`}>{team?.abbreviation}</span>
         {betsClosed
           ? isWinner ? <span className="text-[9px] font-black text-green-400 shrink-0">✓</span> : null
           : picked && hasBet
-          ? <span className="text-[7px] font-black px-1 py-0.5 rounded shrink-0 bg-yellow-500/20 border border-yellow-500/30 text-yellow-400">MY BET</span>
+          ? <span className="text-[8px] font-black px-1 py-0.5 rounded shrink-0 bg-yellow-500/25 border border-yellow-400/50 text-yellow-300 leading-tight">✓</span>
           : <span className={`text-[9px] font-black px-1 py-0.5 rounded shrink-0 ${isUnderdog ? 'text-amber-400 bg-amber-500/15' : 'text-slate-500 bg-slate-800'}`}>+{pts}</span>
         }
       </button>
@@ -474,7 +480,7 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
     <div style={{ height: CH }}
       className={`w-40 border-2 rounded-xl flex flex-col overflow-hidden transition-all bg-slate-900/80 ${
         betsClosed ? 'border-slate-700/40 cursor-default' :
-        hasBet && (p1 || p2) ? 'border-yellow-500/50 shadow-md shadow-yellow-500/15 cursor-pointer' :
+        hasBet && (p1 || p2) ? 'border-yellow-400/70 shadow-lg shadow-yellow-500/20 cursor-pointer' :
         (p1 || p2) ? 'border-orange-500/40 shadow-md shadow-orange-500/10 cursor-pointer' :
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
       }`}>
