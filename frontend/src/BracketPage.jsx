@@ -359,85 +359,95 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
   const hIsUnderdog = underdogSeed != null && homeSeed === underdogSeed;
   const aIsUnderdog = underdogSeed != null && awaySeed === underdogSeed;
   const pickedUnderdog = (hp && hIsUnderdog) || (ap && aIsUnderdog);
-  // User hasn't placed any pick for this active open series
-  // hasBet covers the case where teamId type-mismatch makes hp/ap false
   const noPick = !isCompleted && !isLocked && !hp && !ap && !hasBet;
+  const hasLocalUnsaved = (hp || ap) && !hasBet && !isCompleted && !isLocked;
 
-  const teamRow = (team, picked, won, isUnderdog, onClick) => (
-    <button
-      onClick={isCompleted || isLocked ? undefined : onClick}
-      className={`relative flex-1 flex items-center gap-2 px-3 w-full transition-all ${
-        won           ? 'bg-green-500/20' :
-        isCompleted && !won ? 'opacity-40' :
-        isLocked      ? '' :
-        isUnderdog && !picked ? 'hover:bg-amber-500/10' :
-        !picked       ? 'hover:bg-slate-800/70' : ''
-      }`}
-      style={{
-        cursor: isCompleted || isLocked ? 'default' : 'pointer',
-        background: picked && !isCompleted && hasBet
-          ? 'linear-gradient(90deg,rgba(234,179,8,0.42) 0%,rgba(234,179,8,0.18) 55%,transparent 100%)'
-          : picked && !isCompleted
-          ? isUnderdog ? 'rgba(245,158,11,0.20)' : 'rgba(249,115,22,0.22)'
-          : undefined,
-      }}
-    >
-      {/* Yellow left accent stripe for confirmed bets */}
-      {picked && !isCompleted && hasBet && (
-        <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-yellow-400 rounded-l" />
-      )}
-      <span className={`text-xs w-4 shrink-0 font-black ${
-        picked && !isCompleted && hasBet ? 'text-yellow-400' :
-        won ? 'text-green-400' : 'text-slate-500'
-      }`}>{team.seed}</span>
-      {picked && !isCompleted && hasBet && (
-        <span className="text-yellow-300 text-sm shrink-0 leading-none font-black">★</span>
-      )}
-      {isUnderdog && !isCompleted && !hasBet && (
-        <span className="text-[7px] font-black text-amber-400/60 shrink-0 uppercase tracking-tight">DOG</span>
-      )}
-      <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
-      <span className={`text-sm font-black truncate flex-1 ${
-        won ? 'text-green-400' :
-        picked && !isCompleted && hasBet ? 'text-yellow-200' :
-        picked && !isCompleted ? (isUnderdog ? 'text-amber-400' : 'text-orange-400') :
-        'text-white'
-      }`}>
-        {team.abbreviation}
-      </span>
-      {won && actual_games && <span className="text-[10px] text-green-400 font-black shrink-0">in {actual_games}</span>}
-      {picked && !isCompleted && hasBet && (
-        <span className="text-[9px] font-black shrink-0 px-1.5 py-0.5 rounded-md bg-yellow-400/25 border border-yellow-400/60 text-yellow-200">
-          MY BET
-        </span>
-      )}
-      {picked && !isCompleted && !hasBet && !isLocked && (
-        <span className={`text-[7px] font-black shrink-0 px-1 py-0.5 rounded ${
-          isUnderdog ? 'text-amber-400 bg-amber-500/15' : 'text-orange-400/70'
-        }`}>
-          {isUnderdog ? 'RISKY' : 'SAFE'}
-        </span>
-      )}
-    </button>
+  // ── Status header strip ──────────────────────────────────────────────────────
+  const statusStrip = isCompleted ? (
+    <div className="h-[15px] bg-green-500/20 border-b border-green-500/25 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-green-400 tracking-widest">✓ COMPLETED</span>
+    </div>
+  ) : hasBet ? (
+    <div className="h-[15px] bg-yellow-400/20 border-b border-yellow-400/30 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-yellow-300 tracking-widest">★ YOUR PICK IS SAVED</span>
+    </div>
+  ) : isLocked ? (
+    <div className="h-[15px] bg-red-500/10 border-b border-red-500/20 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-red-400/70 tracking-widest">🔒 LOCKED — NO PICK</span>
+    </div>
+  ) : hasLocalUnsaved ? (
+    <div className="h-[15px] bg-orange-500/15 border-b border-orange-500/20 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-orange-400 tracking-widest">↑ SAVE TO CONFIRM</span>
+    </div>
+  ) : (
+    <div className="h-[15px] bg-cyan-500/8 border-b border-cyan-500/15 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-cyan-400/80 tracking-widest">· OPEN — TAP TO PICK</span>
+    </div>
   );
 
-  // Determine card border + glow — use hasBet alone (not hasBet && (hp||ap))
-  // so yellow shows even when teamId type-mismatch causes hp/ap to be false
+  // ── Team row ─────────────────────────────────────────────────────────────────
+  const teamRow = (team, picked, won, isUnderdog, onClick) => {
+    // Fade the unchosen team strongly so the saved pick stands out at a glance
+    const dimmed = hasBet && !picked && !isCompleted;
+    return (
+      <button
+        onClick={isCompleted || isLocked ? undefined : onClick}
+        className={`relative flex-1 flex items-center gap-2 px-3 w-full transition-all ${
+          won                              ? 'bg-green-500/20' :
+          isCompleted && !won             ? 'opacity-30' :
+          isLocked                        ? '' :
+          !picked && !hasBet && isUnderdog ? 'hover:bg-amber-500/10' :
+          !picked && !hasBet              ? 'hover:bg-slate-800/60' : ''
+        } ${dimmed ? 'opacity-20' : ''}`}
+        style={{
+          cursor: isCompleted || isLocked ? 'default' : 'pointer',
+          background: picked && !isCompleted && hasBet
+            ? 'linear-gradient(90deg,rgba(234,179,8,0.40) 0%,rgba(234,179,8,0.15) 60%,transparent 100%)'
+            : picked && !isCompleted
+            ? isUnderdog ? 'rgba(245,158,11,0.18)' : 'rgba(249,115,22,0.20)'
+            : undefined,
+        }}
+      >
+        {/* Gold left accent stripe on saved pick */}
+        {picked && !isCompleted && hasBet && (
+          <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-yellow-400 rounded-l" />
+        )}
+        <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
+        <span className={`text-sm font-black truncate flex-1 ${
+          won                                  ? 'text-green-300' :
+          picked && !isCompleted && hasBet     ? 'text-yellow-100' :
+          picked && !isCompleted && isUnderdog ? 'text-amber-400' :
+          picked && !isCompleted               ? 'text-orange-300' :
+          dimmed                               ? 'text-slate-500' :
+                                                 'text-white'
+        }`}>{team.abbreviation}</span>
+        <span className={`text-[10px] font-bold shrink-0 ${
+          picked && !isCompleted && hasBet ? 'text-yellow-400/80' :
+          won ? 'text-green-400/60' : 'text-slate-600'
+        }`}>{team.seed}</span>
+        {won && actual_games && (
+          <span className="text-[9px] text-green-400 font-black shrink-0">in {actual_games}</span>
+        )}
+      </button>
+    );
+  };
+
   const cardStyle = hasBet
-    ? { height: CH, boxShadow: '0 0 0 1px rgba(234,179,8,0.7), 0 0 18px rgba(234,179,8,0.45)' }
+    ? { height: CH, boxShadow: '0 0 0 1px rgba(234,179,8,0.75), 0 0 20px rgba(234,179,8,0.40)' }
     : { height: CH };
 
   return (
     <div style={cardStyle}
       className={`w-44 border-2 relative rounded-xl flex flex-col overflow-hidden transition-all ${
-        isCompleted  ? 'border-green-500/50 shadow-md shadow-green-500/10' :
-        hasBet       ? 'border-yellow-400 cursor-pointer' :
-        isLocked     ? 'border-slate-600/50 opacity-70' :
+        isCompleted    ? 'border-green-500/50 shadow-md shadow-green-500/10' :
+        hasBet         ? 'border-yellow-400 cursor-pointer' :
+        isLocked       ? 'border-slate-600/40 opacity-60' :
         pickedUnderdog ? 'border-amber-400/60 underdog-glow' :
-        (hp || ap)   ? 'border-orange-500/50 shadow-md shadow-orange-500/15 cursor-pointer' :
-        noPick       ? 'border-cyan-500/50 cursor-pointer' :
+        (hp || ap)     ? 'border-orange-500/60 shadow-md shadow-orange-500/15 cursor-pointer' :
+        noPick         ? 'border-cyan-500/50 cursor-pointer' :
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
-      } bg-slate-900/80`}>
+      } bg-slate-900/90`}>
+      {statusStrip}
       {teamRow(h, hp, hWon, hIsUnderdog, () => onTeamClick(series, h.id))}
       {/* Series score divider */}
       <div className="relative h-px bg-slate-800">
@@ -468,64 +478,87 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
   const winner = game.status === 'completed' && game.winner_id
     ? (game.winner_id === team1?.id ? team1 : team2) : null;
   const noPick = !betsClosed && !p1 && !p2 && !hasBet;
+  const hasLocalUnsaved = (p1 || p2) && !hasBet && !betsClosed;
 
+  // ── Status header strip ──────────────────────────────────────────────────────
+  const statusStrip = game.status === 'completed' ? (
+    <div className="h-[15px] bg-green-500/20 border-b border-green-500/25 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-green-400 tracking-widest">✓ COMPLETED</span>
+    </div>
+  ) : hasBet ? (
+    <div className="h-[15px] bg-yellow-400/20 border-b border-yellow-400/30 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-yellow-300 tracking-widest">★ YOUR PICK IS SAVED</span>
+    </div>
+  ) : betsClosed ? (
+    <div className="h-[15px] bg-red-500/10 border-b border-red-500/20 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-red-400/70 tracking-widest">🔒 LOCKED — NO PICK</span>
+    </div>
+  ) : hasLocalUnsaved ? (
+    <div className="h-[15px] bg-orange-500/15 border-b border-orange-500/20 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-orange-400 tracking-widest">↑ SAVE TO CONFIRM</span>
+    </div>
+  ) : (
+    <div className="h-[15px] bg-cyan-500/8 border-b border-cyan-500/15 flex items-center justify-center shrink-0">
+      <span className="text-[8px] font-black text-cyan-400/80 tracking-widest">· OPEN — TAP TO PICK</span>
+    </div>
+  );
+
+  // ── Team row ─────────────────────────────────────────────────────────────────
   const teamRow = (team, picked, onClick) => {
     const isUnderdog = team?.id === underdogId;
-    const pts = isUnderdog ? PLAYIN_UNDERDOG_PTS : PLAYIN_PTS;
     const isWinner = winner?.id === team?.id;
+    const dimmed = hasBet && !picked && !betsClosed;
     return (
       <button onClick={betsClosed ? undefined : onClick}
         className={`relative flex-1 flex items-center gap-2 px-2 w-full transition-all ${
-          isWinner ? 'bg-green-500/20' :
-          betsClosed && !isWinner ? 'opacity-50' :
-          !picked ? 'hover:bg-slate-800/70' : ''
-        }`}
+          isWinner                    ? 'bg-green-500/20' :
+          betsClosed && !isWinner    ? 'opacity-40' :
+          !picked && !hasBet         ? 'hover:bg-slate-800/60' : ''
+        } ${dimmed ? 'opacity-20' : ''}`}
         style={{
           cursor: betsClosed ? 'default' : 'pointer',
           background: picked && hasBet && !betsClosed
-            ? 'linear-gradient(90deg,rgba(234,179,8,0.42) 0%,rgba(234,179,8,0.18) 55%,transparent 100%)'
+            ? 'linear-gradient(90deg,rgba(234,179,8,0.40) 0%,rgba(234,179,8,0.15) 60%,transparent 100%)'
             : picked && !betsClosed
-            ? isUnderdog ? 'rgba(245,158,11,0.20)' : 'rgba(249,115,22,0.22)'
+            ? isUnderdog ? 'rgba(245,158,11,0.18)' : 'rgba(249,115,22,0.20)'
             : undefined,
         }}>
-        {/* Yellow left accent stripe */}
         {picked && hasBet && !betsClosed && (
           <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-yellow-400 rounded-l" />
         )}
-        <span className={`text-[11px] w-4 shrink-0 font-black ${picked && hasBet && !betsClosed ? 'text-yellow-400' : isWinner ? 'text-green-400' : 'text-slate-500'}`}>{team?.seed}</span>
-        {picked && hasBet && !betsClosed && (
-          <span className="text-yellow-300 text-sm shrink-0 leading-none font-black">★</span>
-        )}
         <img src={team?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
         <span className={`text-xs font-black truncate flex-1 ${
-          isWinner ? 'text-green-400' :
-          picked && hasBet && !betsClosed ? 'text-yellow-200' :
-          picked && isUnderdog ? 'text-amber-400' :
-          picked ? 'text-orange-400' : 'text-white'
+          isWinner                            ? 'text-green-300' :
+          picked && hasBet && !betsClosed     ? 'text-yellow-100' :
+          picked && isUnderdog && !betsClosed ? 'text-amber-400' :
+          picked && !betsClosed               ? 'text-orange-300' :
+          dimmed                              ? 'text-slate-500' :
+                                                'text-white'
         }`}>{team?.abbreviation}</span>
-        {betsClosed
-          ? isWinner ? <span className="text-[9px] font-black text-green-400 shrink-0">✓</span> : null
-          : picked && hasBet
-          ? <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md shrink-0 bg-yellow-400/25 border border-yellow-400/60 text-yellow-200">MY BET</span>
-          : <span className={`text-[9px] font-black px-1 py-0.5 rounded shrink-0 ${isUnderdog ? 'text-amber-400 bg-amber-500/15' : 'text-slate-500 bg-slate-800'}`}>+{pts}</span>
-        }
+        <span className={`text-[10px] font-bold shrink-0 ${
+          picked && hasBet && !betsClosed ? 'text-yellow-400/80' :
+          isWinner ? 'text-green-400/60' : 'text-slate-600'
+        }`}>{team?.seed}</span>
+        {isWinner && <span className="text-[9px] font-black text-green-400 shrink-0">✓</span>}
       </button>
     );
   };
 
   const cardStyle = hasBet
-    ? { height: CH, boxShadow: '0 0 0 1px rgba(234,179,8,0.7), 0 0 18px rgba(234,179,8,0.45)' }
+    ? { height: CH, boxShadow: '0 0 0 1px rgba(234,179,8,0.75), 0 0 20px rgba(234,179,8,0.40)' }
     : { height: CH };
 
   return (
     <div style={cardStyle}
-      className={`w-40 border-2 relative rounded-xl flex flex-col overflow-hidden transition-all bg-slate-900/80 ${
-        betsClosed ? 'border-slate-700/40 cursor-default' :
+      className={`w-40 border-2 relative rounded-xl flex flex-col overflow-hidden transition-all bg-slate-900/90 ${
+        game.status === 'completed' ? 'border-green-500/40 shadow-md shadow-green-500/10' :
         hasBet     ? 'border-yellow-400 cursor-pointer' :
-        (p1 || p2) ? 'border-orange-500/50 shadow-md shadow-orange-500/15 cursor-pointer' :
+        betsClosed ? 'border-slate-600/40 opacity-60' :
+        (p1 || p2) ? 'border-orange-500/60 shadow-md shadow-orange-500/15 cursor-pointer' :
         noPick     ? 'border-cyan-500/50 cursor-pointer' :
         'border-slate-700/60 hover:border-slate-600 cursor-pointer'
       }`}>
+      {statusStrip}
       {teamRow(team1, p1, () => onTeamClick(game, team1?.id))}
       <div className="h-px bg-slate-800" />
       {teamRow(team2, p2, () => onTeamClick(game, team2?.id))}
@@ -1681,6 +1714,49 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
       {/* ── DESKTOP BRACKET ── */}
       <div className="hidden lg:block">
+        {/* Pick progress bar */}
+        {(() => {
+          const r1All   = [...(westSlots || []), ...(eastSlots || [])].filter(Boolean);
+          const piAll   = [...(westPI   || []), ...(eastPI   || [])].filter(g => g.status !== 'completed');
+          const r1Saved = r1All.filter(s => myPredMap[s.id] || confirmed[s.id]).length;
+          const piSaved = piAll.filter(g => myPiPredMap[g.id] || piConfirmed[g.id]).length;
+          const total   = r1All.length + piAll.length;
+          const done    = r1Saved + piSaved;
+          const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
+          const allDone = done === total && total > 0;
+          return (
+            <div className="max-w-lg mx-auto mb-4 px-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Your picks</span>
+                <span className={`text-[11px] font-black ${allDone ? 'text-green-400' : done > 0 ? 'text-yellow-400' : 'text-cyan-400'}`}>
+                  {done} / {total} saved{allDone ? ' 🎉' : ''}
+                </span>
+              </div>
+              <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${allDone ? 'bg-green-500' : 'bg-gradient-to-r from-yellow-500 to-orange-500'}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              {/* Legend */}
+              <div className="flex items-center gap-4 mt-2 justify-center flex-wrap">
+                <span className="flex items-center gap-1.5 text-[10px] text-yellow-300/80 font-bold">
+                  <span className="w-3 h-3 rounded border-2 border-yellow-400 bg-yellow-400/20 shrink-0" /> Pick saved
+                </span>
+                <span className="flex items-center gap-1.5 text-[10px] text-cyan-400/80 font-bold">
+                  <span className="w-3 h-3 rounded border-2 border-cyan-500/60 shrink-0" /> Open — tap to pick
+                </span>
+                <span className="flex items-center gap-1.5 text-[10px] text-orange-400/80 font-bold">
+                  <span className="w-3 h-3 rounded border-2 border-orange-500/60 shrink-0" /> Selected, not saved
+                </span>
+                <span className="flex items-center gap-1.5 text-[10px] text-green-400/80 font-bold">
+                  <span className="w-3 h-3 rounded border-2 border-green-500/50 bg-green-500/15 shrink-0" /> Completed
+                </span>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="flex items-center justify-between mb-2 px-1" style={{ width: 'fit-content', margin: '0 auto 8px' }}>
           <span className="text-sm font-black text-red-400 uppercase tracking-widest">Western Conference ▶</span>
           <span className="flex-1" />
