@@ -667,40 +667,34 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
   );
 };
 
-const PlayInPicker = ({ game, pick, onSave, saved }) => {
+const PlayInPicker = ({ game, pick, onSave, saved, hasBet }) => {
   const underdogId = (game?.team1?.seed ?? 0) > (game?.team2?.seed ?? 0) ? game?.team1?.id : game?.team2?.id;
   const isUnderdogPick = pick?.teamId != null && pick.teamId === underdogId;
   const pts = isUnderdogPick ? PLAYIN_UNDERDOG_PTS : PLAYIN_PTS;
-  const startZ = getPlayInStartZ(game);
-  const piSecs = usePlayInCountdown(startZ);
-  const betsClosed = !game || game.status === 'completed' || (piSecs !== null && piSecs <= 0);
 
   return (
     <div className={`w-40 rounded-xl px-2 py-2 space-y-1.5 shadow-lg ${
-      betsClosed ? 'bg-slate-950/80 border border-red-500/15' :
       isUnderdogPick
         ? 'bg-slate-950/90 border border-amber-500/30 shadow-amber-500/10'
         : 'bg-slate-950/80 border border-orange-500/20'
     }`}>
-      {!betsClosed && (isUnderdogPick ? (
+      {isUnderdogPick ? (
         <div className="text-center">
           <p className="text-[9px] font-black text-amber-400">🔥 Underdog Bonus!</p>
           <p className="text-[8px] text-amber-400/60 font-bold">+{pts} pts if correct</p>
         </div>
       ) : (
         <p className="text-[9px] text-cyan-400/80 font-black text-center">+{pts} pts if correct</p>
-      ))}
-      <button onClick={betsClosed ? undefined : () => onSave(game?.id)}
-        disabled={betsClosed || !pick?.teamId}
+      )}
+      <button onClick={() => onSave(game?.id)}
+        disabled={!pick?.teamId}
         className={`w-full py-1.5 rounded-lg text-xs font-black tracking-wide transition-all flex items-center justify-center gap-1 ${
-          betsClosed ? 'bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed' :
           saved ? 'bg-green-500/20 border border-green-500/40 text-green-400' :
           !pick?.teamId ? 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed' :
           isUnderdogPick ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md shadow-amber-500/30' :
           'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-500/30'
         }`}>
-        {betsClosed ? <><Lock className="w-3 h-3 shrink-0" /> Bets Closed</> :
-         saved ? '✓ Saved!' : `Save Pick • +${pts} pts`}
+        {saved ? '✓ Saved!' : hasBet ? `✏ Update Pick • +${pts} pts` : `Save Pick • +${pts} pts`}
       </button>
     </div>
   );
@@ -750,9 +744,11 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
               {seedTeam && <SeedBadge team={seedTeam} seed={type === 'elimination' ? 1 : 2} />}
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
                 <PlayInCard game={game} pick={pick} onTeamClick={onTeamClick} hasBet={hasBet} />
-                {game && pick?.teamId && (
+                {/* Only show the picker while bets are still open */}
+                {game && pick?.teamId && game.status !== 'completed' &&
+                  (!gameStartZ || new Date(gameStartZ) > new Date()) && (
                   <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
-                    <PlayInPicker game={game} pick={pick} onSave={onSave} saved={saved[game.id]} />
+                    <PlayInPicker game={game} pick={pick} onSave={onSave} saved={saved[game.id]} hasBet={hasBet} />
                   </div>
                 )}
               </div>
