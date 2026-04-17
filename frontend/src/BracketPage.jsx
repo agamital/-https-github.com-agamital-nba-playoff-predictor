@@ -367,7 +367,7 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
           won                        ? 'bg-green-500/20' :
           isCompleted && !won        ? 'opacity-30' :
           !isCompleted && !isLocked && !picked ? 'hover:bg-slate-800/60' : ''
-        } ${dimmed ? 'opacity-20' : ''}`}
+        } ${dimmed ? 'opacity-50' : ''}`}
         style={{
           cursor: isCompleted || isLocked ? 'default' : 'pointer',
           background: picked && !isCompleted && hasBet
@@ -465,31 +465,33 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
 
   const teamRow = (team, picked, onClick) => {
     const isWinner = winner?.id === team?.id;
-    const dimmed = hasBet && !picked && !betsClosed;
+    // When hasBet: fade only the unchosen team (regardless of betsClosed)
+    // When no bet and betsClosed: fade non-winners (or both if no winner yet)
+    const dimmed = hasBet ? (!picked && !isCompleted) : (betsClosed && !isWinner);
+    const showGold = picked && hasBet && !isCompleted;
     return (
       <button onClick={betsClosed ? undefined : onClick}
         className={`relative flex-1 flex items-center gap-2 px-2 w-full transition-all ${
-          isWinner                  ? 'bg-green-500/20' :
-          betsClosed && !isWinner  ? 'opacity-40' :
-          !picked && !hasBet       ? 'hover:bg-slate-800/60' : ''
-        } ${dimmed ? 'opacity-20' : ''}`}
+          isWinner             ? 'bg-green-500/20' :
+          !picked && !hasBet && !betsClosed ? 'hover:bg-slate-800/60' : ''
+        } ${dimmed ? 'opacity-50' : ''}`}
         style={{
           cursor: betsClosed ? 'default' : 'pointer',
-          background: picked && hasBet && !betsClosed
+          background: showGold
             ? 'linear-gradient(90deg,rgba(234,179,8,0.38) 0%,rgba(234,179,8,0.12) 65%,transparent 100%)'
             : undefined,
         }}>
-        {picked && hasBet && !betsClosed && (
+        {showGold && (
           <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-yellow-400 rounded-l" />
         )}
         <img src={team?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
         <span className={`text-xs font-black truncate flex-1 ${
-          isWinner                        ? 'text-green-300' :
-          picked && hasBet && !betsClosed ? 'text-yellow-300' :
-          dimmed                          ? 'text-slate-500' :
-                                            'text-white'
+          isWinner   ? 'text-green-300' :
+          showGold   ? 'text-yellow-300' :
+          dimmed     ? 'text-slate-500' :
+                       'text-white'
         }`}>{team?.abbreviation}</span>
-        {picked && hasBet && !betsClosed
+        {showGold
           ? <span className="text-yellow-400 text-sm shrink-0">★</span>
           : <span className={`text-[10px] shrink-0 ${isWinner ? 'text-green-400/60' : 'text-slate-600'}`}>{team?.seed}</span>
         }
@@ -735,8 +737,8 @@ const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team,
           const dbPred  = game ? predMap?.[game.id] : null;
           const localPick = game ? picks[game.id] : null;
           const pick = localPick || (dbPred ? { teamId: +dbPred.predicted_winner_id } : null);
-          // hasBet: true if either local confirmed OR DB has a prediction
-          const hasBet = !!(game && (confirmed?.[game.id] || dbPred));
+          // hasBet: use only confirmed local state (hydration populates it from DB on load).
+          const hasBet = !!(game && confirmed?.[game.id]);
           const seedTeam = seedBySlot[type];
           const gameStartZ = game ? getPlayInStartZ(game) : null;
           return (
@@ -804,8 +806,10 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
                 rebounder: dbPred.leading_rebounder || '',
                 assister:  dbPred.leading_assister  || '',
               } : null);
-              // hasBet: true if user has a saved bet (local OR db)
-              const hasBet = !!(confirmed[s.id] || dbPred);
+              // hasBet: use only confirmed local state (hydration populates it from DB on load).
+              // Do NOT check dbPred here — handleEdit resets confirmed[s.id]=false so the
+              // InlinePicker can show; if we also checked dbPred it would stay true forever.
+              const hasBet = !!confirmed[s.id];
               return (
               <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
                 <MatchCard series={s} pick={effectivePick} onTeamClick={onTeamClick} hasBet={hasBet} />
