@@ -5646,7 +5646,8 @@ async def series_picks(series_id: int):
 
     c.execute("""SELECT s.home_team_id, s.away_team_id,
                         ht.abbreviation, ht.logo_url,
-                        at.abbreviation, at.logo_url
+                        at.abbreviation, at.logo_url,
+                        s.status, s.winner_team_id
                  FROM series s
                  JOIN teams ht ON s.home_team_id = ht.id
                  JOIN teams at ON s.away_team_id = at.id
@@ -5656,13 +5657,17 @@ async def series_picks(series_id: int):
         conn.close()
         raise HTTPException(status_code=404, detail="Series not found")
     home_id, away_id = row[0], row[1]
+    series_status = row[6]
+    winner_team_id = row[7]
 
     # Deduplicate: each user's most recent prediction for this series
     c.execute("""SELECT u.username, u.avatar_url, p.predicted_winner_id, p.predicted_games,
-                        COALESCE(t.abbreviation, '?'), COALESCE(t.logo_url, '')
+                        COALESCE(t.abbreviation, '?'), COALESCE(t.logo_url, ''),
+                        p.is_correct, p.points_earned
                  FROM (
                      SELECT DISTINCT ON (user_id)
-                            id, series_id, user_id, predicted_winner_id, predicted_games
+                            id, series_id, user_id, predicted_winner_id, predicted_games,
+                            is_correct, points_earned
                      FROM predictions
                      WHERE series_id = %s
                      ORDER BY user_id, id DESC
@@ -5674,21 +5679,27 @@ async def series_picks(series_id: int):
     picks = []
     home_votes = away_votes = 0
     for r in c.fetchall():
-        picks.append({'username': r[0], 'avatar_url': r[1] or '', 'team_id': r[2], 'predicted_games': r[3],
-                      'team_abbreviation': r[4], 'team_logo_url': r[5]})
+        picks.append({
+            'username': r[0], 'avatar_url': r[1] or '',
+            'team_id': r[2], 'predicted_games': r[3],
+            'team_abbreviation': r[4], 'team_logo_url': r[5],
+            'is_correct': r[6], 'points_earned': r[7] or 0,
+        })
         if r[2] == home_id:   home_votes += 1
         elif r[2] == away_id: away_votes += 1
 
     total = len(picks)
     conn.close()
     return {
-        'series_id':  series_id,
-        'picks':      picks,
-        'home_votes': home_votes,
-        'away_votes': away_votes,
-        'total_votes': total,
-        'home_pct':   round(home_votes / total * 100) if total else 50,
-        'away_pct':   round(away_votes / total * 100) if total else 50,
+        'series_id':     series_id,
+        'series_status': series_status,
+        'winner_team_id': winner_team_id,
+        'picks':         picks,
+        'home_votes':    home_votes,
+        'away_votes':    away_votes,
+        'total_votes':   total,
+        'home_pct':      round(home_votes / total * 100) if total else 50,
+        'away_pct':      round(away_votes / total * 100) if total else 50,
     }
 
 @app.get("/api/playin/{game_id}/picks")
@@ -5697,19 +5708,22 @@ async def playin_picks(game_id: int):
     conn = get_db_conn()
     c = conn.cursor()
 
-    c.execute("SELECT team1_id, team2_id FROM playin_games WHERE id = %s", (game_id,))
+    c.execute("""SELECT pg.team1_id, pg.team2_id, pg.status, pg.winner_id
+                 FROM playin_games pg WHERE pg.id = %s""", (game_id,))
     row = c.fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Game not found")
-    team1_id, team2_id = row
+    team1_id, team2_id, game_status, winner_id = row
 
     # Deduplicate: each user's most recent prediction for this game
     c.execute("""SELECT u.username, u.avatar_url, pp.predicted_winner_id,
-                        COALESCE(t.abbreviation, '?'), COALESCE(t.logo_url, '')
+                        COALESCE(t.abbreviation, '?'), COALESCE(t.logo_url, ''),
+                        pp.is_correct, pp.points_earned
                  FROM (
                      SELECT DISTINCT ON (user_id)
-                            id, game_id, user_id, predicted_winner_id
+                            id, game_id, user_id, predicted_winner_id,
+                            is_correct, points_earned
                      FROM playin_predictions
                      WHERE game_id = %s
                      ORDER BY user_id, id DESC
@@ -5721,21 +5735,26 @@ async def playin_picks(game_id: int):
     picks = []
     t1_votes = t2_votes = 0
     for r in c.fetchall():
-        picks.append({'username': r[0], 'avatar_url': r[1] or '', 'team_id': r[2],
-                      'team_abbreviation': r[3], 'team_logo_url': r[4]})
+        picks.append({
+            'username': r[0], 'avatar_url': r[1] or '', 'team_id': r[2],
+            'team_abbreviation': r[3], 'team_logo_url': r[4],
+            'is_correct': r[5], 'points_earned': r[6] or 0,
+        })
         if r[2] == team1_id:   t1_votes += 1
         elif r[2] == team2_id: t2_votes += 1
 
     total = len(picks)
     conn.close()
     return {
-        'game_id':    game_id,
-        'picks':      picks,
+        'game_id':     game_id,
+        'game_status': game_status,
+        'winner_id':   winner_id,
+        'picks':       picks,
         'team1_votes': t1_votes,
         'team2_votes': t2_votes,
         'total_votes': total,
-        'team1_pct':  round(t1_votes / total * 100) if total else 50,
-        'team2_pct':  round(t2_votes / total * 100) if total else 50,
+        'team1_pct':   round(t1_votes / total * 100) if total else 50,
+        'team2_pct':   round(t2_votes / total * 100) if total else 50,
     }
 
 @app.get("/api/dashboard")
@@ -9035,8 +9054,11 @@ async def leaders_community_picks(season: str = "2026"):
     c = conn.cursor()
     c.execute("""
         SELECT u.username, u.avatar_url,
-               lp.top_scorer, lp.top_assists, lp.top_rebounds,
-               lp.top_threes, lp.top_steals, lp.top_blocks
+               lp.top_scorer,   lp.top_assists,  lp.top_rebounds,
+               lp.top_threes,   lp.top_steals,   lp.top_blocks,
+               lp.is_correct_scorer,   lp.is_correct_assists,  lp.is_correct_rebounds,
+               lp.is_correct_threes,   lp.is_correct_steals,   lp.is_correct_blocks,
+               lp.points_earned
         FROM leaders_predictions lp
         JOIN users u ON lp.user_id = u.id
         WHERE lp.season = %s
@@ -9047,14 +9069,21 @@ async def leaders_community_picks(season: str = "2026"):
     return {
         "picks": [
             {
-                "username":     row[0],
-                "avatar_url":   row[1],
-                "top_scorer":   row[2],
-                "top_assists":  row[3],
-                "top_rebounds": row[4],
-                "top_threes":   row[5],
-                "top_steals":   row[6],
-                "top_blocks":   row[7],
+                "username":           row[0],
+                "avatar_url":         row[1],
+                "top_scorer":         row[2],
+                "top_assists":        row[3],
+                "top_rebounds":       row[4],
+                "top_threes":         row[5],
+                "top_steals":         row[6],
+                "top_blocks":         row[7],
+                "is_correct_scorer":   row[8],
+                "is_correct_assists":  row[9],
+                "is_correct_rebounds": row[10],
+                "is_correct_threes":   row[11],
+                "is_correct_steals":   row[12],
+                "is_correct_blocks":   row[13],
+                "points_earned":       row[14] or 0,
             }
             for row in rows
         ]

@@ -910,10 +910,33 @@ function _fmtIDT(isoZ) {
   } catch { return null; }
 }
 
+// ── Result badge shown in community pick rows when a game/series is completed ──
+// isCorrect: 1=correct, 0=wrong, 2=bullseye (leaders only), null=pending
+// pts: points earned (omit or null to skip the number)
+const ResultBadge = ({ isCorrect, pts }) => {
+  if (isCorrect === null || isCorrect === undefined) return null;
+  if (isCorrect === 2) return (
+    <span className="text-[8px] font-black text-amber-400 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-full shrink-0 whitespace-nowrap">
+      🎯{pts != null ? ` +${pts}` : ''}
+    </span>
+  );
+  if (isCorrect === 1) return (
+    <span className="text-[8px] font-black text-green-400 bg-green-500/15 border border-green-500/30 px-1.5 py-0.5 rounded-full shrink-0 whitespace-nowrap">
+      ✓{pts != null ? ` +${pts}` : ''}
+    </span>
+  );
+  return (
+    <span className="text-[8px] font-black text-red-400 bg-red-500/15 border border-red-500/30 px-1.5 py-0.5 rounded-full shrink-0">
+      ✗
+    </span>
+  );
+};
+
 const SeriesVoteBar = ({ s, currentUser }) => {
   const [expanded, setExpanded]       = useState(false);
   const [picks, setPicks]             = useState(null);
   const [loadingPicks, setLoadingPicks] = useState(false);
+  const [seriesStatus, setSeriesStatus] = useState(s.status);
 
   const total   = s.total_votes;
   const homePct = s.home_pct;
@@ -943,6 +966,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
       try {
         const data = await api.getSeriesPicks(s.series_id);
         setPicks(data.picks);
+        if (data.series_status) setSeriesStatus(data.series_status);
       } catch (e) {
         console.error('SeriesVoteBar picks fetch:', e);
         setPicks([]);
@@ -1095,6 +1119,9 @@ const SeriesVoteBar = ({ s, currentUser }) => {
                       {p.predicted_games && (
                         <span className="text-[10px] text-slate-600 font-bold">in {p.predicted_games}</span>
                       )}
+                      {seriesStatus === 'completed' && (
+                        <ResultBadge isCorrect={p.is_correct} pts={p.is_correct ? p.points_earned : null} />
+                      )}
                     </div>
                   </div>
                 );
@@ -1159,6 +1186,7 @@ const PlayinVoteBar = ({ g, currentUser }) => {
   const [expanded, setExpanded]         = useState(false);
   const [picks, setPicks]               = useState(null);
   const [loadingPicks, setLoadingPicks] = useState(false);
+  const [gameStatus, setGameStatus]     = useState(g.status);
 
   const total  = g.total_votes;
   const noVotes = total === 0;
@@ -1191,6 +1219,7 @@ const PlayinVoteBar = ({ g, currentUser }) => {
       try {
         const data = await api.getPlayInPicks(g.game_id);
         setPicks(data.picks);
+        if (data.game_status) setGameStatus(data.game_status);
       } catch (e) {
         console.error('PlayinVoteBar picks fetch:', e);
         setPicks([]);
@@ -1306,6 +1335,9 @@ const PlayinVoteBar = ({ g, currentUser }) => {
                       <img src={p.team_logo_url} alt="" className="w-4 h-4"
                         onError={e => e.target.style.display = 'none'} />
                       <span className={`text-[10px] font-black ${isMe ? 'text-purple-400' : 'text-slate-400'}`}>{p.team_abbreviation}</span>
+                      {gameStatus === 'completed' && (
+                        <ResultBadge isCorrect={p.is_correct} pts={p.is_correct ? p.points_earned : null} />
+                      )}
                     </div>
                   </div>
                 );
@@ -1359,7 +1391,7 @@ const PlayerPickBar = ({ item, rank }) => {
 };
 
 // ── Futures team pick card — distribution bars + expandable per-user list ────
-const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onToggle, entries, entriesLoading, entryField, currentUser }) => {
+const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onToggle, entries, entriesLoading, entryField, correctnessField, currentUser }) => {
   const totalPicks = items.reduce((s, x) => s + x.count, 0);
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
@@ -1418,6 +1450,9 @@ const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onT
                         <span className={`text-[10px] font-black ${isMe ? 'text-amber-400' : 'text-slate-400'}`}>
                           {team?.abbreviation || team?.name || '?'}
                         </span>
+                        {correctnessField && e[correctnessField] !== undefined && (
+                          <ResultBadge isCorrect={e[correctnessField]} pts={null} />
+                        )}
                       </div>
                     </div>
                   );
@@ -1672,6 +1707,7 @@ const GlobalStatsTab = ({ currentUser }) => {
               entries={futuresEntries}
               entriesLoading={futuresLoading}
               entryField="champion_team"
+              correctnessField="is_correct_champion"
               currentUser={currentUser}
             />
           )}
@@ -1690,6 +1726,7 @@ const GlobalStatsTab = ({ currentUser }) => {
                   entries={futuresEntries}
                   entriesLoading={futuresLoading}
                   entryField="west_champ_team"
+                  correctnessField="is_correct_west"
                   currentUser={currentUser}
                 />
               )}
@@ -1705,6 +1742,7 @@ const GlobalStatsTab = ({ currentUser }) => {
                   entries={futuresEntries}
                   entriesLoading={futuresLoading}
                   entryField="east_champ_team"
+                  correctnessField="is_correct_east"
                   currentUser={currentUser}
                 />
               )}
@@ -1749,12 +1787,12 @@ const GlobalStatsTab = ({ currentUser }) => {
       {(() => {
         const ld = stats.leaders || {};
         const LEADER_META = [
-          { key: 'top_scorer',   label: '🏀 Top Single-Game Score',   unit: 'pts', cls: 'text-orange-400', bar: 'bg-orange-500/70' },
-          { key: 'top_assists',  label: '🎯 Top Single-Game Assists',  unit: 'ast', cls: 'text-blue-400',   bar: 'bg-blue-500/70'   },
-          { key: 'top_rebounds', label: '💪 Top Single-Game Rebounds', unit: 'reb', cls: 'text-green-400',  bar: 'bg-green-500/70'  },
-          { key: 'top_threes',   label: '🎳 Top Single-Game 3s Made', unit: '3pm', cls: 'text-purple-400', bar: 'bg-purple-500/70' },
-          { key: 'top_steals',   label: '🤺 Top Single-Game Steals',  unit: 'stl', cls: 'text-cyan-400',   bar: 'bg-cyan-500/70'   },
-          { key: 'top_blocks',   label: '🛡️ Top Single-Game Blocks',  unit: 'blk', cls: 'text-red-400',    bar: 'bg-red-500/70'    },
+          { key: 'top_scorer',   correctKey: 'is_correct_scorer',   label: '🏀 Top Single-Game Score',   unit: 'pts', cls: 'text-orange-400', bar: 'bg-orange-500/70' },
+          { key: 'top_assists',  correctKey: 'is_correct_assists',  label: '🎯 Top Single-Game Assists',  unit: 'ast', cls: 'text-blue-400',   bar: 'bg-blue-500/70'   },
+          { key: 'top_rebounds', correctKey: 'is_correct_rebounds', label: '💪 Top Single-Game Rebounds', unit: 'reb', cls: 'text-green-400',  bar: 'bg-green-500/70'  },
+          { key: 'top_threes',   correctKey: 'is_correct_threes',   label: '🎳 Top Single-Game 3s Made', unit: '3pm', cls: 'text-purple-400', bar: 'bg-purple-500/70' },
+          { key: 'top_steals',   correctKey: 'is_correct_steals',   label: '🤺 Top Single-Game Steals',  unit: 'stl', cls: 'text-cyan-400',   bar: 'bg-cyan-500/70'   },
+          { key: 'top_blocks',   correctKey: 'is_correct_blocks',   label: '🛡️ Top Single-Game Blocks',  unit: 'blk', cls: 'text-red-400',    bar: 'bg-red-500/70'    },
         ].filter(m => (ld[m.key]?.distribution?.length > 0));
         if (!LEADER_META.length) return null;
         return (
@@ -1764,7 +1802,7 @@ const GlobalStatsTab = ({ currentUser }) => {
               Each user predicted the highest single-game stat in the entire playoffs. Closer = more points.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {LEADER_META.map(({ key, label, unit, cls, bar }) => {
+              {LEADER_META.map(({ key, correctKey, label, unit, cls, bar }) => {
                 const ld_entry = ld[key];
                 const dist = ld_entry?.distribution || [];
                 const maxCount = Math.max(...dist.map(d => d.count), 1);
@@ -1843,6 +1881,9 @@ const GlobalStatsTab = ({ currentUser }) => {
                                     <span className={`text-sm font-black shrink-0 ${isMe ? 'text-amber-400' : cls}`}>
                                       {p[key]} <span className="text-[9px] text-slate-500">{unit}</span>
                                     </span>
+                                    {p[correctKey] !== undefined && p[correctKey] !== null && (
+                                      <ResultBadge isCorrect={p[correctKey]} pts={null} />
+                                    )}
                                   </div>
                                 );
                               })}
