@@ -351,6 +351,11 @@ export const getFuturesAll = async (season = '2026') => {
   return response.data;
 };
 
+export const getLeadersCommunityPicks = async (season = '2026') => {
+  const response = await api.get('/api/leaders/community-picks', { params: { season } });
+  return response.data;
+};
+
 // Playoff Leaders
 export const getLeadersPrediction = async (userId, season = '2026') => {
   const response = await api.get(`/api/leaders?user_id=${userId}&season=${season}`);

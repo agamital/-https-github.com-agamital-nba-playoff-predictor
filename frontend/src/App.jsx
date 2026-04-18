@@ -1358,6 +1358,147 @@ const PlayerPickBar = ({ item, rank }) => {
   );
 };
 
+// ── Futures team pick card — distribution bars + expandable per-user list ────
+const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onToggle, entries, entriesLoading, entryField, currentUser }) => {
+  const totalPicks = items.reduce((s, x) => s + x.count, 0);
+  return (
+    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
+      <div className="p-4">
+        <p className={`text-xs font-black mb-3 flex items-center gap-1.5 ${labelCls}`}>{label}</p>
+        <div className="divide-y divide-slate-800/50">
+          {items.map((item, i) => (
+            <FuturesPickBar key={i} item={item} rank={i} totalUsers={totalUsers} />
+          ))}
+        </div>
+        {/* Expand toggle */}
+        {picksRevealed() && (
+          <button
+            onClick={onToggle}
+            className="mt-3 w-full flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-500 hover:text-slate-300 transition-colors py-1"
+          >
+            <Users className="w-3 h-3" />
+            {expanded ? 'Hide individual picks' : `See all ${totalPicks} picks`}
+            <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+        )}
+      </div>
+      {/* Expandable per-user list */}
+      {expanded && picksRevealed() && (
+        <div className="border-t border-slate-800/80 bg-slate-950/40">
+          {entriesLoading ? (
+            <div className="flex justify-center py-5">
+              <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : entries && entries.length > 0 ? (
+            <div className="divide-y divide-slate-800/40 max-h-56 overflow-y-auto">
+              {entries
+                .filter(e => e[entryField] != null)
+                .map((e, i) => {
+                  const isMe = currentUser && e.username === currentUser.username;
+                  const team = e[entryField];
+                  return (
+                    <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-amber-500/8' : ''}`}>
+                      {e.avatar_url ? (
+                        <img src={e.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
+                          onError={ev => { ev.target.style.display = 'none'; }} />
+                      ) : (
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-amber-500/30' : 'bg-slate-700'}`}>
+                          <span className={`text-[8px] font-black ${isMe ? 'text-amber-400' : 'text-slate-400'}`}>
+                            {(e.username || '?')[0].toUpperCase()}
+                          </span>
+                        </div>
+                      )}
+                      {isMe && <span className="text-[8px] font-black text-amber-400 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded-full shrink-0">YOU</span>}
+                      <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-amber-300' : 'text-slate-300'}`}>{e.username}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {team?.logo_url && (
+                          <img src={team.logo_url} alt="" className="w-5 h-5"
+                            onError={ev => ev.target.style.display = 'none'} />
+                        )}
+                        <span className={`text-[10px] font-black ${isMe ? 'text-amber-400' : 'text-slate-400'}`}>
+                          {team?.abbreviation || team?.name || '?'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-600 text-center py-4">No picks yet</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── MVP pick card — player distribution bars + expandable per-user list ───────
+const MvpCategoryCard = ({ label, labelCls, items, expanded, onToggle, entries, entriesLoading, entryField, currentUser }) => {
+  const totalPicks = items.reduce((s, x) => s + x.count, 0);
+  return (
+    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
+      <div className="p-4">
+        <p className={`text-xs font-black mb-3 ${labelCls}`}>{label}</p>
+        <div className="space-y-2">
+          {items.map((item, i) => (
+            <PlayerPickBar key={i} item={item} rank={i} />
+          ))}
+        </div>
+        {/* Expand toggle */}
+        {picksRevealed() && (
+          <button
+            onClick={onToggle}
+            className="mt-3 w-full flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-500 hover:text-slate-300 transition-colors py-1"
+          >
+            <Users className="w-3 h-3" />
+            {expanded ? 'Hide picks' : `See all ${totalPicks} picks`}
+            <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+        )}
+      </div>
+      {/* Expandable per-user list */}
+      {expanded && picksRevealed() && (
+        <div className="border-t border-slate-800/80 bg-slate-950/40">
+          {entriesLoading ? (
+            <div className="flex justify-center py-5">
+              <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : entries && entries.length > 0 ? (
+            <div className="divide-y divide-slate-800/40 max-h-52 overflow-y-auto">
+              {entries
+                .filter(e => e[entryField] != null)
+                .map((e, i) => {
+                  const isMe = currentUser && e.username === currentUser.username;
+                  return (
+                    <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-blue-500/8' : ''}`}>
+                      {e.avatar_url ? (
+                        <img src={e.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
+                          onError={ev => { ev.target.style.display = 'none'; }} />
+                      ) : (
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-blue-500/30' : 'bg-slate-700'}`}>
+                          <span className={`text-[8px] font-black ${isMe ? 'text-blue-400' : 'text-slate-400'}`}>
+                            {(e.username || '?')[0].toUpperCase()}
+                          </span>
+                        </div>
+                      )}
+                      {isMe && <span className="text-[8px] font-black text-blue-400 bg-blue-500/20 border border-blue-500/30 px-1.5 py-0.5 rounded-full shrink-0">YOU</span>}
+                      <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-blue-300' : 'text-slate-300'}`}>{e.username}</span>
+                      <span className={`text-xs font-black shrink-0 ${isMe ? 'text-blue-400' : 'text-slate-400'}`}>
+                        {e[entryField]}
+                      </span>
+                    </div>
+                  );
+                })}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-600 text-center py-4">No picks yet</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const GlobalStatsTab = ({ currentUser }) => {
   const { data: stats, isLoading: loading } = useQuery({
     queryKey: ['globalStats'],
@@ -1377,6 +1518,49 @@ const GlobalStatsTab = ({ currentUser }) => {
   if (!stats) return <p className="text-slate-500 text-center py-8">Could not load stats.</p>;
 
   const [showPlayIn, setShowPlayIn] = useState(false);
+
+  // Lazy-loaded community picks for futures & leaders
+  const [futuresEntries, setFuturesEntries]   = useState(null);
+  const [futuresLoading, setFuturesLoading]   = useState(false);
+  const [leadersPicks,   setLeadersPicks]     = useState(null);
+  const [leadersLoading, setLeadersLoading]   = useState(false);
+  // Track which panels are open: { champion: bool, west_champ: bool, ... }
+  const [expandedFutures, setExpandedFutures] = useState({});
+  const [expandedLeaders, setExpandedLeaders] = useState({});
+
+  const _fetchFuturesEntries = async () => {
+    if (futuresEntries !== null || futuresLoading) return;
+    setFuturesLoading(true);
+    try {
+      const d = await api.getFuturesAll();
+      setFuturesEntries(d.entries || []);
+    } catch (e) { console.error('futuresEntries fetch:', e); setFuturesEntries([]); }
+    finally { setFuturesLoading(false); }
+  };
+
+  const _fetchLeadersPicks = async () => {
+    if (leadersPicks !== null || leadersLoading) return;
+    setLeadersLoading(true);
+    try {
+      const d = await api.getLeadersCommunityPicks();
+      setLeadersPicks(d.picks || []);
+    } catch (e) { console.error('leadersPicks fetch:', e); setLeadersPicks([]); }
+    finally { setLeadersLoading(false); }
+  };
+
+  const toggleFuturesPanel = (key) => {
+    if (!picksRevealed()) return;
+    const next = !expandedFutures[key];
+    setExpandedFutures(prev => ({ ...prev, [key]: next }));
+    if (next) _fetchFuturesEntries();
+  };
+
+  const toggleLeadersPanel = (key) => {
+    if (!picksRevealed()) return;
+    const next = !expandedLeaders[key];
+    setExpandedLeaders(prev => ({ ...prev, [key]: next }));
+    if (next) _fetchLeadersPicks();
+  };
 
   const ROUND_ORDER = ['First Round', 'Conference Semifinals', 'Conference Finals', 'NBA Finals'];
   const byRound = {};
@@ -1477,39 +1661,52 @@ const GlobalStatsTab = ({ currentUser }) => {
           <SectionDivider label="Top Futures Picks" />
 
           {stats.futures.top_champions.length > 0 && (
-            <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
-              <p className="text-xs font-black text-amber-400 mb-3 flex items-center gap-1.5">
-                🏆 <span>NBA Champions</span>
-              </p>
-              <div className="divide-y divide-slate-800/50">
-                {stats.futures.top_champions.map((item, i) => (
-                  <FuturesPickBar key={i} item={item} rank={i} totalUsers={stats.total_users} />
-                ))}
-              </div>
-            </div>
+            <FuturesCategoryCard
+              panelKey="champion"
+              label="🏆 NBA Champions"
+              labelCls="text-amber-400"
+              items={stats.futures.top_champions}
+              totalUsers={stats.total_users}
+              expanded={!!expandedFutures['champion']}
+              onToggle={() => toggleFuturesPanel('champion')}
+              entries={futuresEntries}
+              entriesLoading={futuresLoading}
+              entryField="champion_team"
+              currentUser={currentUser}
+            />
           )}
 
           {(stats.futures.top_west_champs.length > 0 || stats.futures.top_east_champs.length > 0) && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {stats.futures.top_west_champs.length > 0 && (
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
-                  <p className="text-xs font-black text-blue-400 mb-3">🌵 West Champs</p>
-                  <div className="divide-y divide-slate-800/50">
-                    {stats.futures.top_west_champs.map((item, i) => (
-                      <FuturesPickBar key={i} item={item} rank={i} totalUsers={stats.total_users} />
-                    ))}
-                  </div>
-                </div>
+                <FuturesCategoryCard
+                  panelKey="west_champ"
+                  label="🌵 West Champs"
+                  labelCls="text-blue-400"
+                  items={stats.futures.top_west_champs}
+                  totalUsers={stats.total_users}
+                  expanded={!!expandedFutures['west_champ']}
+                  onToggle={() => toggleFuturesPanel('west_champ')}
+                  entries={futuresEntries}
+                  entriesLoading={futuresLoading}
+                  entryField="west_champ_team"
+                  currentUser={currentUser}
+                />
               )}
               {stats.futures.top_east_champs.length > 0 && (
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
-                  <p className="text-xs font-black text-green-400 mb-3">🗽 East Champs</p>
-                  <div className="divide-y divide-slate-800/50">
-                    {stats.futures.top_east_champs.map((item, i) => (
-                      <FuturesPickBar key={i} item={item} rank={i} totalUsers={stats.total_users} />
-                    ))}
-                  </div>
-                </div>
+                <FuturesCategoryCard
+                  panelKey="east_champ"
+                  label="🗽 East Champs"
+                  labelCls="text-green-400"
+                  items={stats.futures.top_east_champs}
+                  totalUsers={stats.total_users}
+                  expanded={!!expandedFutures['east_champ']}
+                  onToggle={() => toggleFuturesPanel('east_champ')}
+                  entries={futuresEntries}
+                  entriesLoading={futuresLoading}
+                  entryField="east_champ_team"
+                  currentUser={currentUser}
+                />
               )}
             </div>
           )}
@@ -1517,24 +1714,29 @@ const GlobalStatsTab = ({ currentUser }) => {
           {/* ── MVP picks ── */}
           {(() => {
             const mvpSections = [
-              { key: 'top_finals_mvp',      label: '🏆 Finals MVP',       cls: 'text-amber-400'  },
-              { key: 'top_west_finals_mvp', label: '🌵 West Finals MVP',  cls: 'text-blue-400'   },
-              { key: 'top_east_finals_mvp', label: '🗽 East Finals MVP',  cls: 'text-green-400'  },
+              { key: 'top_finals_mvp',      entryKey: 'finals_mvp',      label: '🏆 Finals MVP',       cls: 'text-amber-400'  },
+              { key: 'top_west_finals_mvp', entryKey: 'west_finals_mvp', label: '🌵 West Finals MVP',  cls: 'text-blue-400'   },
+              { key: 'top_east_finals_mvp', entryKey: 'east_finals_mvp', label: '🗽 East Finals MVP',  cls: 'text-green-400'  },
             ].filter(s => (stats.futures?.[s.key] || []).length > 0);
             if (!mvpSections.length) return null;
             return (
               <div className="space-y-3">
                 <SectionDivider label="MVP Picks" />
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {mvpSections.map(({ key, label, cls }) => (
-                    <div key={key} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
-                      <p className={`text-xs font-black mb-3 ${cls}`}>{label}</p>
-                      <div className="space-y-2">
-                        {(stats.futures[key] || []).map((item, i) => (
-                          <PlayerPickBar key={i} item={item} rank={i} />
-                        ))}
-                      </div>
-                    </div>
+                  {mvpSections.map(({ key, entryKey, label, cls }) => (
+                    <MvpCategoryCard
+                      key={key}
+                      panelKey={key}
+                      label={label}
+                      labelCls={cls}
+                      items={stats.futures[key] || []}
+                      expanded={!!expandedFutures[key]}
+                      onToggle={() => toggleFuturesPanel(key)}
+                      entries={futuresEntries}
+                      entriesLoading={futuresLoading}
+                      entryField={entryKey}
+                      currentUser={currentUser}
+                    />
                   ))}
                 </div>
               </div>
@@ -1566,38 +1768,90 @@ const GlobalStatsTab = ({ currentUser }) => {
                 const ld_entry = ld[key];
                 const dist = ld_entry?.distribution || [];
                 const maxCount = Math.max(...dist.map(d => d.count), 1);
+                const isExpanded = !!expandedLeaders[key];
                 return (
-                  <div key={key} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className={`text-xs font-black ${cls}`}>{label}</p>
-                      {ld_entry?.avg_value != null && (
-                        <span className="text-[10px] text-slate-500 font-bold">
-                          avg pick: <span className={`font-black ${cls}`}>{ld_entry.avg_value}</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="space-y-1.5">
-                      {dist.map((item, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <span className={`text-xs font-black w-10 text-right shrink-0 ${i === 0 ? cls : 'text-slate-400'}`}>
-                            {item.value}
+                  <div key={key} className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className={`text-xs font-black ${cls}`}>{label}</p>
+                        {ld_entry?.avg_value != null && (
+                          <span className="text-[10px] text-slate-500 font-bold">
+                            avg pick: <span className={`font-black ${cls}`}>{ld_entry.avg_value}</span>
                           </span>
-                          <span className="text-[9px] text-slate-600 font-bold w-6 shrink-0">{unit}</span>
-                          <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all duration-500 ${i === 0 ? bar : 'bg-slate-600/50'}`}
-                              style={{ width: `${Math.max(item.count / maxCount * 100, 8)}%` }}
-                            />
+                        )}
+                      </div>
+                      <div className="space-y-1.5">
+                        {dist.map((item, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <span className={`text-xs font-black w-10 text-right shrink-0 ${i === 0 ? cls : 'text-slate-400'}`}>
+                              {item.value}
+                            </span>
+                            <span className="text-[9px] text-slate-600 font-bold w-6 shrink-0">{unit}</span>
+                            <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${i === 0 ? bar : 'bg-slate-600/50'}`}
+                                style={{ width: `${Math.max(item.count / maxCount * 100, 8)}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] text-slate-500 font-bold w-12 text-right shrink-0">
+                              {item.count} {item.count === 1 ? 'pick' : 'picks'}
+                            </span>
                           </div>
-                          <span className="text-[10px] text-slate-500 font-bold w-12 text-right shrink-0">
-                            {item.count} {item.count === 1 ? 'pick' : 'picks'}
-                          </span>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
+
+                      {/* Expand toggle */}
+                      <button
+                        onClick={() => toggleLeadersPanel(key)}
+                        className="mt-3 w-full flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-500 hover:text-slate-300 transition-colors py-1"
+                      >
+                        <Users className="w-3 h-3" />
+                        {isExpanded ? 'Hide individual picks' : `See all ${ld_entry?.total_picks || 0} picks`}
+                        <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      </button>
                     </div>
-                    <p className="text-[9px] text-slate-700 mt-2 text-right">
-                      {ld_entry?.total_picks} total picks
-                    </p>
+
+                    {/* Expandable per-user picks */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-800/80 bg-slate-950/40">
+                        {leadersLoading ? (
+                          <div className="flex justify-center py-5">
+                            <div className={`w-5 h-5 border-2 border-t-transparent rounded-full animate-spin`}
+                              style={{ borderColor: `${cls.replace('text-', '')} transparent transparent transparent` }} />
+                          </div>
+                        ) : leadersPicks && leadersPicks.length > 0 ? (
+                          <div className="divide-y divide-slate-800/40 max-h-52 overflow-y-auto">
+                            {[...leadersPicks]
+                              .filter(p => p[key] != null)
+                              .sort((a, b) => (b[key] || 0) - (a[key] || 0))
+                              .map((p, i) => {
+                                const isMe = currentUser && p.username === currentUser.username;
+                                return (
+                                  <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-amber-500/8' : ''}`}>
+                                    {p.avatar_url ? (
+                                      <img src={p.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
+                                        onError={e => { e.target.style.display = 'none'; }} />
+                                    ) : (
+                                      <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-amber-500/30' : 'bg-slate-700'}`}>
+                                        <span className={`text-[8px] font-black ${isMe ? 'text-amber-400' : 'text-slate-400'}`}>
+                                          {(p.username || '?')[0].toUpperCase()}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {isMe && <span className="text-[8px] font-black text-amber-400 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded-full shrink-0">YOU</span>}
+                                    <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-amber-300' : 'text-slate-300'}`}>{p.username}</span>
+                                    <span className={`text-sm font-black shrink-0 ${isMe ? 'text-amber-400' : cls}`}>
+                                      {p[key]} <span className="text-[9px] text-slate-500">{unit}</span>
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-600 text-center py-4">No picks yet</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

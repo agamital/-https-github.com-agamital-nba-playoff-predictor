@@ -9028,6 +9028,39 @@ async def set_futures_results(season: str = "2026",
 
 # ── Playoff Leaders ───────────────────────────────────────────────────────────
 
+@app.get("/api/leaders/community-picks")
+async def leaders_community_picks(season: str = "2026"):
+    """Per-user leaders predictions for community picks display."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT u.username, u.avatar_url,
+               lp.top_scorer, lp.top_assists, lp.top_rebounds,
+               lp.top_threes, lp.top_steals, lp.top_blocks
+        FROM leaders_predictions lp
+        JOIN users u ON lp.user_id = u.id
+        WHERE lp.season = %s
+        ORDER BY u.username
+    """, (season,))
+    rows = c.fetchall()
+    conn.close()
+    return {
+        "picks": [
+            {
+                "username":     row[0],
+                "avatar_url":   row[1],
+                "top_scorer":   row[2],
+                "top_assists":  row[3],
+                "top_rebounds": row[4],
+                "top_threes":   row[5],
+                "top_steals":   row[6],
+                "top_blocks":   row[7],
+            }
+            for row in rows
+        ]
+    }
+
+
 @app.get("/api/leaders")
 async def get_leaders(user_id: int, season: str = "2026"):
     conn = get_db_conn()
