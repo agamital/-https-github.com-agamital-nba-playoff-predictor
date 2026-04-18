@@ -5417,10 +5417,10 @@ async def global_stats(season: str = "2026"):
                          s.home_team_id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
                          s.away_team_id, at.name, at.abbreviation, at.logo_url, s.away_seed,
                          s.status, s.game1_start_time
-                ORDER BY s.conference, s.round
+                ORDER BY COUNT(p.id) DESC, s.id ASC
             """, (season,))
             series_stats = []
-            _seen_matchups = set()  # dedup guard for duplicate DB rows
+            _seen_matchups = set()  # dedup guard for duplicate DB rows — keeps series with most picks
             _now_utc = datetime.utcnow().replace(tzinfo=__import__('datetime').timezone.utc)
             for row in c.fetchall():
                 # Deduplicate: same two teams in same round+conference → keep first row only
