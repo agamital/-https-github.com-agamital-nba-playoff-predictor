@@ -254,17 +254,33 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
 
   useEffect(() => {
     if (!currentUser) return;
+    let cancelled = false;
     setDashLoading(true);
-    console.time('[dash] dashboard fetch');
-    api.getDashboard(currentUser.user_id).then(data => {
-      console.timeEnd('[dash] dashboard fetch');
-      setDashData({
-        seriesPredicted: data.series_predicted,
-        totalSeries:     data.total_series,
-        futuresDone:     data.futures_done,
-        leadersDone:     data.leaders_done,
-      });
-    }).catch(console.error).finally(() => setDashLoading(false));
+    // Retry up to 3 times with exponential backoff — handles Railway cold-starts.
+    const fetchWithRetry = async (attempt = 0) => {
+      try {
+        const data = await api.getDashboard(currentUser.user_id);
+        if (cancelled) return;
+        setDashData({
+          seriesPredicted: data.series_predicted,
+          totalSeries:     data.total_series,
+          futuresDone:     data.futures_done,
+          leadersDone:     data.leaders_done,
+        });
+        setDashLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        if (attempt < 3) {
+          const delay = Math.min(1000 * 2 ** attempt, 8000);
+          setTimeout(() => fetchWithRetry(attempt + 1), delay);
+        } else {
+          console.error('[dash] failed after retries:', err);
+          setDashLoading(false);
+        }
+      }
+    };
+    fetchWithRetry();
+    return () => { cancelled = true; };
   }, [currentUser?.user_id]);
 
   const handleGoogleLogin = async () => {

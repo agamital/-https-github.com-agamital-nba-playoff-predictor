@@ -1444,11 +1444,48 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   }, [scrollTo?.type, scrollTo?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Cached data queries ──────────────────────────────────────────────────────
-  const { data: series = [],    isLoading: l1, isError: e1, refetch: r1 } = useQuery({ queryKey: ['series', '2026'],    queryFn: () => api.getSeries('2026'),      staleTime: 60 * 1000, refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000 });
-  const { data: playInGames = [], isLoading: l2, isError: e2, refetch: r2 } = useQuery({ queryKey: ['playin', '2026'],  queryFn: () => api.getPlayInGames('2026'), staleTime: 60 * 1000, refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000 });
-  const { data: allTeams = [],  isLoading: l3, isError: e3, refetch: r3 } = useQuery({ queryKey: ['teams'],             queryFn: () => api.getTeams() });
-  const { data: standingsRaw,   isLoading: l4, isError: e4, refetch: r4 } = useQuery({ queryKey: ['standings'],         queryFn: () => api.getStandings(),         staleTime: 2 * 60 * 1000, refetchInterval: 5 * 60 * 1000 });
-  const { data: globalStats }                   = useQuery({ queryKey: ['globalStats'],         queryFn: () => api.getGlobalStats('2026'), staleTime: 2 * 60 * 1000, refetchInterval: 3 * 60 * 1000 });
+  // Exponential backoff — handles Railway cold-starts (~30 s) without spamming.
+  // Delays: 2 s → 4 s → 8 s (total ~14 s before giving up).
+  const _retryDelay = attempt => Math.min(1000 * 2 ** attempt, 10000);
+
+  // CRITICAL — bracket cannot render without these; they gate hasError
+  const { data: series = [],     isLoading: l1, isError: e1, refetch: r1 } = useQuery({
+    queryKey: ['series', '2026'],
+    queryFn:  () => api.getSeries('2026'),
+    staleTime: 60 * 1000,
+    retry: 3, retryDelay: _retryDelay,
+    refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000,
+  });
+  const { data: playInGames = [], isLoading: l2, isError: e2, refetch: r2 } = useQuery({
+    queryKey: ['playin', '2026'],
+    queryFn:  () => api.getPlayInGames('2026'),
+    staleTime: 60 * 1000,
+    retry: 3, retryDelay: _retryDelay,
+    refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000,
+  });
+
+  // SUPPLEMENTAL — bracket degrades gracefully if these fail; not in hasError
+  const { data: allTeams = [],   isLoading: l3, isError: e3, refetch: r3 } = useQuery({
+    queryKey: ['teams'],
+    queryFn:  () => api.getTeams(),
+    staleTime: 10 * 60 * 1000,   // teams rarely change
+    retry: 2, retryDelay: _retryDelay,
+  });
+  const { data: standingsRaw,    isLoading: l4, isError: e4, refetch: r4 } = useQuery({
+    queryKey: ['standings'],
+    queryFn:  () => api.getStandings(),
+    staleTime: 10 * 60 * 1000,   // standings are now static (post-cutoff)
+    retry: 2, retryDelay: _retryDelay,
+    refetchInterval: 10 * 60 * 1000,  // slow down — standings don't change
+    refetchOnWindowFocus: false,
+  });
+  const { data: globalStats } = useQuery({
+    queryKey: ['globalStats'],
+    queryFn:  () => api.getGlobalStats('2026'),
+    staleTime: 2 * 60 * 1000,
+    retry: 2, retryDelay: _retryDelay,
+    refetchInterval: 3 * 60 * 1000,
+  });
 
   // Load the current user's saved predictions so picks are pre-populated on page load
   const { data: myPredictions } = useQuery({
@@ -1507,8 +1544,9 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   }, [myPredictions]);
 
   const standings = standingsRaw || { eastern: [], western: [] };
-  const loading   = l1 || l2 || l3 || l4;
-  const hasError  = e1 || e2 || e3 || e4;
+  // Only series + playin are critical — teams/standings degrade gracefully.
+  const loading    = l1 || l2;
+  const hasError   = e1 || e2;  // teams (e3) & standings (e4) never block the page
   const refetchAll = () => { r1(); r2(); r3(); r4(); };
 
   const communityMap = useMemo(() => {
@@ -1650,30 +1688,44 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
   if (hasError) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-4">
-        <p className="text-slate-400 text-lg">Failed to load bracket data.</p>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] px-6 gap-5 text-center">
+        <div className="w-16 h-16 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center">
+          <AlertTriangle className="w-8 h-8 text-red-400" />
+        </div>
+        <div>
+          <p className="text-white font-black text-xl mb-1">Couldn't load the bracket</p>
+          <p className="text-slate-400 text-sm">Check your connection and tap retry.</p>
+          {(e1 || e2) && (
+            <p className="text-slate-600 text-xs mt-2">
+              {e1 ? 'Series data unavailable. ' : ''}{e2 ? 'Play-In data unavailable.' : ''}
+            </p>
+          )}
+        </div>
         <button
           onClick={refetchAll}
-          className="px-6 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl transition-colors">
-          Try Again
+          className="flex items-center gap-2 px-8 py-3.5 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-black rounded-2xl transition-colors text-base shadow-lg shadow-orange-500/25">
+          <RefreshCw className="w-5 h-5" />
+          Retry
         </button>
+        <p className="text-[11px] text-slate-700">Tap to reload the page if retrying doesn't work</p>
       </div>
     );
   }
 
-  if (loading) {
-    const SkeletonCard = () => (
-      <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden animate-pulse shrink-0 w-44" style={{ height: CH }}>
-        <div className="h-1/2 flex items-center gap-3 px-4 border-b border-slate-800/60">
-          <div className="w-7 h-7 rounded-full bg-slate-800 shrink-0" />
-          <div className="h-2.5 flex-1 bg-slate-800 rounded" />
-        </div>
-        <div className="h-1/2 flex items-center gap-3 px-4">
-          <div className="w-7 h-7 rounded-full bg-slate-800 shrink-0" />
-          <div className="h-2.5 flex-1 bg-slate-800 rounded" />
-        </div>
+  const SkeletonCard = () => (
+    <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden animate-pulse shrink-0 w-44" style={{ height: CH }}>
+      <div className="h-1/2 flex items-center gap-3 px-4 border-b border-slate-800/60">
+        <div className="w-7 h-7 rounded-full bg-slate-800 shrink-0" />
+        <div className="h-2.5 flex-1 bg-slate-800 rounded" />
       </div>
-    );
+      <div className="h-1/2 flex items-center gap-3 px-4">
+        <div className="w-7 h-7 rounded-full bg-slate-800 shrink-0" />
+        <div className="h-2.5 flex-1 bg-slate-800 rounded" />
+      </div>
+    </div>
+  );
+
+  if (loading) {
     return (
       <div className="px-4 py-8">
         {/* Header skeleton */}
@@ -1693,6 +1745,8 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
             </div>
           </div>
         ))}
+        {/* Subtle "loading" hint below skeleton on mobile */}
+        <p className="text-center text-xs text-slate-700 mt-2 animate-pulse">Loading bracket…</p>
       </div>
     );
   }

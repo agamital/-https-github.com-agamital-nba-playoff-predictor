@@ -10,7 +10,7 @@ const API_BASE_URL = import.meta.env.DEV
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 20000,   // 20 s — handles Railway cold-starts (~15–30 s on wake-up)
   headers: {
     'Content-Type': 'application/json',
   },

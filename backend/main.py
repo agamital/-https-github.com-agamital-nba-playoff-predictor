@@ -223,11 +223,82 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_db_conn():
+# ── PostgreSQL connection pool ─────────────────────────────────────────────────
+# Reuses connections across requests instead of opening a new TCP+SSL+auth
+# handshake every time (~200–400 ms per cold connection on Railway).
+# ThreadedConnectionPool is safe with FastAPI's default thread-pool executor.
+import psycopg2.pool as _pg_pool
+
+_db_pool: '_pg_pool.ThreadedConnectionPool | None' = None
+
+def _init_db_pool() -> None:
+    global _db_pool
     url = os.environ.get("DATABASE_URL", "")
     if not url:
         raise RuntimeError("DATABASE_URL not set")
-    return psycopg2.connect(url)
+    _db_pool = _pg_pool.ThreadedConnectionPool(
+        minconn=1,
+        maxconn=8,   # conservative — Railway free Postgres caps at ~25 total
+        dsn=url,
+    )
+    print(f"[DB] Connection pool initialised (min=1 max=8)")
+
+
+class _PooledConn:
+    """
+    Thin proxy around a psycopg2 connection from the pool.
+    Redirects .close() to putconn() so the connection is reused, not terminated.
+    All other attributes/methods are transparently delegated to the real conn.
+    """
+    __slots__ = ('_c', '_pool')
+
+    def __init__(self, conn, pool):
+        object.__setattr__(self, '_c',    conn)
+        object.__setattr__(self, '_pool', pool)
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, '_c'), name)
+
+    def __setattr__(self, name, value):
+        setattr(object.__getattribute__(self, '_c'), name, value)
+
+    def close(self):
+        c    = object.__getattribute__(self, '_c')
+        pool = object.__getattribute__(self, '_pool')
+        try:
+            c.rollback()        # reset any uncommitted transaction
+        except Exception:
+            pass
+        try:
+            pool.putconn(c)     # return to pool ← the key change
+        except Exception:
+            try: c.close()      # last resort: actually close if pool is gone
+            except Exception: pass
+
+    # Support `with conn:` blocks (some endpoints use this pattern)
+    def __enter__(self):
+        return object.__getattribute__(self, '_c').__enter__()
+
+    def __exit__(self, *args):
+        return object.__getattribute__(self, '_c').__exit__(*args)
+
+
+def get_db_conn() -> _PooledConn:
+    """
+    Return a pooled connection. Callers still call conn.close() as before —
+    the wrapper silently returns the connection to the pool instead.
+    """
+    global _db_pool
+    if _db_pool is None or _db_pool.closed:
+        _init_db_pool()
+    try:
+        return _PooledConn(_db_pool.getconn(), _db_pool)
+    except _pg_pool.PoolError:
+        # Pool exhausted — fall back to a direct connection so the request
+        # still succeeds (just without pooling benefit).
+        url = os.environ.get("DATABASE_URL", "")
+        print("[DB] Pool exhausted — opening direct connection (temporary)")
+        return psycopg2.connect(url)  # type: ignore[return-value]
 
 class User(BaseModel):
     username: str
@@ -3818,6 +3889,9 @@ async def startup():
     _sync_status["source"] = "hardcoded"   # will be upgraded once DB/API data loads
 
     try:
+        # Warm up the connection pool immediately so the first user request
+        # does not pay the pool-creation + connection-handshake cost.
+        _init_db_pool()
         init_db()
         print("DB initialised")
     except Exception as e:
