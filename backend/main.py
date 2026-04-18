@@ -5388,8 +5388,16 @@ async def global_stats(season: str = "2026"):
 
         # Per-series vote breakdown — only safe columns; no odds columns touched here.
         # home_seed / away_seed exist on series since original schema (init_db creates them).
+        # Dedup predictions: take the latest pick per (user_id, series_id) so users who
+        # re-saved a pick don't inflate the vote count.
         try:
             c.execute("""
+                WITH latest_preds AS (
+                    SELECT DISTINCT ON (user_id, series_id)
+                           id, series_id, user_id, predicted_winner_id
+                    FROM predictions
+                    ORDER BY user_id, series_id, id DESC
+                )
                 SELECT s.id, s.round, s.conference,
                        s.home_team_id, ht.name, ht.abbreviation, ht.logo_url,
                        COALESCE(s.home_seed, 0),
@@ -5403,7 +5411,7 @@ async def global_stats(season: str = "2026"):
                 FROM series s
                 JOIN teams ht ON s.home_team_id = ht.id
                 JOIN teams at ON s.away_team_id = at.id
-                LEFT JOIN predictions p ON p.series_id = s.id
+                LEFT JOIN latest_preds p ON p.series_id = s.id
                 WHERE s.season = %s
                 GROUP BY s.id, s.round, s.conference,
                          s.home_team_id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
@@ -5471,9 +5479,15 @@ async def global_stats(season: str = "2026"):
                 conn.rollback()
                 return []
 
-        # Play-in game vote breakdown
+        # Play-in game vote breakdown — deduplicate so each user counts once per game
         try:
             c.execute("""
+                WITH latest_pi AS (
+                    SELECT DISTINCT ON (user_id, game_id)
+                           id, game_id, user_id, predicted_winner_id
+                    FROM playin_predictions
+                    ORDER BY user_id, game_id, id DESC
+                )
                 SELECT pg.id, pg.conference, pg.game_type, pg.status,
                        pg.start_time,
                        pg.team1_id, t1.name, t1.abbreviation, t1.logo_url, COALESCE(pg.team1_seed, 0),
@@ -5485,7 +5499,7 @@ async def global_stats(season: str = "2026"):
                 FROM playin_games pg
                 JOIN teams t1 ON pg.team1_id = t1.id
                 JOIN teams t2 ON pg.team2_id = t2.id
-                LEFT JOIN playin_predictions pp ON pp.game_id = pg.id
+                LEFT JOIN latest_pi pp ON pp.game_id = pg.id
                 WHERE pg.season = %s
                 GROUP BY pg.id, t1.name, t1.abbreviation, t1.logo_url,
                          t2.name, t2.abbreviation, t2.logo_url
@@ -5643,12 +5657,18 @@ async def series_picks(series_id: int):
         raise HTTPException(status_code=404, detail="Series not found")
     home_id, away_id = row[0], row[1]
 
+    # Deduplicate: each user's most recent prediction for this series
     c.execute("""SELECT u.username, u.avatar_url, p.predicted_winner_id, p.predicted_games,
-                        t.abbreviation, t.logo_url
-                 FROM predictions p
+                        COALESCE(t.abbreviation, '?'), COALESCE(t.logo_url, '')
+                 FROM (
+                     SELECT DISTINCT ON (user_id)
+                            id, series_id, user_id, predicted_winner_id, predicted_games
+                     FROM predictions
+                     WHERE series_id = %s
+                     ORDER BY user_id, id DESC
+                 ) p
                  JOIN users u ON p.user_id = u.id
-                 JOIN teams t ON p.predicted_winner_id = t.id
-                 WHERE p.series_id = %s
+                 LEFT JOIN teams t ON p.predicted_winner_id = t.id
                  ORDER BY u.username""", (series_id,))
 
     picks = []
@@ -5684,11 +5704,18 @@ async def playin_picks(game_id: int):
         raise HTTPException(status_code=404, detail="Game not found")
     team1_id, team2_id = row
 
-    c.execute("""SELECT u.username, u.avatar_url, pp.predicted_winner_id, t.abbreviation, t.logo_url
-                 FROM playin_predictions pp
+    # Deduplicate: each user's most recent prediction for this game
+    c.execute("""SELECT u.username, u.avatar_url, pp.predicted_winner_id,
+                        COALESCE(t.abbreviation, '?'), COALESCE(t.logo_url, '')
+                 FROM (
+                     SELECT DISTINCT ON (user_id)
+                            id, game_id, user_id, predicted_winner_id
+                     FROM playin_predictions
+                     WHERE game_id = %s
+                     ORDER BY user_id, id DESC
+                 ) pp
                  JOIN users u ON pp.user_id = u.id
-                 JOIN teams t ON pp.predicted_winner_id = t.id
-                 WHERE pp.game_id = %s
+                 LEFT JOIN teams t ON pp.predicted_winner_id = t.id
                  ORDER BY u.username""", (game_id,))
 
     picks = []

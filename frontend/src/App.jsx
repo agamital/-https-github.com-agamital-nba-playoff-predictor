@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronRight, Share, Bell, Lock } from 'lucide-react';
+import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronUp, ChevronRight, Share, Bell, Lock } from 'lucide-react';
 import * as api from './services/api';
 import * as ns from './utils/notifications';
 
@@ -1001,22 +1001,24 @@ const SeriesVoteBar = ({ s, currentUser }) => {
           </div>
         </div>
 
-        {/* Vote bar — always visible */}
-        <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
-          <div
-            className="h-full bg-blue-500/80 transition-all duration-700"
-            style={{ width: noVotes ? '50%' : `${homePct}%` }}
-          />
-          <div className="h-full bg-orange-500/70 flex-1" />
-          <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
-            <span className="text-xs font-black text-white drop-shadow-md">
-              {noVotes ? '—' : `${homePct}%`}
-            </span>
-            <span className="text-xs font-black text-white drop-shadow-md">
-              {noVotes ? '—' : `${awayPct}%`}
-            </span>
+        {/* Vote bar — only if there are votes */}
+        {noVotes ? (
+          <div className="flex items-center justify-center py-2 rounded-xl bg-slate-800/40 border border-slate-700/40">
+            <span className="text-[10px] text-slate-600 font-bold">No picks yet — be the first!</span>
           </div>
-        </div>
+        ) : (
+          <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
+            <div
+              className="h-full bg-blue-500/80 transition-all duration-700"
+              style={{ width: `${homePct}%` }}
+            />
+            <div className="h-full bg-orange-500/70 flex-1" />
+            <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
+              <span className="text-xs font-black text-white drop-shadow-md">{homePct}%</span>
+              <span className="text-xs font-black text-white drop-shadow-md">{awayPct}%</span>
+            </div>
+          </div>
+        )}
         {/* Toggle row — individual picks revealed once game1_start_time passes */}
         <div className="flex items-center justify-between mt-2 px-1">
           <span className="text-[10px] text-blue-400 font-black">{s.home_team.abbreviation}</span>
@@ -1024,10 +1026,11 @@ const SeriesVoteBar = ({ s, currentUser }) => {
             <button
               onClick={handleToggle}
               className="flex items-center gap-1 text-[10px] text-slate-500 font-bold hover:text-slate-300 transition-colors"
+              disabled={noVotes}
             >
               <Users className="w-3 h-3" />
               {noVotes ? 'No picks yet' : `${total} ${total === 1 ? 'pick' : 'picks'}`}
-              <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+              {!noVotes && <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
             </button>
           ) : (
             <span className="flex items-center gap-1 text-[10px] text-slate-600 font-bold">
@@ -1373,6 +1376,8 @@ const GlobalStatsTab = ({ currentUser }) => {
   );
   if (!stats) return <p className="text-slate-500 text-center py-8">Could not load stats.</p>;
 
+  const [showPlayIn, setShowPlayIn] = useState(false);
+
   const ROUND_ORDER = ['First Round', 'Conference Semifinals', 'Conference Finals', 'NBA Finals'];
   const byRound = {};
   (stats.series || []).forEach(s => {
@@ -1388,6 +1393,7 @@ const GlobalStatsTab = ({ currentUser }) => {
     playinByConf[g.conference].push(g);
   });
   const hasPlayin = (stats.playin || []).length > 0;
+  const totalPlayinVotes = (stats.playin || []).reduce((s, g) => s + (g.total_votes || 0), 0);
 
   const hasFutures = (stats.futures?.top_champions?.length > 0)
     || (stats.futures?.top_west_champs?.length > 0)
@@ -1422,18 +1428,36 @@ const GlobalStatsTab = ({ currentUser }) => {
         </div>
       </div>
 
-      {/* ── Play-In games ── */}
+      {/* ── Play-In games — collapsed by default ── */}
       {hasPlayin && (
-        <div className="space-y-3">
-          <SectionDivider label="Play-In Tournament" />
-          {Object.entries(playinByConf).map(([conf, games]) => (
-            <div key={conf} className="space-y-3">
-              <p className="text-xs font-black text-slate-400 px-1">{conf} Conference</p>
-              {games.map(g => (
-                <PlayinVoteBar key={g.game_id} g={g} currentUser={currentUser} />
+        <div>
+          <button
+            onClick={() => setShowPlayIn(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 rounded-2xl border border-slate-700/60 bg-slate-900/60 hover:border-slate-600 transition-all group"
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Play-In Tournament</span>
+              <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/25 text-purple-400">
+                {(stats.playin || []).length} games · {totalPlayinVotes} picks
+              </span>
+            </div>
+            {showPlayIn
+              ? <ChevronUp className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+              : <ChevronDown className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+            }
+          </button>
+          {showPlayIn && (
+            <div className="space-y-3 mt-3">
+              {Object.entries(playinByConf).map(([conf, games]) => (
+                <div key={conf} className="space-y-3">
+                  <p className="text-xs font-black text-slate-400 px-1">{conf} Conference</p>
+                  {games.map(g => (
+                    <PlayinVoteBar key={g.game_id} g={g} currentUser={currentUser} />
+                  ))}
+                </div>
               ))}
             </div>
-          ))}
+          )}
         </div>
       )}
 
