@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Trophy, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info, Clock, Lock, CheckCircle, XCircle, Edit2 } from 'lucide-react';
+import { Trophy, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info, Clock, Lock, CheckCircle, XCircle, Edit2 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS, PLAYIN_UNDERDOG_PTS } from './scoringConstants';
@@ -719,12 +719,19 @@ const SeedBadge = ({ team, seed }) => (
   </div>
 );
 
-const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team, seed2Team, confirmed, predMap, editing, onEdit }) => {
+const PlayInCol = ({ label, games, picks, onTeamClick, onSave, saved, seed1Team, seed2Team, confirmed, predMap, editing, onEdit, onCollapse }) => {
   const slotH = (BH + 28) / PI_SLOTS;
   const seedBySlot = { elimination: seed1Team, '7v8': seed2Team };
   return (
     <div style={{ flexShrink: 0 }}>
-      <p className="text-xs text-slate-500 uppercase font-bold mb-3 text-center tracking-wider">{label}</p>
+      <div className="flex items-center justify-center gap-2 mb-3">
+        <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">{label}</p>
+        {onCollapse && (
+          <button onClick={onCollapse} className="text-[9px] text-slate-600 hover:text-slate-400 font-bold flex items-center gap-0.5 transition-colors" title="Collapse Play-In">
+            <ChevronLeft className="w-3 h-3" />
+          </button>
+        )}
+      </div>
       <div style={{ height: BH + 28, display: 'flex', flexDirection: 'column' }}>
         {PLAYIN_ORDER.map(({ type, label: gLabel, sublabel }) => {
           const game = games.find(g => g.game_type === type);
@@ -1373,6 +1380,30 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
+// ── Collapsed Play-In sidebar pill (desktop bracket) ─────────────────────────
+const CollapsedPlayInPill = ({ onExpand, savedCount, totalCount }) => (
+  <div
+    style={{ flexShrink: 0, height: BH + 28, width: 36, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', gap: 8 }}
+    onClick={onExpand}
+    className="group rounded-xl border border-slate-700/60 bg-slate-900/60 hover:border-yellow-500/40 hover:bg-yellow-500/5 transition-all"
+    title="Show Play-In games"
+  >
+    <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-yellow-400 transition-colors shrink-0" />
+    <span style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+      className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-yellow-400 transition-colors select-none">
+      Play-In
+    </span>
+    {savedCount > 0 && (
+      <span className="w-5 h-5 rounded-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 text-[9px] font-black flex items-center justify-center shrink-0">
+        {savedCount}
+      </span>
+    )}
+    {savedCount === 0 && (
+      <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-yellow-400/60 transition-colors shrink-0" />
+    )}
+  </div>
+);
+
 const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const qc = useQueryClient();
   const [picks, setPicks]             = useState({});
@@ -1385,6 +1416,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const [showFull, setShowFull]       = useState(() => {
     try { return localStorage.getItem('bracketShowFull') === 'true'; } catch { return false; }
   });
+  const [showPlayIn, setShowPlayIn]   = useState(false);
   const [saveError, setSaveError]     = useState('');
   // Deep-link highlight — set when navigating from a notification
   const [highlightedId, setHighlightedId] = useState(null);
@@ -1776,22 +1808,36 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
         <div className="overflow-x-auto pb-4">
           <div className="flex items-start gap-0" style={{ width: 'fit-content', margin: '0 auto' }}>
 
-            {/* WEST Play-In */}
-            <PlayInCol
-              label="Play-In"
-              games={westPI}
-              picks={piPicks}
-              onTeamClick={handlePITeamClick}
-              onSave={handlePISave}
-              saved={piSaved}
-              seed1Team={westSeed1}
-              seed2Team={westSeed2}
-              confirmed={piConfirmed}
-              predMap={myPiPredMap}
-              editing={piEditing}
-              onEdit={handlePIEdit}
-            />
-            <HLine width={20} />
+            {/* WEST Play-In — collapsed by default */}
+            {showPlayIn ? (
+              <>
+                <PlayInCol
+                  label="Play-In"
+                  games={westPI}
+                  picks={piPicks}
+                  onTeamClick={handlePITeamClick}
+                  onSave={handlePISave}
+                  saved={piSaved}
+                  seed1Team={westSeed1}
+                  seed2Team={westSeed2}
+                  confirmed={piConfirmed}
+                  predMap={myPiPredMap}
+                  editing={piEditing}
+                  onEdit={handlePIEdit}
+                  onCollapse={() => setShowPlayIn(false)}
+                />
+                <HLine width={20} />
+              </>
+            ) : (
+              <>
+                <CollapsedPlayInPill
+                  onExpand={() => setShowPlayIn(true)}
+                  savedCount={westPI.filter(g => piConfirmed[g.id]).length}
+                  totalCount={westPI.length}
+                />
+                <HLine width={20} />
+              </>
+            )}
 
             {/* WEST R1 */}
             <R1Col label="Round 1" slots={westSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={westSeedTeams} confirmed={confirmed} onEdit={handleEdit} predMap={myPredMap} />
@@ -1816,22 +1862,36 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
             {/* EAST R1 */}
             <R1Col label="Round 1" slots={eastSlots} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} seedTeams={eastSeedTeams} confirmed={confirmed} onEdit={handleEdit} predMap={myPredMap} />
 
-            {/* EAST Play-In */}
-            <HLine width={20} />
-            <PlayInCol
-              label="Play-In"
-              games={eastPI}
-              picks={piPicks}
-              onTeamClick={handlePITeamClick}
-              onSave={handlePISave}
-              saved={piSaved}
-              seed1Team={eastSeed1}
-              seed2Team={eastSeed2}
-              confirmed={piConfirmed}
-              predMap={myPiPredMap}
-              editing={piEditing}
-              onEdit={handlePIEdit}
-            />
+            {/* EAST Play-In — collapsed by default */}
+            {showPlayIn ? (
+              <>
+                <HLine width={20} />
+                <PlayInCol
+                  label="Play-In"
+                  games={eastPI}
+                  picks={piPicks}
+                  onTeamClick={handlePITeamClick}
+                  onSave={handlePISave}
+                  saved={piSaved}
+                  seed1Team={eastSeed1}
+                  seed2Team={eastSeed2}
+                  confirmed={piConfirmed}
+                  predMap={myPiPredMap}
+                  editing={piEditing}
+                  onEdit={handlePIEdit}
+                  onCollapse={() => setShowPlayIn(false)}
+                />
+              </>
+            ) : (
+              <>
+                <HLine width={20} />
+                <CollapsedPlayInPill
+                  onExpand={() => setShowPlayIn(true)}
+                  savedCount={eastPI.filter(g => piConfirmed[g.id]).length}
+                  totalCount={eastPI.length}
+                />
+              </>
+            )}
           </div>
         </div>
 
@@ -1898,19 +1958,38 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
           {westPI.length > 0 && (
             <div className="mb-4">
-              <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-2 px-1">Play-In Tournament</p>
-              <div className="space-y-2">
-                {PLAYIN_ORDER.map(({ type, label }) => {
-                  const game = westPI.find(g => g.game_type === type);
-                  if (!game) return null;
-                  return (
-                    <div key={type}>
-                      <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: +myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!piConfirmed[game.id]} editing={piEditing[game.id]} onEdit={() => handlePIEdit(game.id)} />
-                    </div>
-                  );
-                })}
-              </div>
+              {/* Play-In toggle header */}
+              <button
+                onClick={() => setShowPlayIn(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-slate-700/60 bg-slate-900/60 hover:border-slate-600 transition-all mb-2 group"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-slate-400 uppercase tracking-wider">Play-In Tournament</span>
+                  {westPI.filter(g => piConfirmed[g.id]).length > 0 && (
+                    <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-400">
+                      ★ {westPI.filter(g => piConfirmed[g.id]).length}/{westPI.length} saved
+                    </span>
+                  )}
+                </div>
+                {showPlayIn
+                  ? <ChevronUp className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                  : <ChevronDown className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                }
+              </button>
+              {showPlayIn && (
+                <div className="space-y-2">
+                  {PLAYIN_ORDER.map(({ type, label }) => {
+                    const game = westPI.find(g => g.game_type === type);
+                    if (!game) return null;
+                    return (
+                      <div key={type}>
+                        <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
+                        <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: +myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!piConfirmed[game.id]} editing={piEditing[game.id]} onEdit={() => handlePIEdit(game.id)} />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <div className="flex items-center gap-2 my-4">
                 <div className="h-px flex-1 bg-slate-800" />
                 <span className="text-xs text-slate-600 font-bold uppercase tracking-wider">Round 1</span>
@@ -1945,19 +2024,38 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
           {eastPI.length > 0 && (
             <div className="mb-4">
-              <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-2 px-1">Play-In Tournament</p>
-              <div className="space-y-2">
-                {PLAYIN_ORDER.map(({ type, label }) => {
-                  const game = eastPI.find(g => g.game_type === type);
-                  if (!game) return null;
-                  return (
-                    <div key={type}>
-                      <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
-                      <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: +myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!piConfirmed[game.id]} editing={piEditing[game.id]} onEdit={() => handlePIEdit(game.id)} />
-                    </div>
-                  );
-                })}
-              </div>
+              {/* Play-In toggle header */}
+              <button
+                onClick={() => setShowPlayIn(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-slate-700/60 bg-slate-900/60 hover:border-slate-600 transition-all mb-2 group"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-slate-400 uppercase tracking-wider">Play-In Tournament</span>
+                  {eastPI.filter(g => piConfirmed[g.id]).length > 0 && (
+                    <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-400">
+                      ★ {eastPI.filter(g => piConfirmed[g.id]).length}/{eastPI.length} saved
+                    </span>
+                  )}
+                </div>
+                {showPlayIn
+                  ? <ChevronUp className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                  : <ChevronDown className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                }
+              </button>
+              {showPlayIn && (
+                <div className="space-y-2">
+                  {PLAYIN_ORDER.map(({ type, label }) => {
+                    const game = eastPI.find(g => g.game_type === type);
+                    if (!game) return null;
+                    return (
+                      <div key={type}>
+                        <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide px-1 mb-1">{label}</p>
+                        <MobilePlayInCard game={game} pick={piPicks[game.id] || (myPiPredMap[game.id] ? { teamId: +myPiPredMap[game.id].predicted_winner_id } : undefined)} onTeamClick={handlePITeamClick} onSave={handlePISave} saved={piSaved[game.id]} communityStats={null} predData={myPiPredMap[game.id]} highlighted={highlightedId === `playin-${game.id}`} confirmed={!!piConfirmed[game.id]} editing={piEditing[game.id]} onEdit={() => handlePIEdit(game.id)} />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <div className="flex items-center gap-2 my-4">
                 <div className="h-px flex-1 bg-slate-800" />
                 <span className="text-xs text-slate-600 font-bold uppercase tracking-wider">Round 1</span>
