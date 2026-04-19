@@ -45,7 +45,7 @@ export const FUTURES_BASE_POINTS = {
 // Each tier: [maxDelta, points].  First matching delta wins.
 export const LEADERS_TIERS = {
   scorer:   [[0, 80], [1, 40], [2, 20]],
-  assists:  [[0, 80], [1, 40], [2, 20]],
+  assists:  [[0, 50], [1, 25]],
   rebounds: [[0, 50], [1, 25]],
   threes:   [[0, 50], [1, 25]],
   steals:   [[0, 35]],

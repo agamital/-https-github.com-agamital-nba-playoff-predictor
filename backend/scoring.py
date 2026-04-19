@@ -69,13 +69,13 @@ SCORING RULES SUMMARY
    e.g. "What's the most points any player will score in one game?"
    NOT total/cumulative — one game only.  Tiered proximity scoring.
 
-   Points / Assists:
+   Points:
      Exact  (Δ=0)  : 80 pts
      Off ±1 (Δ=1)  : 40 pts
      Off ±2 (Δ=2)  : 20 pts
      Off ±3+       :  0 pts
 
-   Rebounds / Threes:
+   Assists / Rebounds / Threes:
      Exact  (Δ=0)  : 50 pts
      Off ±1 (Δ=1)  : 25 pts
      Off ±2+       :  0 pts
@@ -146,7 +146,7 @@ FUTURES_BASE_POINTS: dict[str, int] = {
 # Tiers checked in order — first matching delta wins.
 LEADERS_TIERS: dict[str, list[tuple[int, int]]] = {
     "scorer":   [(0, 80), (1, 40), (2, 20)],  # exact=80, Δ1=40, Δ2=20
-    "assists":  [(0, 80), (1, 40), (2, 20)],  # exact=80, Δ1=40, Δ2=20
+    "assists":  [(0, 50), (1, 25)],            # exact=50, Δ1=25
     "rebounds": [(0, 50), (1, 25)],            # exact=50, Δ1=25
     "threes":   [(0, 50), (1, 25)],            # exact=50, Δ1=25
     "steals":   [(0, 35)],                     # exact only
