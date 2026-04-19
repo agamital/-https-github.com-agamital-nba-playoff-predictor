@@ -236,12 +236,19 @@ def _init_db_pool() -> None:
     url = os.environ.get("DATABASE_URL", "")
     if not url:
         raise RuntimeError("DATABASE_URL not set")
+    # TCP keepalives keep Railway from dropping idle connections silently.
+    # keepalives_idle=30 → probe after 30 s idle; 5 probes × 10 s apart.
     _db_pool = _pg_pool.ThreadedConnectionPool(
         minconn=1,
         maxconn=8,   # conservative — Railway free Postgres caps at ~25 total
         dsn=url,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5,
+        connect_timeout=15,
     )
-    print(f"[DB] Connection pool initialised (min=1 max=8)")
+    print(f"[DB] Connection pool initialised (min=1 max=8, keepalives on)")
 
 
 class _PooledConn:
@@ -283,22 +290,52 @@ class _PooledConn:
         return object.__getattribute__(self, '_c').__exit__(*args)
 
 
+def _direct_conn():
+    """Open a fresh connection with keepalives (used as fallback)."""
+    url = os.environ.get("DATABASE_URL", "")
+    return psycopg2.connect(
+        url,
+        keepalives=1, keepalives_idle=30,
+        keepalives_interval=10, keepalives_count=5,
+        connect_timeout=15,
+    )
+
+
 def get_db_conn() -> _PooledConn:
     """
     Return a pooled connection. Callers still call conn.close() as before —
     the wrapper silently returns the connection to the pool instead.
+
+    Validates the connection is alive before returning; if Railway has
+    dropped it, discards it and gets a fresh one (up to 3 attempts).
     """
     global _db_pool
     if _db_pool is None or _db_pool.closed:
         _init_db_pool()
-    try:
-        return _PooledConn(_db_pool.getconn(), _db_pool)
-    except _pg_pool.PoolError:
-        # Pool exhausted — fall back to a direct connection so the request
-        # still succeeds (just without pooling benefit).
-        url = os.environ.get("DATABASE_URL", "")
-        print("[DB] Pool exhausted — opening direct connection (temporary)")
-        return psycopg2.connect(url)  # type: ignore[return-value]
+    for _attempt in range(3):
+        try:
+            raw = _db_pool.getconn()
+            # Quick liveness check — catches TCP connections dropped by Railway
+            if raw.closed != 0:
+                raise Exception("connection already closed")
+            try:
+                raw.cursor().execute("SELECT 1")
+                raw.reset()          # clear any lingering state
+            except Exception:
+                # Dead connection — discard from pool, retry
+                try: _db_pool.putconn(raw, close=True)
+                except Exception: pass
+                print(f"[DB] Stale pooled connection discarded (attempt {_attempt+1})")
+                continue
+            return _PooledConn(raw, _db_pool)
+        except _pg_pool.PoolError:
+            # Pool exhausted — fall back to a direct connection so the request
+            # still succeeds (just without pooling benefit).
+            print("[DB] Pool exhausted — opening direct connection (temporary)")
+            return _direct_conn()  # type: ignore[return-value]
+    # All retries used up — open a direct connection as last resort
+    print("[DB] All pool retries failed — opening direct connection")
+    return _direct_conn()  # type: ignore[return-value]
 
 class User(BaseModel):
     username: str
@@ -4184,7 +4221,6 @@ async def startup():
             except Exception as e:
                 print(f"[Scheduler] auto_lock_futures error: {e}")
 
-        from apscheduler.triggers.date import DateTrigger
         _scheduler.add_job(
             _auto_lock_futures,
             DateTrigger(run_date=_FUTURES_LOCK_DT),
