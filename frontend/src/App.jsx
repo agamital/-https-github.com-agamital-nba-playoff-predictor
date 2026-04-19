@@ -1095,53 +1095,81 @@ const SeriesVoteBar = ({ s, currentUser }) => {
             <div className="flex justify-center py-5">
               <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
             </div>
-          ) : picks && picks.length > 0 ? (
-            <div className="divide-y divide-slate-800/40 max-h-52 overflow-y-auto">
-              {picks.map((p, i) => {
-                const isMe = currentUser && p.username === currentUser.username;
-                return (
-                  <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-orange-500/10' : ''}`}>
-                    {/* User avatar */}
-                    {p.avatar_url ? (
-                      <img
-                        src={p.avatar_url} alt=""
-                        className="w-6 h-6 rounded-full object-cover shrink-0"
-                        onError={e => { e.target.style.display = 'none'; }}
-                      />
-                    ) : (
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-orange-500/30' : 'bg-slate-700'}`}>
-                        <span className={`text-[8px] font-black ${isMe ? 'text-orange-400' : 'text-slate-400'}`}>
-                          {(p.username || '?')[0].toUpperCase()}
-                        </span>
-                      </div>
-                    )}
-                    {isMe && (
-                      <span className="text-[8px] font-black text-orange-400 bg-orange-500/20 border border-orange-500/30 px-1.5 py-0.5 rounded-full shrink-0">
-                        YOU
-                      </span>
-                    )}
-                    <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-orange-300' : 'text-slate-300'}`}>
-                      {p.username}
-                    </span>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <img
-                        src={p.team_logo_url} alt=""
-                        className="w-4 h-4"
-                        onError={e => e.target.style.display = 'none'}
-                      />
-                      <span className={`text-[10px] font-black ${isMe ? 'text-orange-400' : 'text-slate-400'}`}>
-                        {p.team_abbreviation}
-                      </span>
-                      {p.predicted_games && (
-                        <span className="text-[10px] text-slate-600 font-bold">in {p.predicted_games}</span>
-                      )}
-                      {seriesStatus === 'completed' && (
-                        <ResultBadge isCorrect={p.is_correct} pts={p.is_correct ? p.points_earned : null} />
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+          ) : picks && picks.filter(Boolean).length > 0 ? (
+            <div className="overflow-x-auto max-h-64">
+              <table className="w-full" style={{ minWidth: 320 }}>
+                <thead className="sticky top-0 bg-slate-900/95 border-b border-slate-800">
+                  <tr>
+                    <th className="text-left px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">User</th>
+                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">Pick</th>
+                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">🏀 Scorer</th>
+                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">💪 Reb</th>
+                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">🎯 Ast</th>
+                    <th className="px-2 py-1.5 w-8" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/40">
+                  {picks.filter(Boolean).map((p, i) => {
+                    const isMe = currentUser && p.username === currentUser.username;
+                    const ln = name => {
+                      if (!name) return null;
+                      const parts = name.trim().split(' ');
+                      return parts[parts.length - 1];
+                    };
+                    return (
+                      <tr key={i} className={`hover:bg-slate-800/20 transition-colors ${isMe ? 'bg-orange-500/8' : ''}`}>
+                        {/* User */}
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1.5">
+                            {p.avatar_url ? (
+                              <img src={p.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" onError={e => { e.target.style.display = 'none'; }} />
+                            ) : (
+                              <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-orange-500/30' : 'bg-slate-700'}`}>
+                                <span className={`text-[6px] font-black ${isMe ? 'text-orange-400' : 'text-slate-400'}`}>{(p.username || '?')[0].toUpperCase()}</span>
+                              </div>
+                            )}
+                            <span className={`text-[10px] font-bold truncate max-w-[65px] ${isMe ? 'text-orange-300' : 'text-slate-300'}`}>{p.username}</span>
+                            {isMe && <span className="text-[7px] font-black text-orange-400 bg-orange-500/20 border border-orange-500/30 px-1 py-0.5 rounded-full shrink-0">YOU</span>}
+                          </div>
+                        </td>
+                        {/* Pick */}
+                        <td className="px-1 py-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <img src={p.team_logo_url} alt="" className="w-4 h-4 shrink-0" onError={e => e.target.style.display = 'none'} />
+                            <span className={`text-[10px] font-black whitespace-nowrap ${isMe ? 'text-orange-400' : 'text-orange-400'}`}>
+                              {p.team_abbreviation}{p.predicted_games ? ` G${p.predicted_games}` : ''}
+                            </span>
+                          </div>
+                        </td>
+                        {/* Scorer */}
+                        <td className="px-1 py-2 text-center">
+                          <span className="text-[10px] font-bold text-slate-300 whitespace-nowrap">
+                            {ln(p.leading_scorer) || <span className="text-slate-700">—</span>}
+                          </span>
+                        </td>
+                        {/* Rebounder */}
+                        <td className="px-1 py-2 text-center">
+                          <span className="text-[10px] font-bold text-slate-300 whitespace-nowrap">
+                            {ln(p.leading_rebounder) || <span className="text-slate-700">—</span>}
+                          </span>
+                        </td>
+                        {/* Assister */}
+                        <td className="px-1 py-2 text-center">
+                          <span className="text-[10px] font-bold text-slate-300 whitespace-nowrap">
+                            {ln(p.leading_assister) || <span className="text-slate-700">—</span>}
+                          </span>
+                        </td>
+                        {/* Result */}
+                        <td className="px-2 py-2 text-right">
+                          {seriesStatus === 'completed' && (
+                            <ResultBadge isCorrect={p.is_correct} pts={p.is_correct ? p.points_earned : null} />
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : (
             <p className="text-xs text-slate-600 text-center py-4">No picks yet — be the first!</p>
