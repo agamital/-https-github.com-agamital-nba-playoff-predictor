@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- Background -->
+  <rect width="192" height="192" rx="40" fill="#0f172a"/>
+  <!-- Orange gradient circle -->
+  <circle cx="96" cy="96" r="70" fill="#f97316"/>
+  <!-- Trophy shape (simplified) -->
+  <rect x="75" y="118" width="42" height="10" rx="3" fill="#0f172a"/>
+  <rect x="82" y="128" width="28" height="8" rx="3" fill="#0f172a"/>
+  <path d="M 68 58 L 68 100 Q 68 120 96 120 Q 124 120 124 100 L 124 58 Z" fill="#0f172a"/>
+  <path d="M 68 68 Q 52 68 52 84 Q 52 98 68 100" stroke="#0f172a" stroke-width="6" fill="none"/>
+  <path d="M 124 68 Q 140 68 140 84 Q 140 98 124 100" stroke="#0f172a" stroke-width="6" fill="none"/>
+  <rect x="84" y="56" width="24" height="4" rx="2" fill="#0f172a"/>
+</svg>

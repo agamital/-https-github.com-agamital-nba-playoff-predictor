@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>NBA Playoff Predictor 2026</title>
+
+    <!-- PWA manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Theme color (Android Chrome tab bar) -->
+    <meta name="theme-color" content="#f97316" />
+
+    <!-- SEO -->
+    <meta name="description" content="Predict the 2026 NBA Playoffs — Play-In picks, bracket predictions, and futures." />
+
+    <!-- iOS PWA support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="NBA Picks" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+
+    <!-- Prevent iOS phone number detection -->
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- OneSignal Web SDK (v16) — sets window.OneSignal global -->
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+
+    <!-- Hard-suppress every OneSignal-injected UI element.
+         The dashboard "Subscription Bell" setting can override SDK init config,
+         so CSS is the only reliable way to guarantee nothing renders.
+         Our custom toggle in Account Settings is the sole subscription controller. -->
+    <style>
+      #onesignal-bell-container,
+      #onesignal-slidedown-container,
+      #onesignal-popover-container,
+      .onesignal-bell-launcher,
+      .onesignal-bell-launcher-button,
+      .onesignal-reset,
+      [id^="onesignal-"] iframe,
+      .slidedown-container,
+      .onesignal-slidedown-container { display: none !important; visibility: hidden !important; pointer-events: none !important; }
+    </style>
+    <script type="module" crossorigin src="/assets/index-Ddt3cvW0.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/ui-QVAR4Q7F.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-BnZiPQ3k.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-CwG7jobt.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
