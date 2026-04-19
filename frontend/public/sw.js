@@ -1,5 +1,5 @@
-const CACHE_NAME = 'nba-predictor-v1';
-const API_CACHE  = 'nba-api-v1';
+const CACHE_NAME = 'nba-predictor-v2';
+const API_CACHE  = 'nba-api-v2';
 const DB_NAME    = 'nba-sw-db';
 const DB_STORE   = 'badge';
 const BADGE_KEY  = 'count';

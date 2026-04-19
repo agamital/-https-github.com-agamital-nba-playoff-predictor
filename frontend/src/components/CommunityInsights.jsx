@@ -160,21 +160,21 @@ const CommunityInsights = ({
                 {/* Column headers */}
                 <thead className="sticky top-0 bg-slate-900/95 border-b border-slate-800">
                   <tr>
-                    <th className="text-left px-3 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                    <th className="text-left px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">
                       User
                     </th>
-                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">
                       Pick
                     </th>
                     {isSeries && (
                       <>
-                        <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                        <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">
                           🏀 Scorer
                         </th>
-                        <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                        <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">
                           💪 Reb
                         </th>
-                        <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                        <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">
                           🎯 Ast
                         </th>
                       </>
