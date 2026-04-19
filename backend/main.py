@@ -6896,24 +6896,35 @@ async def sync_and_advance(season: str = "2026"):
     """Re-run bracket advancement for all completed series, score any unscored
     predictions, and recalculate all user points.  Use this as the admin backup
     trigger when the automatic system needs a nudge."""
-    conn = get_db_conn()
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
 
-    c.execute('''SELECT id, round, conference, bracket_group, winner_team_id,
-                 home_team_id, home_seed, away_seed
-                 FROM series WHERE season = %s AND status = 'completed' ''', (season,))
-    completed = c.fetchall()
+        c.execute('''SELECT id, round, conference, bracket_group, winner_team_id,
+                     home_team_id, home_seed, away_seed
+                     FROM series WHERE season = %s AND status = 'completed' ''', (season,))
+        completed = c.fetchall()
 
-    for series_id, round_name, conf, bracket_group, winner_team_id, home_team_id, home_seed, away_seed in completed:
-        try:
-            winner_seed = home_seed if winner_team_id == home_team_id else away_seed
-            _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id, winner_seed)
-        except Exception as e:
-            print(f"sync_and_advance: failed to advance series {series_id}: {e}")
+        for series_id, round_name, conf, bracket_group, winner_team_id, home_team_id, home_seed, away_seed in completed:
+            try:
+                winner_seed = home_seed if winner_team_id == home_team_id else away_seed
+                _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id, winner_seed)
+            except Exception as e:
+                print(f"sync_and_advance: failed to advance series {series_id}: {e}")
 
-    _recalculate_all_points(c)
-    conn.commit()
-    conn.close()
+        _recalculate_all_points(c)
+        conn.commit()
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        print(f"sync_and_advance error: {e}")
+        raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
     # Also run DB-driven score backfill for any unscored predictions
     pi_bf = _backfill_playin_scores(season)
@@ -9103,76 +9114,89 @@ async def set_futures_results(season: str = "2026",
                                actual_finals_mvp: Optional[str] = None,
                                actual_west_finals_mvp: Optional[str] = None,
                                actual_east_finals_mvp: Optional[str] = None):
-    conn = get_db_conn()
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
 
-    # Store results
-    settings = {
-        f'actual_champion_{season}': str(actual_champion_id) if actual_champion_id else '',
-        f'actual_west_champ_{season}': str(actual_west_champ_id) if actual_west_champ_id else '',
-        f'actual_east_champ_{season}': str(actual_east_champ_id) if actual_east_champ_id else '',
-        f'actual_finals_mvp_{season}': actual_finals_mvp or '',
-        f'actual_west_finals_mvp_{season}': actual_west_finals_mvp or '',
-        f'actual_east_finals_mvp_{season}': actual_east_finals_mvp or '',
-    }
-    for key, value in settings.items():
-        c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
-                  (key, value))
-
-    # Load MVP category odds from site_settings (team-category odds come from teams table)
-    mvp_cats = ['finals_mvp', 'west_finals_mvp', 'east_finals_mvp']
-    base_odds = {}
-    for cat in mvp_cats:
-        c.execute("SELECT value FROM site_settings WHERE key = %s", (f'odds_{cat}',))
-        row = c.fetchone()
-        base_odds[cat] = float(row[0]) if row else 1.0
-
-    # Load per-team odds so each user's pick uses that team's specific multiplier
-    c.execute("SELECT id, COALESCE(odds_championship,1.0), COALESCE(odds_conference,1.0) FROM teams")
-    team_odds_map = {row[0]: {'championship': float(row[1]), 'conference': float(row[2])}
-                     for row in c.fetchall()}
-
-    # Score all futures predictions
-    c.execute('''SELECT id, champion_team_id, west_champ_team_id, east_champ_team_id,
-                 finals_mvp, west_finals_mvp, east_finals_mvp
-                 FROM futures_predictions WHERE season = %s''', (season,))
-    fps = c.fetchall()
-
-    for fp in fps:
-        fp_id = fp[0]
-        preds = {
-            'champion':        fp[1],
-            'west_champ':      fp[2],
-            'east_champ':      fp[3],
-            'finals_mvp':      fp[4],
-            'west_finals_mvp': fp[5],
-            'east_finals_mvp': fp[6],
+        # Store results
+        settings = {
+            f'actual_champion_{season}': str(actual_champion_id) if actual_champion_id else '',
+            f'actual_west_champ_{season}': str(actual_west_champ_id) if actual_west_champ_id else '',
+            f'actual_east_champ_{season}': str(actual_east_champ_id) if actual_east_champ_id else '',
+            f'actual_finals_mvp_{season}': actual_finals_mvp or '',
+            f'actual_west_finals_mvp_{season}': actual_west_finals_mvp or '',
+            f'actual_east_finals_mvp_{season}': actual_east_finals_mvp or '',
         }
-        actuals = {
-            'champion':        actual_champion_id,
-            'west_champ':      actual_west_champ_id,
-            'east_champ':      actual_east_champ_id,
-            'finals_mvp':      actual_finals_mvp,
-            'west_finals_mvp': actual_west_finals_mvp,
-            'east_finals_mvp': actual_east_finals_mvp,
-        }
-        # Build per-prediction odds: team picks use the predicted team's own multiplier
-        odds = dict(base_odds)
-        odds['champion']   = team_odds_map.get(fp[1], {}).get('championship', 1.0)
-        odds['west_champ'] = team_odds_map.get(fp[2], {}).get('conference',   1.0)
-        odds['east_champ'] = team_odds_map.get(fp[3], {}).get('conference',   1.0)
-        pts, correct = calculate_futures_points(preds, actuals, odds)
+        for key, value in settings.items():
+            c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+                      (key, value))
 
-        c.execute('''UPDATE futures_predictions SET
-                     is_correct_champion = %s, is_correct_west = %s, is_correct_east = %s,
-                     points_earned = %s WHERE id = %s''',
-                  (correct.get('champion'), correct.get('west_champ'), correct.get('east_champ'),
-                   pts, fp_id))
+        # Load MVP category odds from site_settings (team-category odds come from teams table)
+        mvp_cats = ['finals_mvp', 'west_finals_mvp', 'east_finals_mvp']
+        base_odds = {}
+        for cat in mvp_cats:
+            c.execute("SELECT value FROM site_settings WHERE key = %s", (f'odds_{cat}',))
+            row = c.fetchone()
+            base_odds[cat] = float(row[0]) if row else 1.0
 
-    _recalculate_all_points(c)
-    conn.commit()
-    conn.close()
-    return {"message": "Futures results set and scores recalculated"}
+        # Load per-team odds so each user's pick uses that team's specific multiplier
+        c.execute("SELECT id, COALESCE(odds_championship,1.0), COALESCE(odds_conference,1.0) FROM teams")
+        team_odds_map = {row[0]: {'championship': float(row[1]), 'conference': float(row[2])}
+                         for row in c.fetchall()}
+
+        # Score all futures predictions
+        c.execute('''SELECT id, champion_team_id, west_champ_team_id, east_champ_team_id,
+                     finals_mvp, west_finals_mvp, east_finals_mvp
+                     FROM futures_predictions WHERE season = %s''', (season,))
+        fps = c.fetchall()
+
+        for fp in fps:
+            fp_id = fp[0]
+            preds = {
+                'champion':        fp[1],
+                'west_champ':      fp[2],
+                'east_champ':      fp[3],
+                'finals_mvp':      fp[4],
+                'west_finals_mvp': fp[5],
+                'east_finals_mvp': fp[6],
+            }
+            actuals = {
+                'champion':        actual_champion_id,
+                'west_champ':      actual_west_champ_id,
+                'east_champ':      actual_east_champ_id,
+                'finals_mvp':      actual_finals_mvp,
+                'west_finals_mvp': actual_west_finals_mvp,
+                'east_finals_mvp': actual_east_finals_mvp,
+            }
+            # Build per-prediction odds: team picks use the predicted team's own multiplier
+            odds = dict(base_odds)
+            odds['champion']   = team_odds_map.get(fp[1], {}).get('championship', 1.0)
+            odds['west_champ'] = team_odds_map.get(fp[2], {}).get('conference',   1.0)
+            odds['east_champ'] = team_odds_map.get(fp[3], {}).get('conference',   1.0)
+            pts, correct = calculate_futures_points(preds, actuals, odds)
+
+            c.execute('''UPDATE futures_predictions SET
+                         is_correct_champion = %s, is_correct_west = %s, is_correct_east = %s,
+                         points_earned = %s WHERE id = %s''',
+                      (correct.get('champion'), correct.get('west_champ'), correct.get('east_champ'),
+                       pts, fp_id))
+
+        _recalculate_all_points(c)
+        conn.commit()
+        return {"message": "Futures results set and scores recalculated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        print(f"set_futures_results error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to set futures results: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 
 # ── Playoff Leaders ───────────────────────────────────────────────────────────
@@ -9390,45 +9414,58 @@ async def set_leaders_results(season: str = "2026",
                                top_scorer: Optional[int] = None, top_assists: Optional[int] = None,
                                top_rebounds: Optional[int] = None, top_threes: Optional[int] = None,
                                top_steals: Optional[int] = None, top_blocks: Optional[int] = None):
-    conn = get_db_conn()
-    c = conn.cursor()
-    # Store as string in site_settings (value column is TEXT); 0 or None means not set
-    actual = {
-        'scorer':   top_scorer   if top_scorer   and top_scorer   > 0 else None,
-        'assists':  top_assists  if top_assists  and top_assists  > 0 else None,
-        'rebounds': top_rebounds if top_rebounds and top_rebounds > 0 else None,
-        'threes':   top_threes   if top_threes   and top_threes   > 0 else None,
-        'steals':   top_steals   if top_steals   and top_steals   > 0 else None,
-        'blocks':   top_blocks   if top_blocks   and top_blocks   > 0 else None,
-    }
-    for cat, val in actual.items():
-        c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
-                  (f'leaders_{cat}_{season}', str(val) if val is not None else ''))
-
-    c.execute('''SELECT id, top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks
-                 FROM leaders_predictions WHERE season = %s''', (season,))
-    lps = c.fetchall()
-    for lp in lps:
-        lp_id = lp[0]
-        preds = {
-            'scorer':   lp[1], 'assists':   lp[2],
-            'rebounds': lp[3], 'threes':    lp[4],
-            'steals':   lp[5], 'blocks':    lp[6],
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        # Store as string in site_settings (value column is TEXT); 0 or None means not set
+        actual = {
+            'scorer':   top_scorer   if top_scorer   and top_scorer   > 0 else None,
+            'assists':  top_assists  if top_assists  and top_assists  > 0 else None,
+            'rebounds': top_rebounds if top_rebounds and top_rebounds > 0 else None,
+            'threes':   top_threes   if top_threes   and top_threes   > 0 else None,
+            'steals':   top_steals   if top_steals   and top_steals   > 0 else None,
+            'blocks':   top_blocks   if top_blocks   and top_blocks   > 0 else None,
         }
-        # actual values are already int | None from the dict above
-        pts, correct = calculate_leaders_points(preds, actual)
-        c.execute('''UPDATE leaders_predictions SET
-                     is_correct_scorer = %s, is_correct_assists = %s,
-                     is_correct_rebounds = %s, is_correct_threes = %s,
-                     is_correct_steals = %s, is_correct_blocks = %s,
-                     points_earned = %s WHERE id = %s''',
-                  (correct.get('scorer'), correct.get('assists'), correct.get('rebounds'),
-                   correct.get('threes'), correct.get('steals'), correct.get('blocks'), pts, lp_id))
+        for cat, val in actual.items():
+            c.execute("INSERT INTO site_settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+                      (f'leaders_{cat}_{season}', str(val) if val is not None else ''))
 
-    _recalculate_all_points(c)
-    conn.commit()
-    conn.close()
-    return {"message": "Leaders results set", "results": actual}
+        c.execute('''SELECT id, top_scorer, top_assists, top_rebounds, top_threes, top_steals, top_blocks
+                     FROM leaders_predictions WHERE season = %s''', (season,))
+        lps = c.fetchall()
+        for lp in lps:
+            lp_id = lp[0]
+            preds = {
+                'scorer':   lp[1], 'assists':   lp[2],
+                'rebounds': lp[3], 'threes':    lp[4],
+                'steals':   lp[5], 'blocks':    lp[6],
+            }
+            # actual values are already int | None from the dict above
+            pts, correct = calculate_leaders_points(preds, actual)
+            c.execute('''UPDATE leaders_predictions SET
+                         is_correct_scorer = %s, is_correct_assists = %s,
+                         is_correct_rebounds = %s, is_correct_threes = %s,
+                         is_correct_steals = %s, is_correct_blocks = %s,
+                         points_earned = %s WHERE id = %s''',
+                      (correct.get('scorer'), correct.get('assists'), correct.get('rebounds'),
+                       correct.get('threes'), correct.get('steals'), correct.get('blocks'), pts, lp_id))
+
+        _recalculate_all_points(c)
+        conn.commit()
+        return {"message": "Leaders results set", "results": actual}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        print(f"set_leaders_results error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to set leaders results: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 
 @app.get("/api/fmvp/probability")
