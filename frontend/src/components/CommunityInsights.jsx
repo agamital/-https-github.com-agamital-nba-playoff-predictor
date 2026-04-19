@@ -163,17 +163,16 @@ const CommunityInsights = ({
           ) : userPicks && userPicks.length > 0 ? (
             <div className="divide-y divide-slate-800/60">
               {userPicks.map((p, i) => {
-                /* Winner correctness badge */
                 const isComplete = isCompleted || picks?.series_status === 'completed';
                 const hasResult  = p.is_correct !== null && p.is_correct !== undefined;
 
-                const hasLeaderPicks = p.leading_scorer || p.leading_rebounder || p.leading_assister;
+                // Only show leader row if this is a series pick (not play-in)
+                const showLeaders = !!seriesId;
 
                 return (
                   <div key={i} className="px-3 py-2">
                     {/* ── Top row: avatar / name / winner pick / result ── */}
                     <div className="flex items-center gap-2">
-                      {/* Avatar */}
                       {p.avatar_url ? (
                         <img
                           src={p.avatar_url}
@@ -225,30 +224,45 @@ const CommunityInsights = ({
                       )}
                     </div>
 
-                    {/* ── Leader picks sub-row ── */}
-                    {hasLeaderPicks && (
-                      <div className="mt-1.5 ml-7 flex flex-wrap gap-x-3 gap-y-0.5">
-                        {p.leading_scorer && (
-                          <span className="flex items-center gap-1 text-[9px] text-slate-500">
-                            <span className="text-slate-600">🏀</span>
-                            <span className="font-bold text-slate-400">{p.leading_scorer}</span>
-                            <LeaderCorrect picked={p.leading_scorer} actual={actuals?.scorer ?? null} />
-                          </span>
-                        )}
-                        {p.leading_rebounder && (
-                          <span className="flex items-center gap-1 text-[9px] text-slate-500">
-                            <span className="text-slate-600">💪</span>
-                            <span className="font-bold text-slate-400">{p.leading_rebounder}</span>
-                            <LeaderCorrect picked={p.leading_rebounder} actual={actuals?.rebounder ?? null} />
-                          </span>
-                        )}
-                        {p.leading_assister && (
-                          <span className="flex items-center gap-1 text-[9px] text-slate-500">
-                            <span className="text-slate-600">🎯</span>
-                            <span className="font-bold text-slate-400">{p.leading_assister}</span>
-                            <LeaderCorrect picked={p.leading_assister} actual={actuals?.assister ?? null} />
-                          </span>
-                        )}
+                    {/* ── Leader picks row — always shown for series picks ── */}
+                    {showLeaders && (
+                      <div className="mt-1 ml-7 flex gap-3">
+                        {/* Scorer */}
+                        <span className="flex items-center gap-1 text-[9px] min-w-0">
+                          <span className="text-slate-600 shrink-0">🏀</span>
+                          {p.leading_scorer ? (
+                            <>
+                              <span className="font-bold text-slate-400 truncate">{p.leading_scorer}</span>
+                              <LeaderCorrect picked={p.leading_scorer} actual={actuals?.scorer ?? null} />
+                            </>
+                          ) : (
+                            <span className="text-slate-700 italic">—</span>
+                          )}
+                        </span>
+                        {/* Rebounder */}
+                        <span className="flex items-center gap-1 text-[9px] min-w-0">
+                          <span className="text-slate-600 shrink-0">💪</span>
+                          {p.leading_rebounder ? (
+                            <>
+                              <span className="font-bold text-slate-400 truncate">{p.leading_rebounder}</span>
+                              <LeaderCorrect picked={p.leading_rebounder} actual={actuals?.rebounder ?? null} />
+                            </>
+                          ) : (
+                            <span className="text-slate-700 italic">—</span>
+                          )}
+                        </span>
+                        {/* Assister */}
+                        <span className="flex items-center gap-1 text-[9px] min-w-0">
+                          <span className="text-slate-600 shrink-0">🎯</span>
+                          {p.leading_assister ? (
+                            <>
+                              <span className="font-bold text-slate-400 truncate">{p.leading_assister}</span>
+                              <LeaderCorrect picked={p.leading_assister} actual={actuals?.assister ?? null} />
+                            </>
+                          ) : (
+                            <span className="text-slate-700 italic">—</span>
+                          )}
+                        </span>
                       </div>
                     )}
                   </div>
