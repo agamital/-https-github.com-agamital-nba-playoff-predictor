@@ -77,6 +77,29 @@ const FuturesPick = ({ label, color, team, mvp, isCorrect }) => {
   );
 };
 
+// ── Small correctness pill for a single leader pick ──────────────────────────
+const LeaderPickRow = ({ emoji, label, picked, actual, isFinished }) => {
+  if (!picked) return null;
+  const correct  = isFinished && actual != null
+    ? picked.trim().toLowerCase() === actual.trim().toLowerCase()
+    : null;
+  const border =
+    correct === true  ? 'border-green-500/30 bg-green-500/5'
+    : correct === false ? 'border-red-500/30 bg-red-500/5'
+    : 'border-slate-700/50';
+  return (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border ${border}`}>
+      <span className="text-[10px]">{emoji}</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-[8px] font-black uppercase tracking-wider text-slate-600 leading-none">{label}</p>
+        <p className="text-[10px] font-bold text-slate-300 truncate leading-tight mt-0.5">{picked}</p>
+      </div>
+      {correct === true  && <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />}
+      {correct === false && <XCircle    className="w-3 h-3 text-red-400   shrink-0" />}
+    </div>
+  );
+};
+
 // ── Playoff prediction card ───────────────────────────────────────────────────
 const PlayoffPredCard = ({ pred }) => {
   const finished  = pred.series_finished;
@@ -85,6 +108,8 @@ const PlayoffPredCard = ({ pred }) => {
     correct === 1 ? 'border-green-500/30 bg-green-500/5' :
     correct === 0 ? 'border-red-500/30   bg-red-500/5'   :
     'border-slate-800';
+
+  const hasLeaders = pred.leading_scorer || pred.leading_rebounder || pred.leading_assister;
 
   return (
     <Card className={`p-4 ${cardBorder}`}>
@@ -110,7 +135,7 @@ const PlayoffPredCard = ({ pred }) => {
         <ResultBadge isCorrect={correct} points={pred.points_earned} />
       </div>
 
-      {/* Pick */}
+      {/* Winner pick */}
       <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-slate-800/60">
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/20 border border-orange-500/30">
           <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5" onError={e=>e.target.style.display='none'} />
@@ -128,6 +153,53 @@ const PlayoffPredCard = ({ pred }) => {
           </span>
         )}
       </div>
+
+      {/* Leader picks section */}
+      {hasLeaders && (
+        <div className="mt-3 pt-2 border-t border-slate-800/50">
+          <p className="text-[9px] font-black uppercase tracking-wider text-slate-600 mb-2">Series Leaders Picks</p>
+          <div className="grid grid-cols-3 gap-1.5">
+            <LeaderPickRow
+              emoji="🏀" label="Top Scorer"
+              picked={pred.leading_scorer}
+              actual={pred.actual_leading_scorer}
+              isFinished={finished}
+            />
+            <LeaderPickRow
+              emoji="💪" label="Top Rebounder"
+              picked={pred.leading_rebounder}
+              actual={pred.actual_leading_rebounder}
+              isFinished={finished}
+            />
+            <LeaderPickRow
+              emoji="🎯" label="Top Assister"
+              picked={pred.leading_assister}
+              actual={pred.actual_leading_assister}
+              isFinished={finished}
+            />
+          </div>
+          {/* Show actual leaders when series is done */}
+          {finished && (pred.actual_leading_scorer || pred.actual_leading_rebounder || pred.actual_leading_assister) && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {pred.actual_leading_scorer && (
+                <span className="text-[9px] text-slate-500 font-bold">
+                  Actual scorer: <span className="text-slate-300">{pred.actual_leading_scorer}</span>
+                </span>
+              )}
+              {pred.actual_leading_rebounder && (
+                <span className="text-[9px] text-slate-500 font-bold">
+                  · Reb: <span className="text-slate-300">{pred.actual_leading_rebounder}</span>
+                </span>
+              )}
+              {pred.actual_leading_assister && (
+                <span className="text-[9px] text-slate-500 font-bold">
+                  · Ast: <span className="text-slate-300">{pred.actual_leading_assister}</span>
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </Card>
   );
 };

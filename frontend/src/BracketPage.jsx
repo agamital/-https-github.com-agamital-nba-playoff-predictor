@@ -1373,6 +1373,11 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
         initialStats={communityStats ?? null}
         status={series.status}
         startZ={getSeriesGame1Z(series)}
+        seriesActuals={series.status === 'completed' ? {
+          scorer:    series.leading_scorer    ?? null,
+          rebounder: series.leading_rebounder ?? null,
+          assister:  series.leading_assister  ?? null,
+        } : null}
       />
     </div>
   );

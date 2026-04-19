@@ -5721,7 +5721,8 @@ async def series_picks(series_id: int):
     c.execute("""SELECT s.home_team_id, s.away_team_id,
                         ht.abbreviation, ht.logo_url,
                         at.abbreviation, at.logo_url,
-                        s.status, s.winner_team_id
+                        s.status, s.winner_team_id,
+                        s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister
                  FROM series s
                  JOIN teams ht ON s.home_team_id = ht.id
                  JOIN teams at ON s.away_team_id = at.id
@@ -5731,17 +5732,22 @@ async def series_picks(series_id: int):
         conn.close()
         raise HTTPException(status_code=404, detail="Series not found")
     home_id, away_id = row[0], row[1]
-    series_status = row[6]
+    series_status  = row[6]
     winner_team_id = row[7]
+    actual_scorer    = row[8]
+    actual_rebounder = row[9]
+    actual_assister  = row[10]
 
     # Deduplicate: each user's most recent prediction for this series
     c.execute("""SELECT u.username, u.avatar_url, p.predicted_winner_id, p.predicted_games,
                         COALESCE(t.abbreviation, '?'), COALESCE(t.logo_url, ''),
-                        p.is_correct, p.points_earned
+                        p.is_correct, p.points_earned,
+                        p.leading_scorer, p.leading_rebounder, p.leading_assister
                  FROM (
                      SELECT DISTINCT ON (user_id)
                             id, series_id, user_id, predicted_winner_id, predicted_games,
-                            is_correct, points_earned
+                            is_correct, points_earned,
+                            leading_scorer, leading_rebounder, leading_assister
                      FROM predictions
                      WHERE series_id = %s
                      ORDER BY user_id, id DESC
@@ -5758,6 +5764,9 @@ async def series_picks(series_id: int):
             'team_id': r[2], 'predicted_games': r[3],
             'team_abbreviation': r[4], 'team_logo_url': r[5],
             'is_correct': r[6], 'points_earned': r[7] or 0,
+            'leading_scorer':    r[8],
+            'leading_rebounder': r[9],
+            'leading_assister':  r[10],
         })
         if r[2] == home_id:   home_votes += 1
         elif r[2] == away_id: away_votes += 1
@@ -5768,6 +5777,9 @@ async def series_picks(series_id: int):
         'series_id':     series_id,
         'series_status': series_status,
         'winner_team_id': winner_team_id,
+        'actual_leading_scorer':    actual_scorer,
+        'actual_leading_rebounder': actual_rebounder,
+        'actual_leading_assister':  actual_assister,
         'picks':         picks,
         'home_votes':    home_votes,
         'away_votes':    away_votes,
@@ -6061,7 +6073,8 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
                    at.id, at.name, at.abbreviation, at.logo_url, s.away_seed,
                    wt.name, wt.abbreviation, wt.logo_url,
                    s.status, s.game1_start_time,
-                   s.home_wins, s.away_wins
+                   s.home_wins, s.away_wins,
+                   s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister
             FROM predictions p
             JOIN series s ON p.series_id = s.id
             JOIN teams ht ON s.home_team_id = ht.id
@@ -6076,6 +6089,9 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
             g1_start  = row[27]
             home_wins = row[28] or 0
             away_wins = row[29] or 0
+            actual_ls = row[30]
+            actual_lr = row[31]
+            actual_la = row[32]
 
             # Picks are locked once game1_start_time has passed or series is not active
             picks_locked = (s_status != 'active')
@@ -6097,6 +6113,9 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
                 'leading_scorer': row[8],
                 'leading_rebounder': row[9],
                 'leading_assister': row[10],
+                'actual_leading_scorer':    actual_ls,
+                'actual_leading_rebounder': actual_lr,
+                'actual_leading_assister':  actual_la,
                 'round': row[11],
                 'conference': row[12],
                 'home_team': {'id': row[13], 'name': row[14], 'abbreviation': row[15], 'logo_url': row[16], 'seed': row[17]},
