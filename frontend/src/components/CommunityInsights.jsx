@@ -183,7 +183,7 @@ const CommunityInsights = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/40">
-                  {userPicks.map((p, i) => {
+                  {userPicks.filter(Boolean).map((p, i) => {
                     const hasResult = p.is_correct !== null && p.is_correct !== undefined;
                     const scorerOk    = leaderCorrect(p.leading_scorer,    actuals?.scorer);
                     const rebounderOk = leaderCorrect(p.leading_rebounder, actuals?.rebounder);
