@@ -4,7 +4,7 @@ import * as api from '../services/api';
 import { picksRevealed } from '../scoringConstants';
 
 /**
- * Community vote bar + expandable picks list for a series or play-in game.
+ * Community vote bar + expandable picks table for a series or play-in game.
  *
  * Props:
  *   seriesId      – for playoff series (mutually exclusive with gameId)
@@ -12,23 +12,20 @@ import { picksRevealed } from '../scoringConstants';
  *   homeTeam      – { abbreviation, logo_url }
  *   awayTeam      – { abbreviation, logo_url }
  *   initialStats  – pre-fetched { total_votes, home_pct, away_pct } or null
- *   status        – series/game status: 'active' | 'locked' | 'completed'
- *   startZ        – ISO UTC string of game/series Game 1 tipoff time
- *   seriesActuals – { scorer, rebounder, assister } — actual leaders once complete
- *                   (already available on the series object from /api/series)
+ *   status        – 'active' | 'locked' | 'completed'
+ *   startZ        – ISO UTC string of Game 1 tipoff
+ *   seriesActuals – { scorer, rebounder, assister } actual leaders (completed series)
  */
 
-/** Tiny badge shown on each leader pick after a series ends */
-const LeaderCorrect = ({ picked, actual }) => {
-  if (!picked) return null;
-  const done   = actual != null;
-  const correct = done && picked.trim().toLowerCase() === actual.trim().toLowerCase();
-  if (!done) return (
-    <span className="text-[8px] text-slate-600 font-bold italic">pending</span>
-  );
-  return correct
-    ? <span className="text-[8px] font-black text-green-400">✓</span>
-    : <span className="text-[8px] font-black text-red-500">✗</span>;
+const lastName = (name) => {
+  if (!name) return '—';
+  const parts = name.trim().split(' ');
+  return parts[parts.length - 1];
+};
+
+const leaderCorrect = (picked, actual) => {
+  if (!picked || !actual) return null;
+  return picked.trim().toLowerCase() === actual.trim().toLowerCase();
 };
 
 const CommunityInsights = ({
@@ -37,20 +34,18 @@ const CommunityInsights = ({
   initialStats = null,
   status,
   startZ,
-  seriesActuals,   // { scorer, rebounder, assister }
+  seriesActuals,
 }) => {
   const [open, setOpen]       = useState(false);
   const [picks, setPicks]     = useState(null);
   const [loading, setLoading] = useState(false);
   const [stats, setStats]     = useState(initialStats);
 
-  // Determine whether individual pick names are revealed.
   const startMs = startZ ? new Date(startZ).getTime() : null;
-  const _timerPast  = startMs != null && Date.now() >= startMs;
+  const _timerPast   = startMs != null && Date.now() >= startMs;
   const _initVisible = _timerPast || (status != null ? status !== 'active' : picksRevealed());
   const [picksVisible, setPicksVisible] = useState(_initVisible);
 
-  // One-shot timer to flip visibility at tipoff
   useEffect(() => {
     if (picksVisible) return;
     if (!startMs) return;
@@ -72,7 +67,7 @@ const CommunityInsights = ({
         const data = seriesId
           ? await api.getSeriesPicks(seriesId)
           : await api.getPlayInPicks(gameId);
-        setPicks(data);           // store the whole response
+        setPicks(data);
         setStats({
           total_votes: data.total_votes,
           home_pct: seriesId ? data.home_pct : data.team1_pct,
@@ -90,20 +85,20 @@ const CommunityInsights = ({
   const homePct    = stats?.home_pct   ?? 50;
   const awayPct    = stats?.away_pct   ?? 50;
 
-  // Actuals: prefer prop (already on series obj) then fall back to fetched data
+  // Actual leaders: prefer prop then fall back to fetched data
   const actuals = seriesActuals ?? (picks ? {
-    scorer:    picks.actual_leading_scorer,
-    rebounder: picks.actual_leading_rebounder,
-    assister:  picks.actual_leading_assister,
+    scorer:    picks.actual_leading_scorer    ?? null,
+    rebounder: picks.actual_leading_rebounder ?? null,
+    assister:  picks.actual_leading_assister  ?? null,
   } : null);
 
-  const isCompleted = status === 'completed';
+  const isCompleted = status === 'completed' || picks?.series_status === 'completed';
   const userPicks   = picks?.picks ?? null;
-  const hasLeaders  = userPicks?.some(p => p.leading_scorer || p.leading_rebounder || p.leading_assister);
+  const isSeries    = !!seriesId;
 
   return (
     <div className="pt-2 border-t border-slate-800/60 mt-1">
-      {/* Toggle row */}
+      {/* Toggle button */}
       <button
         onClick={handleToggle}
         disabled={!picksVisible}
@@ -134,7 +129,7 @@ const CommunityInsights = ({
         </span>
       </button>
 
-      {/* Pct labels */}
+      {/* Percentage labels */}
       {stats && totalVotes > 0 && (
         <div className="flex items-center justify-between px-5">
           <span className="text-[9px] font-black text-blue-400">
@@ -146,128 +141,163 @@ const CommunityInsights = ({
         </div>
       )}
 
-      {/* Lock hint */}
       {!picksVisible && (
         <p className="text-[9px] text-slate-700 font-bold text-center mt-0.5">
           Names revealed when this game tips off
         </p>
       )}
 
-      {/* Expanded picks list */}
+      {/* Expanded picks table */}
       {open && picksVisible && (
-        <div className="mt-2 max-h-72 overflow-y-auto rounded-xl bg-slate-900/60 border border-slate-800/80">
+        <div className="mt-2 rounded-xl bg-slate-900/60 border border-slate-800/80 overflow-hidden">
           {loading ? (
             <div className="flex items-center justify-center py-4">
               <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : userPicks && userPicks.length > 0 ? (
-            <div className="divide-y divide-slate-800/60">
-              {userPicks.map((p, i) => {
-                const isComplete = isCompleted || picks?.series_status === 'completed';
-                const hasResult  = p.is_correct !== null && p.is_correct !== undefined;
-
-                // Only show leader row if this is a series pick (not play-in)
-                const showLeaders = !!seriesId;
-
-                return (
-                  <div key={i} className="px-3 py-2">
-                    {/* ── Top row: avatar / name / winner pick / result ── */}
-                    <div className="flex items-center gap-2">
-                      {p.avatar_url ? (
-                        <img
-                          src={p.avatar_url}
-                          alt=""
-                          className="w-5 h-5 rounded-full object-cover shrink-0"
-                          onError={e => { e.target.style.display = 'none'; }}
-                        />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full bg-slate-700 flex items-center justify-center shrink-0">
-                          <span className="text-[7px] font-black text-slate-400">
-                            {(p.username || '?')[0].toUpperCase()}
-                          </span>
-                        </div>
-                      )}
-
-                      <span className="text-xs font-bold text-slate-300 flex-1 truncate">
-                        {p.username}
-                      </span>
-
-                      {/* Winner pick */}
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <img
-                          src={p.team_logo_url}
-                          alt=""
-                          className="w-4 h-4"
-                          onError={e => e.target.style.display = 'none'}
-                        />
-                        <span className="text-[10px] font-black text-orange-400">
-                          {p.team_abbreviation}
-                        </span>
-                        {p.predicted_games && (
-                          <span className="text-[10px] text-slate-500 font-bold">
-                            in {p.predicted_games}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Winner result badge */}
-                      {hasResult && isComplete && (
-                        p.is_correct === 1 ? (
-                          <span className="text-[8px] font-black text-green-400 bg-green-500/15 border border-green-500/30 px-1.5 py-0.5 rounded-full shrink-0 whitespace-nowrap">
-                            ✓{p.points_earned > 0 ? ` +${p.points_earned}` : ''}
-                          </span>
-                        ) : (
-                          <span className="text-[8px] font-black text-red-400 bg-red-500/15 border border-red-500/30 px-1.5 py-0.5 rounded-full shrink-0">
-                            ✗
-                          </span>
-                        )
-                      )}
-                    </div>
-
-                    {/* ── Leader picks row — always shown for series picks ── */}
-                    {showLeaders && (
-                      <div className="mt-1 ml-7 flex gap-3">
-                        {/* Scorer */}
-                        <span className="flex items-center gap-1 text-[9px] min-w-0">
-                          <span className="text-slate-600 shrink-0">🏀</span>
-                          {p.leading_scorer ? (
-                            <>
-                              <span className="font-bold text-slate-400 truncate">{p.leading_scorer}</span>
-                              <LeaderCorrect picked={p.leading_scorer} actual={actuals?.scorer ?? null} />
-                            </>
-                          ) : (
-                            <span className="text-slate-700 italic">—</span>
-                          )}
-                        </span>
-                        {/* Rebounder */}
-                        <span className="flex items-center gap-1 text-[9px] min-w-0">
-                          <span className="text-slate-600 shrink-0">💪</span>
-                          {p.leading_rebounder ? (
-                            <>
-                              <span className="font-bold text-slate-400 truncate">{p.leading_rebounder}</span>
-                              <LeaderCorrect picked={p.leading_rebounder} actual={actuals?.rebounder ?? null} />
-                            </>
-                          ) : (
-                            <span className="text-slate-700 italic">—</span>
-                          )}
-                        </span>
-                        {/* Assister */}
-                        <span className="flex items-center gap-1 text-[9px] min-w-0">
-                          <span className="text-slate-600 shrink-0">🎯</span>
-                          {p.leading_assister ? (
-                            <>
-                              <span className="font-bold text-slate-400 truncate">{p.leading_assister}</span>
-                              <LeaderCorrect picked={p.leading_assister} actual={actuals?.assister ?? null} />
-                            </>
-                          ) : (
-                            <span className="text-slate-700 italic">—</span>
-                          )}
-                        </span>
-                      </div>
+            <div className="overflow-x-auto max-h-72">
+              <table className="w-full" style={{ minWidth: isSeries ? 320 : 220 }}>
+                {/* Column headers */}
+                <thead className="sticky top-0 bg-slate-900/95 border-b border-slate-800">
+                  <tr>
+                    <th className="text-left px-3 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                      User
+                    </th>
+                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                      Pick
+                    </th>
+                    {isSeries && (
+                      <>
+                        <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                          🏀 Scorer
+                        </th>
+                        <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                          💪 Reb
+                        </th>
+                        <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-wider">
+                          🎯 Ast
+                        </th>
+                      </>
                     )}
-                  </div>
-                );
-              })}
+                    <th className="px-2 py-1.5 w-8" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/40">
+                  {userPicks.map((p, i) => {
+                    const hasResult = p.is_correct !== null && p.is_correct !== undefined;
+                    const scorerOk    = leaderCorrect(p.leading_scorer,    actuals?.scorer);
+                    const rebounderOk = leaderCorrect(p.leading_rebounder, actuals?.rebounder);
+                    const assisterOk  = leaderCorrect(p.leading_assister,  actuals?.assister);
+
+                    return (
+                      <tr key={i} className="hover:bg-slate-800/20 transition-colors">
+                        {/* User */}
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1.5">
+                            {p.avatar_url ? (
+                              <img
+                                src={p.avatar_url}
+                                alt=""
+                                className="w-4 h-4 rounded-full object-cover shrink-0"
+                                onError={e => { e.target.style.display = 'none'; }}
+                              />
+                            ) : (
+                              <div className="w-4 h-4 rounded-full bg-slate-700 flex items-center justify-center shrink-0">
+                                <span className="text-[6px] font-black text-slate-400">
+                                  {(p.username || '?')[0].toUpperCase()}
+                                </span>
+                              </div>
+                            )}
+                            <span className="text-[10px] font-bold text-slate-300 truncate max-w-[70px]">
+                              {p.username}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Winner pick + games */}
+                        <td className="px-1 py-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <img
+                              src={p.team_logo_url}
+                              alt=""
+                              className="w-4 h-4 shrink-0"
+                              onError={e => e.target.style.display = 'none'}
+                            />
+                            <span className="text-[10px] font-black text-orange-400 whitespace-nowrap">
+                              {p.team_abbreviation}
+                              {p.predicted_games ? ` G${p.predicted_games}` : ''}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Series leader picks */}
+                        {isSeries && (
+                          <>
+                            {/* Scorer */}
+                            <td className="px-1 py-2 text-center">
+                              {p.leading_scorer ? (
+                                <span className={`text-[10px] font-bold whitespace-nowrap ${
+                                  scorerOk === true  ? 'text-green-400' :
+                                  scorerOk === false ? 'text-red-400'   : 'text-slate-300'
+                                }`}>
+                                  {lastName(p.leading_scorer)}
+                                  {scorerOk === true  && ' ✓'}
+                                  {scorerOk === false && ' ✗'}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-700">—</span>
+                              )}
+                            </td>
+                            {/* Rebounder */}
+                            <td className="px-1 py-2 text-center">
+                              {p.leading_rebounder ? (
+                                <span className={`text-[10px] font-bold whitespace-nowrap ${
+                                  rebounderOk === true  ? 'text-green-400' :
+                                  rebounderOk === false ? 'text-red-400'   : 'text-slate-300'
+                                }`}>
+                                  {lastName(p.leading_rebounder)}
+                                  {rebounderOk === true  && ' ✓'}
+                                  {rebounderOk === false && ' ✗'}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-700">—</span>
+                              )}
+                            </td>
+                            {/* Assister */}
+                            <td className="px-1 py-2 text-center">
+                              {p.leading_assister ? (
+                                <span className={`text-[10px] font-bold whitespace-nowrap ${
+                                  assisterOk === true  ? 'text-green-400' :
+                                  assisterOk === false ? 'text-red-400'   : 'text-slate-300'
+                                }`}>
+                                  {lastName(p.leading_assister)}
+                                  {assisterOk === true  && ' ✓'}
+                                  {assisterOk === false && ' ✗'}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-700">—</span>
+                              )}
+                            </td>
+                          </>
+                        )}
+
+                        {/* Result badge */}
+                        <td className="px-2 py-2 text-right">
+                          {hasResult && isCompleted && (
+                            p.is_correct === 1 ? (
+                              <span className="text-[8px] font-black text-green-400 whitespace-nowrap">
+                                ✓{p.points_earned > 0 ? ` +${p.points_earned}` : ''}
+                              </span>
+                            ) : (
+                              <span className="text-[8px] font-black text-red-400">✗</span>
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : (
             <p className="text-xs text-slate-600 text-center py-3">

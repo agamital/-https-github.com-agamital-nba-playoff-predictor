@@ -5422,7 +5422,8 @@ async def leaderboard(season: str = "2026"):
             SELECT
                 u.id, u.username, u.points,
                 -- Series predictions
-                COUNT(p.id)                                              AS total_preds,
+                -- Only count predictions that have been scored (series completed)
+                COUNT(CASE WHEN p.is_correct IS NOT NULL THEN 1 END)    AS total_preds,
                 SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END)       AS correct_preds,
                 -- Series bullseyes: winner correct AND games exact
                 COALESCE((
@@ -5449,9 +5450,9 @@ async def leaderboard(season: str = "2026"):
                 COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions pp WHERE pp.user_id = u.id), 0)       AS playin_pts,
                 COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u.id), 0)      AS futures_pts,
                 COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u.id), 0)     AS leaders_pts,
-                -- Play-in prediction counts
-                COALESCE((SELECT COUNT(*) FROM playin_predictions pp2 WHERE pp2.user_id = u.id), 0)                  AS playin_total,
-                COALESCE((SELECT COUNT(*) FROM playin_predictions pp2 WHERE pp2.user_id = u.id AND pp2.is_correct = 1), 0) AS playin_correct
+                -- Play-in: only count scored predictions (is_correct IS NOT NULL)
+                COALESCE((SELECT COUNT(*) FROM playin_predictions pp2 WHERE pp2.user_id = u.id AND pp2.is_correct IS NOT NULL), 0) AS playin_total,
+                COALESCE((SELECT COUNT(*) FROM playin_predictions pp2 WHERE pp2.user_id = u.id AND pp2.is_correct = 1), 0)        AS playin_correct
             FROM users u LEFT JOIN predictions p ON u.id = p.user_id
             GROUP BY u.id
             ORDER BY u.points DESC, bullseyes_count DESC
