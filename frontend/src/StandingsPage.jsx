@@ -73,6 +73,7 @@ const GameWithPerformersCard = ({ game, onClick }) => {
   return (
     <div
       className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden cursor-pointer hover:border-orange-500/40 hover:shadow-orange-500/5 hover:shadow-lg transition-all group"
+      style={{ touchAction: 'manipulation' }}
       onClick={() => onClick(game)}
     >
       {/* ── Score header ── */}
@@ -155,6 +156,7 @@ const GameCard = ({ game, onClick }) => {
   return (
     <div
       className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 cursor-pointer hover:border-orange-500/40 hover:bg-slate-900/80 transition-all"
+      style={{ touchAction: 'manipulation' }}
       onClick={() => onClick && onClick(game)}
     >
       <div className="flex items-center justify-between gap-2 mb-2.5">
@@ -472,7 +474,7 @@ const StandingsTable = ({ teams, conference }) => {
           {conference} Conference
         </h2>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto" style={{ touchAction: 'pan-y pinch-zoom' }}>
         <table className="w-full">
           <thead className="bg-slate-800/50">
             <tr>
