@@ -949,10 +949,7 @@ const ResultBadge = ({ isCorrect, pts }) => {
 };
 
 const SeriesVoteBar = ({ s, currentUser }) => {
-  const [expanded, setExpanded]       = useState(false);
-  const [picks, setPicks]             = useState(null);
-  const [loadingPicks, setLoadingPicks] = useState(false);
-  const [seriesStatus, setSeriesStatus] = useState(s.status);
+  const [expanded, setExpanded] = useState(false);
 
   const total   = s.total_votes;
   const homePct = s.home_pct;
@@ -964,32 +961,30 @@ const SeriesVoteBar = ({ s, currentUser }) => {
   const [picksVisible, setPicksVisible] = useState(_initVisible);
 
   useEffect(() => {
-    if (picksVisible) return; // already unlocked
+    if (picksVisible) return;
     if (!g1Ms) return;
     const ms = g1Ms - Date.now();
     if (ms <= 0) { setPicksVisible(true); return; }
     const t = setTimeout(() => setPicksVisible(true), ms);
     return () => clearTimeout(t);
   }, [g1Ms, picksVisible]);
-  const g1Label   = _fmtIDT(s.game1_start_time);
+  const g1Label = _fmtIDT(s.game1_start_time);
 
-  const handleToggle = async () => {
+  // React Query — fetch only when expanded and unlocked; 2-min cache so
+  // collapsing and re-expanding is instant without a new network request.
+  const { data: picksData, isLoading: loadingPicks } = useQuery({
+    queryKey: ['seriesPicks', s.series_id],
+    queryFn:  () => api.getSeriesPicks(s.series_id),
+    enabled:  picksVisible && expanded,
+    staleTime: 2 * 60 * 1000,
+    retry: 1,
+  });
+  const picks       = picksData?.picks ?? null;
+  const seriesStatus = picksData?.series_status ?? s.status;
+
+  const handleToggle = () => {
     if (!picksVisible) return;
-    const next = !expanded;
-    setExpanded(next);
-    if (next && !picks) {
-      setLoadingPicks(true);
-      try {
-        const data = await api.getSeriesPicks(s.series_id);
-        setPicks(data.picks);
-        if (data.series_status) setSeriesStatus(data.series_status);
-      } catch (e) {
-        console.error('SeriesVoteBar picks fetch:', e);
-        setPicks([]);
-      } finally {
-        setLoadingPicks(false);
-      }
-    }
+    setExpanded(prev => !prev);
   };
 
   return (

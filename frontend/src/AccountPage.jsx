@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { User, Mail, Shield, Calendar, Trophy, Key, AlertTriangle, Check, X, Loader, Camera, ImageIcon, LogOut, Download } from 'lucide-react';
 import * as api from './services/api';
 import { Avatar } from './UserProfilePage';
@@ -210,12 +211,19 @@ const StatusMsg = ({ msg }) => {
 
 
 const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, onInstall }) => {
-  const [account, setAccount] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
 
-  // Avatar
+  // Account data — 5-min cache so revisiting the page is instant
+  const { data: account, isLoading: loading } = useQuery({
+    queryKey: ['account', currentUser.user_id],
+    queryFn:  () => api.getAccount(currentUser.user_id),
+    enabled:  !!currentUser?.user_id,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Avatar — update cache on save instead of local state
   const handleAvatarSaved = (newUrl) => {
-    setAccount(a => ({ ...a, avatar_url: newUrl }));
+    qc.setQueryData(['account', currentUser.user_id], a => a ? { ...a, avatar_url: newUrl } : a);
     onUserUpdate({ ...currentUser, avatar_url: newUrl });
   };
 
@@ -223,6 +231,11 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
   const [newUsername, setNewUsername] = useState('');
   const [usernameLoading, setUsernameLoading] = useState(false);
   const [usernameMsg, setUsernameMsg] = useState(null);
+
+  // Populate username field once account loads
+  useEffect(() => {
+    if (account?.username && !newUsername) setNewUsername(account.username);
+  }, [account?.username]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Change password
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' });
@@ -233,13 +246,6 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
   const [deleteStep, setDeleteStep] = useState(0); // 0=hidden, 1=confirm, 2=deleting
   const [deleteConfirm, setDeleteConfirm] = useState('');
 
-  useEffect(() => {
-    api.getAccount(currentUser.user_id)
-      .then(data => { setAccount(data); setNewUsername(data.username); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [currentUser.user_id]);
-
   const handleChangeUsername = async (e) => {
     e.preventDefault();
     if (newUsername === account.username) { setUsernameMsg({ type: 'error', text: 'That is already your username.' }); return; }
@@ -247,8 +253,9 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
     setUsernameMsg(null);
     try {
       const res = await api.changeUsername(currentUser.user_id, newUsername);
-      setAccount(a => ({ ...a, username: res.username }));
+      qc.setQueryData(['account', currentUser.user_id], a => a ? { ...a, username: res.username } : a);
       onUserUpdate({ ...currentUser, username: res.username });
+      setNewUsername(res.username);
       setUsernameMsg({ type: 'ok', text: 'Username updated!' });
     } catch (err) {
       setUsernameMsg({ type: 'error', text: err.response?.data?.detail || 'Could not update username.' });

@@ -69,11 +69,24 @@ const GameWithPerformersCard = ({ game, onClick }) => {
   const hasScore = home?.score != null && away?.score != null;
   const awayAbbr = away?.abbr?.toUpperCase() || '';
   const homeAbbr = home?.abbr?.toUpperCase() || '';
+  const qc = useQueryClient();
+
+  // Start fetching the boxscore as soon as finger touches the card (~150 ms
+  // before the click fires) so the modal opens with data already in cache.
+  const prefetch = () => {
+    if (!game.id) return;
+    qc.prefetchQuery({
+      queryKey: ['gameBoxscore', game.id],
+      queryFn:  () => api.getGameBoxscore(game.id),
+      staleTime: 30 * 60 * 1000,
+    });
+  };
 
   return (
     <div
       className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden cursor-pointer hover:border-orange-500/40 hover:shadow-orange-500/5 hover:shadow-lg transition-all group"
       style={{ touchAction: 'manipulation' }}
+      onPointerDown={prefetch}
       onClick={() => onClick(game)}
     >
       {/* ── Score header ── */}
@@ -153,10 +166,20 @@ const GameCard = ({ game, onClick }) => {
   const hasScore = home?.score != null && away?.score != null;
   const awayAbbr = away?.abbr?.toUpperCase() || '';
   const homeAbbr = home?.abbr?.toUpperCase() || '';
+  const qc = useQueryClient();
+  const prefetch = () => {
+    if (!game.id) return;
+    qc.prefetchQuery({
+      queryKey: ['gameBoxscore', game.id],
+      queryFn:  () => api.getGameBoxscore(game.id),
+      staleTime: 30 * 60 * 1000,
+    });
+  };
   return (
     <div
       className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 cursor-pointer hover:border-orange-500/40 hover:bg-slate-900/80 transition-all"
       style={{ touchAction: 'manipulation' }}
+      onPointerDown={prefetch}
       onClick={() => onClick && onClick(game)}
     >
       <div className="flex items-center justify-between gap-2 mb-2.5">
@@ -321,16 +344,16 @@ const RecentGamesSection = () => {
   const { data: gwpData, isLoading: gwpLoading } = useQuery({
     queryKey: ['gamesWithPerformers', yesterday],
     queryFn:  () => api.getGamesWithPerformers(yesterday),
-    staleTime: 0,              // always refetch on mount — boxscores can arrive late
-    refetchOnMount: true,
+    staleTime: 60 * 1000,      // 1 min — yesterday's scores don't change often
+    refetchOnMount: 'always',  // still re-validate in background so late boxscores arrive
     refetchOnWindowFocus: true,
   });
 
   const { data: todayData, isLoading: todayLoading, refetch: refetchToday } = useQuery({
     queryKey: ['todayGames', today],
     queryFn:  () => api.getTodayGames(today),
-    staleTime: 0,
-    refetchOnMount: true,
+    staleTime: 30 * 1000,      // 30 s — serve cached data immediately, revalidate behind scenes
+    refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     refetchInterval: (data) => {
       // Poll every 45s when any game is live, otherwise every 3 min
