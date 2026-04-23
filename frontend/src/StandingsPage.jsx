@@ -474,17 +474,19 @@ const StandingsTable = ({ teams, conference }) => {
           {conference} Conference
         </h2>
       </div>
-      <div className="overflow-x-auto" style={{ touchAction: 'pan-y pinch-zoom' }}>
+      {/* overflow-x-auto only on sm+ — on mobile the table is sized to fit exactly so
+          the container never scrolls horizontally and never blocks vertical page swipes */}
+      <div className="sm:overflow-x-auto">
         <table className="w-full">
           <thead className="bg-slate-800/50">
             <tr>
-              <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase w-10">#</th>
-              <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase">Team</th>
-              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">W</th>
-              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">L</th>
-              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">PCT</th>
-              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase hidden sm:table-cell">GB</th>
-              <th className="px-3 py-3 text-center text-[11px] font-bold text-slate-400 uppercase">Status</th>
+              <th className="px-2 sm:px-4 py-2.5 sm:py-3 text-left text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase w-7 sm:w-10">#</th>
+              <th className="px-2 sm:px-4 py-2.5 sm:py-3 text-left text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase">Team</th>
+              <th className="px-1.5 sm:px-3 py-2.5 sm:py-3 text-center text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase">W</th>
+              <th className="px-1.5 sm:px-3 py-2.5 sm:py-3 text-center text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase">L</th>
+              <th className="px-1.5 sm:px-3 py-2.5 sm:py-3 text-center text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase hidden xs:table-cell sm:table-cell">PCT</th>
+              <th className="px-1.5 sm:px-3 py-2.5 sm:py-3 text-center text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase hidden sm:table-cell">GB</th>
+              <th className="px-1.5 sm:px-3 py-2.5 sm:py-3 text-center text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60">
@@ -497,31 +499,31 @@ const StandingsTable = ({ teams, conference }) => {
                   className={`transition-colors hover:bg-slate-800/40 ${
                     isPlayoff ? 'bg-green-500/5' : isPlayIn ? 'bg-yellow-500/5' : ''
                   }`}>
-                  <td className="px-4 py-3">
-                    <span className={`text-sm font-black ${
+                  <td className="px-2 sm:px-4 py-2 sm:py-3">
+                    <span className={`text-xs sm:text-sm font-black ${
                       isPlayoff ? 'text-green-400' : isPlayIn ? 'text-yellow-400' : 'text-slate-500'
                     }`}>{rank}</span>
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
+                  <td className="px-2 sm:px-4 py-2 sm:py-3">
+                    <div className="flex items-center gap-1.5 sm:gap-3">
                       <img
                         src={`https://cdn.nba.com/logos/nba/${team.team_id}/primary/L/logo.svg`}
                         alt=""
-                        className="w-9 h-9 shrink-0"
+                        className="w-6 h-6 sm:w-9 sm:h-9 shrink-0"
                         onError={e => e.target.style.display = 'none'}
                       />
-                      <span className="font-bold text-white text-sm">{team.team_name}</span>
+                      <span className="font-bold text-white text-[11px] sm:text-sm truncate max-w-[72px] sm:max-w-none">{team.team_name}</span>
                     </div>
                   </td>
-                  <td className="px-3 py-3 text-center font-black text-white text-sm">{team.wins}</td>
-                  <td className="px-3 py-3 text-center font-bold text-slate-400 text-sm">{team.losses}</td>
-                  <td className="px-3 py-3 text-center text-slate-300 text-sm">
+                  <td className="px-1.5 sm:px-3 py-2 sm:py-3 text-center font-black text-white text-xs sm:text-sm">{team.wins}</td>
+                  <td className="px-1.5 sm:px-3 py-2 sm:py-3 text-center font-bold text-slate-400 text-xs sm:text-sm">{team.losses}</td>
+                  <td className="px-1.5 sm:px-3 py-2 sm:py-3 text-center text-slate-300 text-xs sm:text-sm hidden xs:table-cell sm:table-cell">
                     {team.win_pct != null ? (team.win_pct * 100).toFixed(1) + '%' : '—'}
                   </td>
-                  <td className="px-3 py-3 text-center text-slate-500 text-sm hidden sm:table-cell">
+                  <td className="px-1.5 sm:px-3 py-2 sm:py-3 text-center text-slate-500 text-xs sm:text-sm hidden sm:table-cell">
                     {rank === 1 ? '—' : (team.games_back != null ? team.games_back.toFixed(1) : '—')}
                   </td>
-                  <td className="px-3 py-3 text-center">
+                  <td className="px-1.5 sm:px-3 py-2 sm:py-3 text-center">
                     <StatusBadge status={team.status} rank={rank} />
                   </td>
                 </tr>
@@ -588,7 +590,7 @@ const StandingsPage = () => {
   const isLive = lastUpdated && (Date.now() - new Date(lastUpdated)) < 6 * 60 * 1000;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto px-4 py-8" style={{ WebkitOverflowScrolling: 'touch' }}>
       {staticMode && (
         <div className="mb-4 px-4 py-3 bg-slate-700/40 border border-slate-600/40 rounded-xl text-xs text-slate-300 font-bold flex items-center gap-2">
           <Trophy className="w-3 h-3 text-orange-400 shrink-0" />
