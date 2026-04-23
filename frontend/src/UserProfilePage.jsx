@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal, BarChart2, Lock, Eye, EyeOff } from 'lucide-react';
 import * as api from './services/api';
 import { ADMIN_EMAIL } from './constants';
@@ -245,34 +246,37 @@ const PlayinPredCard = ({ pred }) => {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack }) => {
-  const [profile, setProfile]         = useState(null);
-  const [predictions, setPredictions] = useState(null);
-  const [loading, setLoading]         = useState(true);
-  const [predsLoading, setPredsLoading] = useState(false);
-  const [error, setError]             = useState('');
-
   const isAdmin = currentUser?.email === ADMIN_EMAIL;
 
-  useEffect(() => {
-    if (!username) return;
-    setLoading(true);
-    setError('');
-    setPredictions(null);
+  // Profile — 5 min cache so revisiting the page is instant
+  const {
+    data: profile,
+    isLoading: loading,
+    error: profileError,
+  } = useQuery({
+    queryKey: ['userProfile', username],
+    queryFn:  () => api.getUserProfile(username),
+    enabled:  !!username,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
 
-    api.getUserProfile(username)
-      .then(prof => {
-        setProfile(prof);
-        setLoading(false);
-        setPredsLoading(true);
-        return api.getMyPredictions(prof.user_id, '2026', currentUser?.user_id ?? null);
-      })
-      .then(preds => setPredictions(preds))
-      .catch(err => {
-        setError(err.response?.status === 404 ? 'User not found.' : 'Failed to load profile.');
-        setLoading(false);
-      })
-      .finally(() => setPredsLoading(false));
-  }, [username]);
+  // Predictions — enabled as soon as we have the user_id (from cache or fresh fetch)
+  // When viewing own profile the user_id is known immediately → both queries fire in parallel
+  const effectiveUserId = profile?.user_id
+    ?? (currentUser?.username === username ? currentUser?.user_id : undefined);
+
+  const { data: predictions, isLoading: predsLoading } = useQuery({
+    queryKey: ['userPredictions', effectiveUserId, currentUser?.user_id],
+    queryFn:  () => api.getMyPredictions(effectiveUserId, '2026', currentUser?.user_id ?? null),
+    enabled:  !!effectiveUserId,
+    staleTime: 2 * 60 * 1000,
+    retry: 1,
+  });
+
+  const error = profileError
+    ? (profileError?.response?.status === 404 ? 'User not found.' : 'Failed to load profile.')
+    : '';
 
   if (loading) {
     return (

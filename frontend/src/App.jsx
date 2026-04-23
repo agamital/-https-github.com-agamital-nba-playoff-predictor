@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronUp, ChevronRight, Share, Bell, Lock } from 'lucide-react';
@@ -2743,6 +2743,18 @@ function App() {
     updateGlobalBadge(count);
   }, [navBadgeCount]);
 
+  // Eagerly warm up the most-visited lazy chunks 2 s after first paint so
+  // navigation feels instant (the import() calls just kick off a fetch;
+  // React won't render anything until the user actually navigates there).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      import('./UserProfilePage');
+      import('./BracketPage');
+      import('./FuturesPage');
+    }, 2000);
+    return () => clearTimeout(t);
+  }, []);
+
   // Capture beforeinstallprompt once so any button in the tree can use it
   useEffect(() => {
     if (isStandalone) return;
@@ -2882,9 +2894,21 @@ function App() {
 
   // Bottom nav: core 5 items (no admin) + Account when logged in
   const coreNavItems = navItems.filter(i => i.id !== 'admin').slice(0, 5);
-  const bottomNavItems = currentUser
-    ? [...coreNavItems, { id: 'account', label: 'Account', icon: Settings }]
-    : coreNavItems;
+  const bottomNavItems = useMemo(
+    () => currentUser
+      ? [...coreNavItems, { id: 'account', label: 'Account', icon: Settings }]
+      : coreNavItems,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentUser, navBadgeCount, currentPage],
+  );
+
+  // Stable callback — avoids creating a new function per nav-item per render
+  const handleBottomNavClick = useCallback((id) => {
+    if (id === 'profile' && currentUser) setProfileUsername(currentUser.username);
+    navigate(id);
+  // navigate is stable (defined inline but deps don't change); currentUser ref safe here
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900">
@@ -3050,15 +3074,12 @@ function App() {
           const Icon = item.icon;
           const active = currentPage === item.id;
           const badge  = item.id === 'betting' && navBadgeCount > 0 ? navBadgeCount : 0;
-          const handleBottomNav = () => {
-            if (item.id === 'profile' && currentUser) setProfileUsername(currentUser.username);
-            navigate(item.id);
-          };
           return (
             <button
               key={item.id}
-              onClick={handleBottomNav}
-              className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 min-h-[60px] transition-colors active:bg-slate-800/60 ${
+              onClick={() => handleBottomNavClick(item.id)}
+              style={{ touchAction: 'manipulation' }}
+              className={`relative flex-1 flex flex-col items-center justify-center py-2 gap-0.5 min-h-[60px] transition-colors active:bg-slate-800/60 ${
                 active ? 'text-orange-400' : 'text-slate-500'
               }`}
             >
@@ -3073,7 +3094,8 @@ function App() {
               <span className={`text-[10px] font-bold leading-none ${active ? 'text-orange-400' : 'text-slate-500'}`}>
                 {item.label}
               </span>
-              {active && <div className="absolute bottom-0 h-0.5 w-8 bg-orange-400 rounded-full" />}
+              {/* Active indicator — needs `relative` on parent button to sit at button bottom */}
+              {active && <div className="absolute bottom-0 inset-x-0 flex justify-center"><div className="h-0.5 w-8 bg-orange-400 rounded-full" /></div>}
             </button>
           );
         })}
