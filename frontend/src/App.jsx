@@ -252,6 +252,18 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
   const [dashLoading, setDashLoading] = useState(false);
   const [dashData, setDashData] = useState(null);
 
+  // Live playoff records — same queryKey as GlobalStatsTab so cache is shared (no extra request)
+  const { data: homeHighsData, isLoading: homeHighsLoading } = useQuery({
+    queryKey: ['playoffHighs', 'v3'],
+    queryFn:  () => api.getPlayoffHighs('2026'),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 5 * 60 * 1000,
+    retry: 2,
+  });
+  const homePlayoffHighs = homeHighsLoading ? undefined : (homeHighsData?.highs ?? null);
+
   useEffect(() => {
     if (!currentUser) return;
     let cancelled = false;
@@ -449,6 +461,9 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             <div className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Steps Done</div>
           </Card>
         </div>
+
+        {/* Live Playoff Records */}
+        <PlayoffCurrentHighs highs={homePlayoffHighs} />
 
         {/* How Scoring Works */}
         <button
