@@ -22,6 +22,7 @@ from scoring import (
     calculate_leaders_points,
     FUTURES_BASE_POINTS,
     LEADERS_POINTS,
+    LEADERS_TIERS,
     SERIES_LEADER_BONUS,
 )
 
@@ -5490,6 +5491,95 @@ async def leaderboard(season: str = "2026"):
                 'futures_points': futures_pts,
                 'leaders_points': leaders_pts,
             })
+
+        # ── Provisional leaders points (while playoffs are ongoing) ────────────
+        # Compute based on current playoff record highs vs each user's prediction.
+        # Only shown for categories not yet officially scored (is_correct_* IS NULL).
+        try:
+            PLAYOFF_START_LB = '2026-04-19'
+            # Step A: current playoff highs (one query, one row)
+            c.execute("""
+                SELECT
+                    MAX(points)   FILTER (WHERE points   > 0),
+                    MAX(assists)  FILTER (WHERE assists   > 0),
+                    MAX(rebounds) FILTER (WHERE rebounds  > 0),
+                    MAX(fg3m)     FILTER (WHERE fg3m      > 0),
+                    MAX(steals)   FILTER (WHERE steals    > 0),
+                    MAX(blocks)   FILTER (WHERE blocks    > 0)
+                FROM player_game_stats
+                WHERE season = %s AND game_date >= %s
+            """, (season, PLAYOFF_START_LB))
+            highs_row = c.fetchone() or (None,)*6
+            current_highs = {
+                'scorer':   highs_row[0],
+                'assists':  highs_row[1],
+                'rebounds': highs_row[2],
+                'threes':   highs_row[3],
+                'steals':   highs_row[4],
+                'blocks':   highs_row[5],
+            }
+
+            # Step B: all users' leaders_predictions in one batch
+            user_ids = [entry['user_id'] for entry in board]
+            lp_by_user = {}
+            if user_ids:
+                c.execute("""
+                    SELECT user_id,
+                           top_scorer, top_assists, top_rebounds,
+                           top_threes, top_steals, top_blocks,
+                           is_correct_scorer, is_correct_assists, is_correct_rebounds,
+                           is_correct_threes, is_correct_steals, is_correct_blocks
+                    FROM leaders_predictions
+                    WHERE season = %s AND user_id = ANY(%s)
+                """, (season, user_ids))
+                for lp_row in c.fetchall():
+                    lp_by_user[lp_row[0]] = lp_row
+
+            # Step C: compute provisional pts per user per category
+            cat_cols = ['scorer', 'assists', 'rebounds', 'threes', 'steals', 'blocks']
+            for entry in board:
+                lp = lp_by_user.get(entry['user_id'])
+                if not lp:
+                    entry['provisional_leaders_pts'] = 0
+                    entry['provisional_breakdown'] = {}
+                    continue
+
+                # lp indices: 1-6 = predictions, 7-12 = is_correct_*
+                preds       = {cat: lp[i+1] for i, cat in enumerate(cat_cols)}
+                is_correct  = {cat: lp[i+7] for i, cat in enumerate(cat_cols)}
+
+                breakdown = {}
+                total_prov = 0
+                for cat, tiers in LEADERS_TIERS.items():
+                    if is_correct[cat] is not None:
+                        # Already officially scored — no provisional needed
+                        continue
+                    high = current_highs.get(cat)
+                    pred = preds.get(cat)
+                    if high is None or pred is None:
+                        continue
+                    try:
+                        delta = abs(int(pred) - int(high))
+                    except (TypeError, ValueError):
+                        continue
+                    awarded = 0
+                    for max_delta, tier_pts in tiers:
+                        if delta <= max_delta:
+                            awarded = tier_pts
+                            break
+                    if awarded > 0:
+                        breakdown[cat] = awarded
+                        total_prov += awarded
+
+                entry['provisional_leaders_pts'] = total_prov
+                entry['provisional_breakdown'] = breakdown
+        except Exception as prov_err:
+            print(f"[Leaderboard] provisional pts error (non-critical): {prov_err}")
+            for entry in board:
+                if 'provisional_leaders_pts' not in entry:
+                    entry['provisional_leaders_pts'] = 0
+                    entry['provisional_breakdown'] = {}
+
         return board
     except Exception as e:
         print(f"leaderboard error: {e}")

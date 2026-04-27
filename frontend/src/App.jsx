@@ -2031,9 +2031,10 @@ const GlobalStatsTab = ({ currentUser }) => {
 const LeaderboardPage = ({ onUserClick, currentUser }) => {
   const [expanded, setExpanded] = useState(null);
   const [tab, setTab] = useState('rankings');
+  const [provPopover, setProvPopover] = useState(null); // user_id whose popover is open
 
   const { data: leaderboard = [], isLoading: loading } = useQuery({
-    queryKey: ['leaderboard'],
+    queryKey: ['leaderboard', 'v2'],
     queryFn:  () => api.getLeaderboard('2026'),
     staleTime: 60 * 1000,
     refetchOnWindowFocus: true,
@@ -2065,7 +2066,12 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
             </p>
           </div>
           <div className="text-right shrink-0">
-            <div className="text-2xl font-black text-orange-400">{myRank.points}</div>
+            <div className="flex items-baseline gap-1 justify-end">
+              <span className="text-2xl font-black text-orange-400">{myRank.points}</span>
+              {(myRank.provisional_leaders_pts ?? 0) > 0 && (
+                <span className="text-[13px] font-black text-amber-400">+{myRank.provisional_leaders_pts}✦</span>
+              )}
+            </div>
             <div className="text-[10px] text-slate-500 font-bold uppercase">pts</div>
           </div>
         </div>
@@ -2102,10 +2108,13 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
             const isMe       = currentUser && user.user_id === currentUser.user_id;
             const isExpanded = expanded === user.rank;
             const accuracy   = user.accuracy ?? 0;
-            const seriesPts  = user.series_points;
-            const playinPts  = user.playin_points;
-            const futuresPts = user.futures_points;
-            const leadersPts = user.leaders_points;
+            const seriesPts    = user.series_points;
+            const playinPts    = user.playin_points;
+            const futuresPts   = user.futures_points;
+            const leadersPts   = user.leaders_points;
+            const provPts      = user.provisional_leaders_pts ?? 0;
+            const provBreakdown = user.provisional_breakdown ?? {};
+            const hasProvBreakdown = provPts > 0 && Object.keys(provBreakdown).length > 0;
             const hasBreakdown = [seriesPts, playinPts, futuresPts, leadersPts].some(v => v != null && v > 0);
             const bullseyes  = user.bullseyes_count ?? 0;
 
@@ -2184,15 +2193,42 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     </div>
                   </div>
 
-                  {/* Points + chevron */}
+                  {/* Points + provisional + chevron */}
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="text-right">
-                      <div className={`text-xl font-black ${isMe ? 'text-orange-400' : 'text-orange-400'}`}>{user.points}</div>
+                      <div className="flex items-baseline gap-1 justify-end">
+                        <span className={`text-xl font-black ${isMe ? 'text-orange-400' : 'text-orange-400'}`}>{user.points}</span>
+                        {provPts > 0 && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setProvPopover(provPopover === user.user_id ? null : user.user_id); }}
+                            className="text-[11px] font-black text-amber-400 hover:text-amber-300 transition-colors leading-none"
+                            title="Provisional leaders pts — click to see breakdown"
+                          >
+                            +{provPts}✦
+                          </button>
+                        )}
+                      </div>
                       <div className="text-[10px] text-slate-500 font-bold">pts</div>
                     </div>
                     <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                   </div>
                 </div>
+
+                {/* Provisional popover */}
+                {provPopover === user.user_id && hasProvBreakdown && (
+                  <div className="mx-3 sm:mx-4 mb-1 bg-amber-500/10 border border-amber-500/30 rounded-xl p-3">
+                    <p className="text-[11px] font-black text-amber-400 mb-2">✦ Provisional Leaders Pts <span className="text-slate-500 font-normal">(based on current records)</span></p>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {Object.entries(provBreakdown).map(([cat, pts]) => (
+                        <div key={cat} className="bg-slate-800/70 rounded-lg px-2 py-1.5 text-center">
+                          <p className="text-[13px] font-black text-amber-400">+{pts}</p>
+                          <p className="text-[9px] text-slate-500 uppercase font-bold capitalize">{cat}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-slate-600 mt-2">These pts are temporary — finalized when playoffs end.</p>
+                  </div>
+                )}
 
                 {/* Expanded breakdown */}
                 {isExpanded && (
@@ -2204,10 +2240,14 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                           { label: 'Series',  val: seriesPts,  cls: 'text-orange-400' },
                           { label: 'Play-In', val: playinPts,  cls: 'text-purple-400' },
                           { label: 'Futures', val: futuresPts, cls: 'text-yellow-400' },
-                          { label: 'Leaders', val: leadersPts, cls: 'text-cyan-400'   },
-                        ].map(({ label, val, cls }) => (
+                          { label: 'Leaders', val: leadersPts, cls: 'text-cyan-400',
+                            extra: provPts > 0 ? provPts : null },
+                        ].map(({ label, val, cls, extra }) => (
                           <div key={label} className="text-center bg-slate-800/60 rounded-xl p-2.5">
-                            <p className={`text-base font-black ${cls}`}>{val ?? 0}</p>
+                            <div className={`text-base font-black ${cls} flex items-baseline justify-center gap-1`}>
+                              <span>{val ?? 0}</span>
+                              {extra && <span className="text-[11px] text-amber-400">+{extra}✦</span>}
+                            </div>
                             <p className="text-[10px] text-slate-500 font-bold uppercase">{label}</p>
                           </div>
                         ))}
