@@ -3413,7 +3413,7 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
             JOIN teams ht ON ht.id = s.home_team_id
             JOIN teams at ON at.id = s.away_team_id
             WHERE s.season = %s AND s.status = 'active'
-        """, ('2026-04-19', season))
+        """, ('2026-04-18', season))
         active_series = c.fetchall()
 
         for sid, home_abbr, away_abbr, series_start in active_series:
@@ -5548,7 +5548,7 @@ async def leaderboard(season: str = "2026"):
         # Compute based on current playoff record highs vs each user's prediction.
         # Only shown for categories not yet officially scored (is_correct_* IS NULL).
         try:
-            PLAYOFF_START_LB = '2026-04-19'
+            PLAYOFF_START_LB = '2026-04-18'
             # Step A: current playoff highs (one query, one row)
             c.execute("""
                 SELECT
@@ -7502,7 +7502,7 @@ async def series_leaders_debug(season: str = "2026"):
         SELECT s.id, ht.abbreviation, at.abbreviation,
                s.home_wins, s.away_wins, s.round,
                s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister,
-               COALESCE(DATE(s.game1_start_time), '2026-04-19'::date) AS series_start
+               COALESCE(DATE(s.game1_start_time), '2026-04-18'::date) AS series_start
         FROM series s
         JOIN teams ht ON ht.id = s.home_team_id
         JOIN teams at ON at.id = s.away_team_id
@@ -8407,7 +8407,7 @@ async def get_playoff_highs(season: str = "2026"):
     """
     # 2026 NBA Play-In ended April 18; First Round tip-off: April 19.
     # Any game before this date is regular-season or play-in — excluded.
-    PLAYOFF_START = '2026-04-19'
+    PLAYOFF_START = '2026-04-18'
 
     PLAYOFF_ROUNDS = (
         'First Round',
