@@ -8176,6 +8176,135 @@ async def player_leaders_endpoint(season: str = "2026", limit: int = 10, playoff
             except Exception: pass
 
 
+@app.get("/api/players/playoff-highs")
+async def get_playoff_highs(season: str = "2026"):
+    """
+    Returns the current single-game playoff record holder for each stat category
+    (points, assists, rebounds, 3-pointers, steals, blocks).
+
+    Each entry includes:
+      - player_name   : who set the record
+      - team_abbr     : their team
+      - value         : the record value
+      - game_date     : ISO date string
+      - round         : series round name
+      - conference    : East / West / Finals
+      - game_number   : which game in the series (1-7)
+      - tied_players  : list of names when multiple players share the same max
+        (only present when tied; player_name is set to the most-recent one)
+
+    The record updates automatically whenever boxscores are synced and a player
+    beats the current best.  If no boxscore data exists yet, the category returns null.
+    """
+    STATS = [
+        ('scorer',   'points'),
+        ('assists',  'assists'),
+        ('rebounds', 'rebounds'),
+        ('threes',   'fg3m'),
+        ('steals',   'steals'),
+        ('blocks',   'blocks'),
+    ]
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+        highs = {}
+
+        for cat, col in STATS:
+            # Step 1: find the max value in the whole playoff
+            c.execute(
+                f"SELECT MAX({col}) FROM player_game_stats WHERE season = %s AND {col} > 0",
+                (season,)
+            )
+            row = c.fetchone()
+            if not row or row[0] is None:
+                highs[cat] = None
+                continue
+            max_val = row[0]
+
+            # Step 2: find all players who hit that max, join to series for context.
+            # game_number = count of distinct games in the same series up to and
+            # including this game (ordered by date, then espn_game_id as tiebreak).
+            c.execute(f"""
+                SELECT
+                    pgs.player_name,
+                    pgs.team_abbr,
+                    pgs.{col}          AS value,
+                    pgs.game_date,
+                    s.round,
+                    s.conference,
+                    (
+                        SELECT COUNT(DISTINCT pgs2.espn_game_id)
+                        FROM player_game_stats pgs2
+                        JOIN teams t2 ON t2.abbreviation = pgs2.team_abbr
+                        WHERE pgs2.season = %s
+                          AND (t2.id = s.home_team_id OR t2.id = s.away_team_id)
+                          AND (
+                              pgs2.game_date < pgs.game_date
+                              OR (pgs2.game_date = pgs.game_date
+                                  AND pgs2.espn_game_id <= pgs.espn_game_id)
+                          )
+                    ) AS game_number
+                FROM player_game_stats pgs
+                JOIN teams t  ON t.abbreviation = pgs.team_abbr
+                JOIN series s ON (s.home_team_id = t.id OR s.away_team_id = t.id)
+                             AND s.season = pgs.season
+                WHERE pgs.season = %s
+                  AND pgs.{col} = %s
+                ORDER BY pgs.game_date DESC, pgs.player_name
+                LIMIT 10
+            """, (season, season, max_val))
+
+            rows = c.fetchall()
+            if not rows:
+                # Max exists in player_game_stats but no series join — use simpler fallback
+                c.execute(f"""
+                    SELECT player_name, team_abbr, {col}, game_date
+                    FROM player_game_stats
+                    WHERE season = %s AND {col} = %s
+                    ORDER BY game_date DESC
+                    LIMIT 1
+                """, (season, max_val))
+                fb = c.fetchone()
+                if fb:
+                    highs[cat] = {
+                        'player_name': fb[0], 'team_abbr': fb[1], 'value': fb[2],
+                        'game_date': fb[3].isoformat() if fb[3] else None,
+                        'round': None, 'conference': None, 'game_number': None,
+                    }
+                else:
+                    highs[cat] = None
+                continue
+
+            # Check for a tie (multiple distinct players with the same max)
+            unique_names = list(dict.fromkeys(r[0] for r in rows))  # preserve order, dedupe
+            most_recent  = rows[0]  # already ordered by game_date DESC
+
+            entry = {
+                'player_name': most_recent[0],
+                'team_abbr':   most_recent[1],
+                'value':       most_recent[2],
+                'game_date':   most_recent[3].isoformat() if most_recent[3] else None,
+                'round':       most_recent[4],
+                'conference':  most_recent[5],
+                'game_number': most_recent[6],
+            }
+            if len(unique_names) > 1:
+                entry['tied_players'] = unique_names[:5]   # cap at 5 for display
+            highs[cat] = entry
+
+        return {'highs': highs, 'season': season}
+
+    except Exception as e:
+        print(f"get_playoff_highs error: {e}")
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
 @app.get("/api/players/playoff-eligible")
 async def players_playoff_eligible(season: str = "2026"):
     """All players from top-10 teams per conference, sorted by PPG descending.

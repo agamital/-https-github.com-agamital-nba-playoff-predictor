@@ -562,6 +562,12 @@ export const getGameBoxscore = async (espnGameId, season = '2026') => {
   return response.data;
 };
 
+/** Current single-game playoff record holders for each stat category. */
+export const getPlayoffHighs = async (season = '2026') => {
+  const response = await api.get('/api/players/playoff-highs', { params: { season } });
+  return response.data;
+};
+
 export const getTopPerformers = async (date = null, limit = 5, season = '2026') => {
   const params = { limit, season };
   if (date) params.date = date;

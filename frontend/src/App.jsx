@@ -1573,6 +1573,75 @@ const MvpCategoryCard = ({ label, labelCls, items, expanded, onToggle, entries, 
   );
 };
 
+// ── Playoff single-game record display ────────────────────────────────────────
+const HIGH_META = [
+  { cat: 'scorer',   emoji: '🏀', label: 'Top Scorer',    unit: 'pts', cls: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/25' },
+  { cat: 'rebounds', emoji: '💪', label: 'Top Rebounder',  unit: 'reb', cls: 'text-green-400',  bg: 'bg-green-500/10  border-green-500/25'  },
+  { cat: 'assists',  emoji: '🎯', label: 'Top Assister',   unit: 'ast', cls: 'text-blue-400',   bg: 'bg-blue-500/10   border-blue-500/25'   },
+  { cat: 'threes',   emoji: '🎳', label: 'Most 3s Made',   unit: '3PM', cls: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/25' },
+  { cat: 'steals',   emoji: '🤺', label: 'Most Steals',    unit: 'stl', cls: 'text-cyan-400',   bg: 'bg-cyan-500/10   border-cyan-500/25'   },
+  { cat: 'blocks',   emoji: '🛡️', label: 'Most Blocks',    unit: 'blk', cls: 'text-red-400',    bg: 'bg-red-500/10    border-red-500/25'    },
+];
+
+const _fmtHighDate = (iso) => {
+  if (!iso) return '';
+  try {
+    return new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+  } catch { return iso; }
+};
+
+const PlayoffCurrentHighs = ({ highs }) => {
+  const anyData = highs && Object.values(highs).some(v => v != null);
+  if (!anyData) return null;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 px-1">
+        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Current Playoff Records</span>
+        <div className="flex-1 h-px bg-slate-800" />
+        <span className="text-[9px] text-slate-700 font-bold">Updates live · resets if broken</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {HIGH_META.map(({ cat, emoji, label, unit, cls, bg }) => {
+          const h = highs?.[cat];
+          return (
+            <div key={cat} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${bg}`}>
+              <span className="text-lg leading-none shrink-0">{emoji}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-[9px] font-black uppercase tracking-wider text-slate-600 leading-none mb-0.5">{label}</p>
+                {h ? (
+                  <>
+                    <p className={`text-xs font-black truncate ${cls}`}>
+                      {h.tied_players && h.tied_players.length > 1
+                        ? `${h.player_name} +${h.tied_players.length - 1} others`
+                        : h.player_name}
+                    </p>
+                    <p className="text-[9px] text-slate-500 leading-tight mt-0.5 truncate">
+                      {h.round
+                        ? `${h.round.replace('Conference ', 'Conf. ')}${h.game_number ? ` · G${h.game_number}` : ''} · ${_fmtHighDate(h.game_date)}`
+                        : _fmtHighDate(h.game_date)}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[9px] text-slate-700 italic">No data yet</p>
+                )}
+              </div>
+              {h && (
+                <div className="shrink-0 text-right">
+                  <span className={`text-xl font-black tabular-nums leading-none ${cls}`}>{h.value}</span>
+                  <span className="text-[9px] text-slate-600 font-bold ml-0.5">{unit}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const GlobalStatsTab = ({ currentUser }) => {
   const { data: stats, isLoading: loading } = useQuery({
     queryKey: ['globalStats'],
@@ -1581,6 +1650,16 @@ const GlobalStatsTab = ({ currentUser }) => {
     refetchOnWindowFocus: true,
     refetchInterval: 3 * 60 * 1000,
   });
+
+  // Live playoff single-game records — refreshes every 5 min (auto-updates when boxscores sync)
+  const { data: highsData } = useQuery({
+    queryKey: ['playoffHighs'],
+    queryFn:  () => api.getPlayoffHighs('2026'),
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 5 * 60 * 1000,
+  });
+  const playoffHighs = highsData?.highs ?? null;
 
   if (loading) return (
     <div className="space-y-3">
@@ -1840,6 +1919,10 @@ const GlobalStatsTab = ({ currentUser }) => {
             <p className="text-[10px] text-slate-600 text-center -mt-2">
               Each user predicted the highest single-game stat in the entire playoffs. Closer = more points.
             </p>
+
+            {/* ── Live current record holders ── */}
+            <PlayoffCurrentHighs highs={playoffHighs} />
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {LEADER_META.map(({ key, correctKey, label, unit, cls, bar }) => {
                 const ld_entry = ld[key];
