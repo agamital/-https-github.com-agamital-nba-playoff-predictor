@@ -8218,6 +8218,28 @@ async def debug_boxscore_dates(season: str = "2026"):
             except Exception: pass
 
 
+@app.get("/api/debug/pgs-raw")
+async def debug_pgs_raw():
+    """Debug: raw row count and latest dates from player_game_stats."""
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM player_game_stats")
+        total = c.fetchone()[0]
+        c.execute("SELECT game_date, season, COUNT(*) FROM player_game_stats GROUP BY game_date, season ORDER BY game_date DESC LIMIT 20")
+        rows = [{'date': str(r[0]), 'season': r[1], 'rows': r[2]} for r in c.fetchall()]
+        c.execute("SELECT MAX(points), player_name, game_date FROM player_game_stats WHERE game_date >= '2026-04-19' ORDER BY 1 DESC LIMIT 5")
+        top = [{'pts': r[0], 'name': r[1], 'date': str(r[2])} for r in c.fetchall()]
+        return {'total_rows': total, 'by_date_season': rows, 'top_pts_playoff': top}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
 @app.get("/api/players/playoff-highs")
 async def get_playoff_highs(season: str = "2026"):
     """
