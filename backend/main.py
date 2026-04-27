@@ -8270,12 +8270,32 @@ async def debug_pgs_raw():
         conn2.close()
         conn = None
 
+        # Sample ESPN game IDs from the DB (first 5 most recent)
+        c2.execute("SELECT DISTINCT espn_game_id, game_date FROM player_game_stats ORDER BY game_date DESC LIMIT 10")
+        sample_ids = [{'id': r[0], 'date': str(r[1])} for r in c2.fetchall()]
+
+        # What does ESPN scoreboard return for April 19?
+        import requests as _http
+        espn_games = []
+        try:
+            resp = _http.get(
+                "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+                params={"dates": "20260419", "limit": 20},
+                timeout=12,
+            )
+            for ev in resp.json().get("events", []):
+                espn_games.append({'id': ev.get('id'), 'name': ev.get('name'), 'date': ev.get('date')})
+        except Exception as ex:
+            espn_games = [{'error': str(ex)}]
+
         return {
             'total_rows': total,
             'apr19_rows': apr19_count,
             'by_date_season': rows,
             'test_insert_returned': str(test_row) if test_row else None,
             'commit_then_readback': str(readback) if readback else 'NOT FOUND - commit not persisting!',
+            'sample_db_ids': sample_ids,
+            'espn_apr19_games': espn_games,
         }
     except Exception as e:
         import traceback
