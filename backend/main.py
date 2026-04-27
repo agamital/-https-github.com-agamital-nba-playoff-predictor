@@ -8229,7 +8229,7 @@ async def debug_pgs_raw():
         total = c.fetchone()[0]
         c.execute("SELECT game_date, season, COUNT(*) FROM player_game_stats GROUP BY game_date, season ORDER BY game_date DESC LIMIT 20")
         rows = [{'date': str(r[0]), 'season': r[1], 'rows': r[2]} for r in c.fetchall()]
-        c.execute("SELECT MAX(points), player_name, game_date FROM player_game_stats WHERE game_date >= '2026-04-19' ORDER BY 1 DESC LIMIT 5")
+        c.execute("SELECT points, player_name, game_date FROM player_game_stats WHERE game_date >= '2026-04-19' ORDER BY points DESC LIMIT 5")
         top = [{'pts': r[0], 'name': r[1], 'date': str(r[2])} for r in c.fetchall()]
         return {'total_rows': total, 'by_date_season': rows, 'top_pts_playoff': top}
     except Exception as e:
