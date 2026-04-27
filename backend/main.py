@@ -8245,11 +8245,37 @@ async def debug_pgs_raw():
         """)
         test_row = c.fetchone()
         conn.rollback()  # don't keep the test row
+
+        # Now: INSERT, COMMIT, then re-read from a FRESH connection
+        c.execute("""
+            INSERT INTO player_game_stats
+                (espn_game_id, game_date, espn_player_id, player_name, espn_team_id, team_abbr, season,
+                 minutes, points, rebounds, assists, steals, blocks, turnovers,
+                 fgm, fga, fg3m, fg3a, ftm, fta, oreb, dreb, fouls, plus_minus)
+            VALUES ('TEST_COMMIT_99998', '2026-04-20', 'TEST_CPID_99998', 'Commit TestPlayer', '999', 'TST', '2026',
+                    10.0, 99, 5, 3, 1, 0, 1, 8, 16, 3, 6, 2, 3, 1, 4, 2, 3)
+            ON CONFLICT (espn_game_id, espn_player_id) DO UPDATE SET points = EXCLUDED.points
+        """)
+        conn.commit()  # commit it for real
+        conn.close()
+
+        # Now open a BRAND NEW connection and read it back
+        conn2 = get_db_conn()
+        c2 = conn2.cursor()
+        c2.execute("SELECT points, game_date FROM player_game_stats WHERE espn_game_id = 'TEST_COMMIT_99998'")
+        readback = c2.fetchone()
+        # Cleanup
+        c2.execute("DELETE FROM player_game_stats WHERE espn_game_id LIKE 'TEST_%'")
+        conn2.commit()
+        conn2.close()
+        conn = None
+
         return {
             'total_rows': total,
             'apr19_rows': apr19_count,
             'by_date_season': rows,
             'test_insert_returned': str(test_row) if test_row else None,
+            'commit_then_readback': str(readback) if readback else 'NOT FOUND - commit not persisting!',
         }
     except Exception as e:
         import traceback
