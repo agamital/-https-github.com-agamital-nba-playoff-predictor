@@ -3347,6 +3347,19 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
               f"scoreboard: {scoreboard_source})")
         summary['games_processed'] += 1
 
+    # ── Diagnostic: count rows visible in this transaction before commit ──────
+    try:
+        c.execute("SELECT COUNT(*) FROM player_game_stats WHERE game_date >= '2026-04-19'")
+        _count_before_commit = c.fetchone()[0]
+        print(f"[Boxscore] PRE-COMMIT row count (game_date >= 2026-04-19): {_count_before_commit}")
+        c.execute("SELECT COUNT(*) FROM player_game_stats")
+        _total_before_commit = c.fetchone()[0]
+        print(f"[Boxscore] PRE-COMMIT total rows: {_total_before_commit}")
+        summary['pre_commit_playoff_rows'] = _count_before_commit
+        summary['pre_commit_total_rows'] = _total_before_commit
+    except Exception as _dc:
+        print(f"[Boxscore] Diagnostic count error: {_dc}")
+
     # ── Step 5: Recompute per-game averages from player_game_stats ──────────
     # Match by espn_player_id first; fall back to player name so rows that
     # came from _sync_player_stats_job() (NBA API, no espn_player_id) also
