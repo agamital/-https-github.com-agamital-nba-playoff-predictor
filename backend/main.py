@@ -3427,10 +3427,12 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
                   AND game_date >= %s
                   AND team_abbr IN (%s, %s)
                 GROUP BY player_name
+                ORDER BY total_pts DESC  -- tiebreaker: higher scorer wins
             """, (season, series_start, home_abbr, away_abbr))
             rows = c.fetchall()
             if not rows:
                 continue
+            # stable max: ORDER BY pts DESC means ties go to the higher scorer
             scorer    = max(rows, key=lambda r: r[1] or 0)[0]
             rebounder = max(rows, key=lambda r: r[2] or 0)[0]
             assister  = max(rows, key=lambda r: r[3] or 0)[0]
