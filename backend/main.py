@@ -7491,6 +7491,61 @@ async def debug_game_stats(date: str | None = None, season: str = "2026"):
     return {"recent_dates": recent, "date_detail": detail, "queried_date": date}
 
 
+@app.get("/api/admin/series-leaders-debug")
+async def series_leaders_debug(season: str = "2026"):
+    """Return per-series cumulative player totals (pts/reb/ast) so leaders can be verified."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT s.id, ht.abbreviation, at.abbreviation,
+               s.home_wins, s.away_wins, s.round,
+               s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister,
+               COALESCE(DATE(s.game1_start_time), '2026-04-19'::date) AS series_start
+        FROM series s
+        JOIN teams ht ON ht.id = s.home_team_id
+        JOIN teams at ON at.id = s.away_team_id
+        WHERE s.season = %s AND s.status = 'active'
+        ORDER BY s.id
+    """, (season,))
+    series_rows = c.fetchall()
+
+    result = []
+    for sid, home, away, hw, aw, rnd, cur_scorer, cur_reb, cur_ast, series_start in series_rows:
+        c.execute("""
+            SELECT player_name, team_abbr,
+                   SUM(points)   AS tot_pts,
+                   SUM(rebounds) AS tot_reb,
+                   SUM(assists)  AS tot_ast,
+                   COUNT(*)      AS games
+            FROM player_game_stats
+            WHERE season = %s AND game_date >= %s AND team_abbr IN (%s, %s)
+            GROUP BY player_name, team_abbr
+            ORDER BY tot_pts DESC
+        """, (season, series_start, home, away))
+        players = [{"name": r[0], "team": r[1], "pts": r[2], "reb": r[3], "ast": r[4], "gp": r[5]}
+                   for r in c.fetchall()]
+
+        top_scorer    = max(players, key=lambda p: p["pts"] or 0) if players else None
+        top_rebounder = max(players, key=lambda p: p["reb"] or 0) if players else None
+        top_assister  = max(players, key=lambda p: p["ast"] or 0) if players else None
+
+        result.append({
+            "series": f"{home} vs {away}",
+            "record": f"{hw}-{aw}",
+            "round": rnd,
+            "db_scorer":    cur_scorer,
+            "db_rebounder": cur_reb,
+            "db_assister":  cur_ast,
+            "computed_scorer":    {"name": top_scorer["name"],    "total": top_scorer["pts"],    "gp": top_scorer["gp"]}    if top_scorer    else None,
+            "computed_rebounder": {"name": top_rebounder["name"], "total": top_rebounder["reb"], "gp": top_rebounder["gp"]} if top_rebounder else None,
+            "computed_assister":  {"name": top_assister["name"],  "total": top_assister["ast"],  "gp": top_assister["gp"]}  if top_assister  else None,
+            "top10_scorers": sorted(players, key=lambda p: p["pts"] or 0, reverse=True)[:5],
+        })
+
+    conn.close()
+    return result
+
+
 @app.get("/api/players/top-performers")
 async def get_top_performers(date: str | None = None, limit: int = 5,
                              season: str = "2026"):
