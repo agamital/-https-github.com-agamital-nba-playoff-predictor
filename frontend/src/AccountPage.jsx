@@ -213,12 +213,25 @@ const StatusMsg = ({ msg }) => {
 const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, onInstall }) => {
   const qc = useQueryClient();
 
-  // Account data — 5-min cache so revisiting the page is instant
-  const { data: account, isLoading: loading } = useQuery({
+  // Use currentUser as immediate placeholder so page renders instantly.
+  // Background-fetches for email / member_since / login_method / rank.
+  const { data: account } = useQuery({
     queryKey: ['account', currentUser.user_id],
     queryFn:  () => api.getAccount(currentUser.user_id),
     enabled:  !!currentUser?.user_id,
     staleTime: 5 * 60 * 1000,
+    gcTime:   30 * 60 * 1000,
+    placeholderData: currentUser ? {
+      user_id:      currentUser.user_id,
+      username:     currentUser.username,
+      avatar_url:   currentUser.avatar_url || '',
+      role:         currentUser.role || 'user',
+      points:       currentUser.points || 0,
+      rank:         currentUser.rank ?? null,
+      email:        null,
+      member_since: null,
+      login_method: null,
+    } : undefined,
   });
 
   // Avatar — update cache on save instead of local state
@@ -291,18 +304,11 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent" />
-      </div>
-    );
-  }
   if (!account) return null;
 
   const memberSince = account.member_since
     ? new Date(account.member_since).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })
-    : 'Unknown';
+    : null;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
@@ -334,9 +340,9 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
             </div>
           </div>
         </div>
-        <Field label="Email" value={account.email} />
-        <Field label="Member since" value={memberSince} />
-        <Field label="Total points" value={`${account.points} pts`} sub={`Rank #${account.rank}`} />
+        <Field label="Email" value={account.email ?? <span className="text-slate-500 text-xs animate-pulse">Loading…</span>} />
+        <Field label="Member since" value={memberSince ?? <span className="text-slate-500 text-xs animate-pulse">Loading…</span>} />
+        <Field label="Total points" value={`${account.points} pts`} sub={account.rank != null ? `Rank #${account.rank}` : ''} />
 
         {/* ── Avatar Upload ── */}
         <div className="mt-5 pt-5 border-t border-slate-800">
@@ -383,7 +389,7 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
       </Card>
 
       {/* ── Change Password (only for email/password accounts) ── */}
-      {account.login_method === 'password' && (
+      {account.login_method === 'password' && account.login_method !== null && (
         <Card className="p-6">
           <SectionTitle icon={Key} label="Change Password" />
           <form onSubmit={handleChangePassword} className="space-y-3">
@@ -428,7 +434,7 @@ const AccountPage = ({ currentUser, onLogout, onUserUpdate, canInstall = false, 
         </Card>
       )}
 
-      {account.login_method === 'google' && (
+      {account.login_method === 'google' && account.login_method !== null && (
         <Card className="p-6">
           <SectionTitle icon={Key} label="Password" />
           <p className="text-slate-400 text-sm">

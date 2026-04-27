@@ -258,6 +258,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
     queryFn:  () => api.getUserProfile(username),
     enabled:  !!username,
     staleTime: 5 * 60 * 1000,
+    gcTime:   20 * 60 * 1000,
     retry: 1,
   });
 
@@ -271,6 +272,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
     queryFn:  () => api.getMyPredictions(effectiveUserId, '2026', currentUser?.user_id ?? null),
     enabled:  !!effectiveUserId,
     staleTime: 2 * 60 * 1000,
+    gcTime:   15 * 60 * 1000,
     retry: 1,
   });
 

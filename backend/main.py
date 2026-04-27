@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -579,6 +579,10 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_futures_user_season ON futures_predictions(user_id, season)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_leaders_user_season ON leaders_predictions(user_id, season)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_playin_season ON playin_games(season)")
+    # users.points — makes rank query (COUNT WHERE points > ?) O(log n) instead of O(n)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_users_points ON users(points)")
+    # player_game_stats(season, game_date) — speeds up playoff-highs and provisional-pts scans
+    c.execute("CREATE INDEX IF NOT EXISTS idx_pgs_season_date ON player_game_stats(season, game_date)")
 
     conn.commit()
     conn.close()
@@ -5042,7 +5046,7 @@ async def health_check():
         raise HTTPException(status_code=503, detail={"status": "error", "db": str(e)})
 
 @app.get("/api/teams")
-async def api_teams(conference: Optional[str] = None, playoff_only: bool = False):
+async def api_teams(response: Response, conference: Optional[str] = None, playoff_only: bool = False):
     conn = get_db_conn()
     c = conn.cursor()
     teams = []
@@ -5085,6 +5089,7 @@ async def api_teams(conference: Optional[str] = None, playoff_only: bool = False
             t['conf_rank'] = rank_map.get(t['id'], 99)
         teams.sort(key=lambda t: (t['conference'], t.get('conf_rank', 99)))
 
+    response.headers["Cache-Control"] = "public, max-age=300"  # teams rarely change
     return teams
 
 @app.post("/api/auth/register")
@@ -5229,7 +5234,7 @@ async def google_auth(email: str, name: str = "", avatar_url: str = ""):
 
 
 @app.get("/api/series")
-async def api_series(season: str = "2026", background_tasks: BackgroundTasks = None):
+async def api_series(response: Response, season: str = "2026", background_tasks: BackgroundTasks = None):
     # Fire a live sync in the background if games are active and cooldown elapsed
     if background_tasks is not None and _should_live_sync(season):
         background_tasks.add_task(_run_live_sync_bg, season)
@@ -5308,6 +5313,7 @@ async def api_series(season: str = "2026", background_tasks: BackgroundTasks = N
                 'picks_locked':      picks_locked,
             })
 
+        response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=60"
         return series
     except Exception as e:
         print(f"api_series error: {e}")
@@ -5475,7 +5481,7 @@ async def set_playin_start_time(game_id: int, start_time: str | None = None):
     return {"message": "Start time updated", "game_id": game_id, "start_time": start_time}
 
 @app.get("/api/leaderboard")
-async def leaderboard(season: str = "2026"):
+async def leaderboard(response: Response, season: str = "2026"):
     conn = None
     try:
         conn = get_db_conn()
@@ -5632,6 +5638,7 @@ async def leaderboard(season: str = "2026"):
                     entry['provisional_leaders_pts'] = 0
                     entry['provisional_breakdown'] = {}
 
+        response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=60"
         return board
     except Exception as e:
         print(f"leaderboard error: {e}")
@@ -5642,7 +5649,7 @@ async def leaderboard(season: str = "2026"):
             except Exception: pass
 
 @app.get("/api/stats/global")
-async def global_stats(season: str = "2026"):
+async def global_stats(response: Response, season: str = "2026"):
     """Aggregate community prediction stats for the Global Stats tab."""
     _EMPTY = {'series': [], 'playin': [], 'futures': {'top_champions': [], 'top_west_champs': [], 'top_east_champs': []}, 'total_users': 0}
     conn = None
@@ -5873,7 +5880,7 @@ async def global_stats(season: str = "2026"):
                 conn.rollback()
                 return {'distribution': [], 'total_picks': 0, 'avg_value': None}
 
-        return {
+        result = {
             'series':      series_stats,
             'playin':      playin_stats,
             'futures':     {
@@ -5894,6 +5901,8 @@ async def global_stats(season: str = "2026"):
             },
             'total_users': total_users,
         }
+        response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=120"
+        return result
     except Exception as e:
         print(f"global_stats fatal error: {e}")
         return _EMPTY
@@ -8389,7 +8398,7 @@ async def player_leaders_endpoint(season: str = "2026", limit: int = 10, playoff
 
 
 @app.get("/api/players/playoff-highs")
-async def get_playoff_highs(season: str = "2026"):
+async def get_playoff_highs(response: Response, season: str = "2026"):
     """
     Returns the current single-game playoff record holder for each stat category
     (points, assists, rebounds, 3-pointers, steals, blocks).
@@ -8506,6 +8515,7 @@ async def get_playoff_highs(season: str = "2026"):
                 entry['tied_players'] = unique_names[:5]
             highs[cat] = entry
 
+        response.headers["Cache-Control"] = "public, max-age=120, stale-while-revalidate=300"
         return {'highs': highs, 'season': season}
 
     except Exception as e:
@@ -9013,7 +9023,7 @@ async def get_user_profile(username: str):
 
 
 @app.get("/api/account")
-async def get_account(user_id: int):
+async def get_account(user_id: int, response: Response):
     """Private account info for the logged-in user."""
     conn = get_db_conn()
     c = conn.cursor()
@@ -9025,6 +9035,7 @@ async def get_account(user_id: int):
     c.execute("SELECT COUNT(*) + 1 FROM users WHERE points > %s", (row[4],))
     rank = c.fetchone()[0]
     conn.close()
+    response.headers["Cache-Control"] = "private, max-age=60"
     return {
         "user_id": row[0],
         "username": row[1],

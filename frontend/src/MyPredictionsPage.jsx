@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trophy, CheckCircle, XCircle, Clock, Star, Users, BarChart2, ChevronDown, ChevronUp, RefreshCw, BarChart3 } from 'lucide-react';
 import * as api from './services/api';
 
@@ -76,33 +77,28 @@ const PickBar = ({ label, color, items, icon: Icon }) => {
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
+const _EMPTY_PREDS = { playoff_predictions: [], playin_predictions: [], futures_prediction: null, leaders_prediction: null, total_predictions: 0 };
+
 const MyPredictionsPage = ({ currentUser }) => {
-  const [predictions, setPredictions] = useState({ playoff_predictions: [], playin_predictions: [], futures_prediction: null, leaders_prediction: null, total_predictions: 0 });
-  const [community, setCommunity] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
   const [showCommunity, setShowCommunity] = useState(false);
 
-  useEffect(() => {
-    if (currentUser) {
-      loadPredictions();
-    }
-  }, [currentUser]);
+  const { data: predictions = _EMPTY_PREDS, isLoading: loading, isFetching, refetch } = useQuery({
+    queryKey: ['myPredictions', currentUser?.user_id],
+    queryFn:  () => api.getMyPredictions(currentUser.user_id, '2026'),
+    enabled:  !!currentUser?.user_id,
+    staleTime: 3 * 60 * 1000,
+    gcTime:   20 * 60 * 1000,
+    retry: 1,
+  });
 
-  const loadPredictions = async () => {
-    setLoading(true);
-    try {
-      const [data, comm] = await Promise.all([
-        api.getMyPredictions(currentUser.user_id, '2026'),
-        api.getFuturesAll('2026'),
-      ]);
-      setPredictions(data);
-      setCommunity(comm);
-    } catch (err) {
-      console.error('Error loading predictions:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: community } = useQuery({
+    queryKey: ['futuresAll', '2026'],
+    queryFn:  () => api.getFuturesAll('2026'),
+    staleTime: 10 * 60 * 1000,
+    gcTime:   30 * 60 * 1000,
+    retry: 1,
+  });
 
   if (!currentUser) {
     return (
@@ -120,15 +116,23 @@ const MyPredictionsPage = ({ currentUser }) => {
           <h1 className="text-2xl md:text-4xl font-black text-white mb-2">My Predictions</h1>
           <p className="text-slate-400 text-sm">Track all your playoff picks</p>
         </div>
-        <button onClick={loadPredictions} disabled={loading}
+        <button onClick={() => refetch()} disabled={isFetching}
           className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 shrink-0">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} /> Refresh
         </button>
       </div>
 
       {loading ? (
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent"></div>
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            {[1,2,3].map(i => <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 h-24 animate-pulse" />)}
+          </div>
+          {[1,2,3].map(i => (
+            <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 animate-pulse">
+              <div className="h-4 w-32 bg-slate-800 rounded mb-3" />
+              <div className="h-3 w-48 bg-slate-800/60 rounded" />
+            </div>
+          ))}
         </div>
       ) : (
         <>

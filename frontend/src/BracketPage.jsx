@@ -562,6 +562,7 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
     queryKey: ['seriesPlayers', seriesId],
     queryFn:  () => api.getSeriesPlayers(seriesId),
     staleTime: 30 * 60 * 1000,
+    gcTime:   120 * 60 * 1000,
     enabled: !!seriesId,
   });
 
@@ -1458,6 +1459,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     queryKey: ['series', '2026'],
     queryFn:  () => api.getSeries('2026'),
     staleTime: 60 * 1000,
+    gcTime:   20 * 60 * 1000,
     retry: 3, retryDelay: _retryDelay,
     refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000,
   });
@@ -1465,6 +1467,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     queryKey: ['playin', '2026'],
     queryFn:  () => api.getPlayInGames('2026'),
     staleTime: 60 * 1000,
+    gcTime:   20 * 60 * 1000,
     retry: 3, retryDelay: _retryDelay,
     refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000,
   });
@@ -1473,21 +1476,24 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const { data: allTeams = [],   isLoading: l3, isError: e3, refetch: r3 } = useQuery({
     queryKey: ['teams'],
     queryFn:  () => api.getTeams(),
-    staleTime: 10 * 60 * 1000,   // teams rarely change
+    staleTime: 10 * 60 * 1000,
+    gcTime:   60 * 60 * 1000,   // teams never change — keep in cache 1 hour
     retry: 2, retryDelay: _retryDelay,
   });
   const { data: standingsRaw,    isLoading: l4, isError: e4, refetch: r4 } = useQuery({
     queryKey: ['standings'],
     queryFn:  () => api.getStandings(),
-    staleTime: 10 * 60 * 1000,   // standings are now static (post-cutoff)
+    staleTime: 10 * 60 * 1000,
+    gcTime:   60 * 60 * 1000,   // standings are static post-cutoff — keep in cache 1 hour
     retry: 2, retryDelay: _retryDelay,
-    refetchInterval: 10 * 60 * 1000,  // slow down — standings don't change
+    refetchInterval: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
   const { data: globalStats } = useQuery({
     queryKey: ['globalStats'],
     queryFn:  () => api.getGlobalStats('2026'),
     staleTime: 2 * 60 * 1000,
+    gcTime:   20 * 60 * 1000,
     retry: 2, retryDelay: _retryDelay,
     refetchInterval: 3 * 60 * 1000,
   });
@@ -1500,6 +1506,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     // Without viewer_id the backend sets show_all=false and hides unlocked picks.
     queryFn:  () => api.getMyPredictions(currentUser.user_id, '2026', currentUser.user_id),
     staleTime: 30 * 1000,
+    gcTime:   15 * 60 * 1000,
     enabled:  !!currentUser,
   });
 

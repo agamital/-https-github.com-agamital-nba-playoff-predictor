@@ -992,6 +992,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
     queryFn:  () => api.getSeriesPicks(s.series_id),
     enabled:  picksVisible && expanded,
     staleTime: 2 * 60 * 1000,
+    gcTime:   15 * 60 * 1000,
     retry: 1,
   });
   const picks       = picksData?.picks ?? null;
@@ -1661,6 +1662,7 @@ const GlobalStatsTab = ({ currentUser }) => {
     queryKey: ['globalStats'],
     queryFn:  () => api.getGlobalStats('2026'),
     staleTime: 2 * 60 * 1000,
+    gcTime:   20 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchInterval: 3 * 60 * 1000,
   });
@@ -2052,6 +2054,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
     queryKey: ['leaderboard', 'v2'],
     queryFn:  () => api.getLeaderboard('2026'),
     staleTime: 60 * 1000,
+    gcTime:   15 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchInterval: 3 * 60 * 1000,   // auto-refresh every 3 min after game results arrive
   });
@@ -2430,6 +2433,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
     queryFn:  () => api.getNotificationsSummary(userId),
     enabled:  !!userId,
     staleTime: 2 * 60 * 1000,
+    gcTime:   15 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchInterval: 3 * 60 * 1000,
   });
@@ -2902,6 +2906,7 @@ function App() {
     queryFn:  () => api.getNotificationsSummary(currentUser.user_id),
     enabled:  !!currentUser?.user_id,
     staleTime: 2 * 60 * 1000,
+    gcTime:   15 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchInterval: 3 * 60 * 1000,
   });
@@ -2923,6 +2928,8 @@ function App() {
       import('./UserProfilePage');
       import('./BracketPage');
       import('./FuturesPage');
+      import('./AccountPage');
+      import('./MyPredictionsPage');
     }, 2000);
     return () => clearTimeout(t);
   }, []);
