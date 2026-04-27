@@ -1593,8 +1593,7 @@ const _fmtHighDate = (iso) => {
 };
 
 const PlayoffCurrentHighs = ({ highs }) => {
-  const anyData = highs && Object.values(highs).some(v => v != null);
-  if (!anyData) return null;
+  if (highs === undefined) return null;
 
   return (
     <div className="space-y-2">
@@ -1652,15 +1651,17 @@ const GlobalStatsTab = ({ currentUser }) => {
   });
 
   // Live playoff single-game records — refreshes every 5 min (auto-updates when boxscores sync)
-  const { data: highsData } = useQuery({
+  const { data: highsData, isLoading: highsLoading } = useQuery({
     queryKey: ['playoffHighs', 'v3'],
     queryFn:  () => api.getPlayoffHighs('2026'),
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchInterval: 5 * 60 * 1000,
+    retry: 2,
   });
-  const playoffHighs = highsData?.highs ?? null;
+  // highsData?.highs is an object when loaded; undefined while loading/error
+  const playoffHighs = highsLoading ? undefined : (highsData?.highs ?? null);
 
   if (loading) return (
     <div className="space-y-3">

@@ -8277,60 +8277,17 @@ async def get_playoff_highs(season: str = "2026"):
                 continue
             max_val = row[0]
 
-            # ── Step 2: who set the record, with series context ────────────────
-            # Use correlated subqueries for round/conference/game_number to avoid
-            # fan-out from the series JOIN when a team appears in multiple rounds.
+            # ── Step 2: who set the record ─────────────────────────────────────
+            # Simple fetch — no JOIN fan-out risk. Series context looked up per-row below.
             c.execute(f"""
-                SELECT
-                    pgs.player_name,
-                    pgs.team_abbr,
-                    pgs.{col}   AS value,
-                    pgs.game_date,
-                    (
-                        SELECT s.round
-                        FROM series s
-                        JOIN teams t ON t.abbreviation = pgs.team_abbr
-                        WHERE (s.home_team_id = t.id OR s.away_team_id = t.id)
-                          AND s.season = pgs.season
-                          AND s.round = ANY(%s)
-                        ORDER BY s.id DESC
-                        LIMIT 1
-                    ) AS round,
-                    (
-                        SELECT s.conference
-                        FROM series s
-                        JOIN teams t ON t.abbreviation = pgs.team_abbr
-                        WHERE (s.home_team_id = t.id OR s.away_team_id = t.id)
-                          AND s.season = pgs.season
-                          AND s.round = ANY(%s)
-                        ORDER BY s.id DESC
-                        LIMIT 1
-                    ) AS conference,
-                    (
-                        SELECT COUNT(DISTINCT pgs2.espn_game_id)
-                        FROM player_game_stats pgs2
-                        JOIN teams t2 ON t2.abbreviation = pgs2.team_abbr
-                        JOIN series s2 ON (s2.home_team_id = t2.id OR s2.away_team_id = t2.id)
-                                      AND s2.season = pgs2.season
-                                      AND s2.round = ANY(%s)
-                        JOIN teams tp  ON tp.abbreviation = pgs.team_abbr
-                        WHERE pgs2.season = %s
-                          AND pgs2.game_date >= %s
-                          AND (s2.home_team_id = tp.id OR s2.away_team_id = tp.id)
-                          AND (
-                              pgs2.game_date < pgs.game_date
-                              OR (pgs2.game_date = pgs.game_date
-                                  AND pgs2.espn_game_id <= pgs.espn_game_id)
-                          )
-                    ) AS game_number
+                SELECT DISTINCT pgs.player_name, pgs.team_abbr, pgs.{col}, pgs.game_date, pgs.espn_game_id
                 FROM player_game_stats pgs
                 WHERE pgs.season = %s
                   AND pgs.game_date >= %s
                   AND pgs.{col} = %s
                 ORDER BY pgs.game_date DESC, pgs.player_name
                 LIMIT 10
-            """, (list(PLAYOFF_ROUNDS), list(PLAYOFF_ROUNDS), list(PLAYOFF_ROUNDS),
-                  season, PLAYOFF_START, season, PLAYOFF_START, max_val))
+            """, (season, PLAYOFF_START, max_val))
 
             rows = c.fetchall()
             if not rows:
@@ -8340,18 +8297,43 @@ async def get_playoff_highs(season: str = "2026"):
             # Check for a tie (multiple distinct players with the same max)
             unique_names = list(dict.fromkeys(r[0] for r in rows))  # preserve order, dedupe
             most_recent  = rows[0]  # already ordered by game_date DESC
+            team_abbr    = most_recent[1]
+            game_date    = most_recent[3]
+            espn_game_id = most_recent[4]
+
+            # Look up which playoff round/conference this team is in
+            c.execute("""
+                SELECT s.round, s.conference,
+                       (SELECT COUNT(DISTINCT g.espn_game_id)
+                        FROM player_game_stats g
+                        JOIN teams tt ON tt.abbreviation = g.team_abbr
+                        WHERE g.season = %s AND g.game_date >= %s
+                          AND (tt.id = s.home_team_id OR tt.id = s.away_team_id)
+                          AND (g.game_date < %s OR
+                               (g.game_date = %s AND g.espn_game_id <= %s))
+                       ) AS game_number
+                FROM series s
+                JOIN teams t ON t.abbreviation = %s
+                WHERE (s.home_team_id = t.id OR s.away_team_id = t.id)
+                  AND s.season = %s
+                  AND s.round = ANY(%s)
+                ORDER BY s.id DESC
+                LIMIT 1
+            """, (season, PLAYOFF_START, game_date, game_date, espn_game_id,
+                  team_abbr, season, list(PLAYOFF_ROUNDS)))
+            series_row = c.fetchone()
 
             entry = {
                 'player_name': most_recent[0],
-                'team_abbr':   most_recent[1],
+                'team_abbr':   team_abbr,
                 'value':       most_recent[2],
-                'game_date':   most_recent[3].isoformat() if most_recent[3] else None,
-                'round':       most_recent[4],
-                'conference':  most_recent[5],
-                'game_number': most_recent[6],
+                'game_date':   game_date.isoformat() if game_date else None,
+                'round':       series_row[0] if series_row else None,
+                'conference':  series_row[1] if series_row else None,
+                'game_number': series_row[2] if series_row else None,
             }
             if len(unique_names) > 1:
-                entry['tied_players'] = unique_names[:5]   # cap at 5 for display
+                entry['tied_players'] = unique_names[:5]
             highs[cat] = entry
 
         return {'highs': highs, 'season': season}
