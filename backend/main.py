@@ -3347,18 +3347,9 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
               f"scoreboard: {scoreboard_source})")
         summary['games_processed'] += 1
 
-    # ── Commit boxscore data NOW before Step 5 so averages failure can't
+    # ── Commit boxscore data NOW before Step 5 so a Step 5 failure can't
     # roll back the inserts we just did. ──────────────────────────────────────
-    try:
-        conn.commit()
-        print(f"[Boxscore] ✓ Boxscore inserts committed ({summary['players_upserted']} rows)")
-    except Exception as _ce:
-        print(f"[Boxscore] ✗ Boxscore commit FAILED: {type(_ce).__name__}: {_ce}")
-        summary['boxscore_commit_error'] = str(_ce)
-        try: conn.rollback()
-        except Exception: pass
-        conn.close()
-        return summary
+    conn.commit()
 
     # ── Step 5: Recompute per-game averages from player_game_stats ──────────
     # Match by espn_player_id first; fall back to player name so rows that
@@ -8196,148 +8187,8 @@ async def player_leaders_endpoint(season: str = "2026", limit: int = 10, playoff
             except Exception: pass
 
 
-@app.get("/api/debug/boxscore-dates")
-async def debug_boxscore_dates(season: str = "2026"):
-    """Debug: show distinct game_date values and top scorers in player_game_stats."""
-    conn = None
-    try:
-        conn = get_db_conn()
-        c = conn.cursor()
-        c.execute("""
-            SELECT game_date, COUNT(DISTINCT espn_game_id) AS games, COUNT(*) AS rows
-            FROM player_game_stats
-            WHERE season = %s
-            GROUP BY game_date
-            ORDER BY game_date DESC
-            LIMIT 30
-        """, (season,))
-        dates = [{'date': str(r[0]), 'games': r[1], 'rows': r[2]} for r in c.fetchall()]
-
-        c.execute("""
-            SELECT player_name, team_abbr, points, game_date
-            FROM player_game_stats
-            WHERE season = %s AND game_date >= '2026-04-19'
-            ORDER BY points DESC LIMIT 10
-        """, (season,))
-        top_pts = [{'name': r[0], 'team': r[1], 'pts': r[2], 'date': str(r[3])} for r in c.fetchall()]
-
-        c.execute("""
-            SELECT player_name, team_abbr, points, game_date
-            FROM player_game_stats
-            WHERE season = %s AND game_date < '2026-04-19'
-            ORDER BY points DESC LIMIT 5
-        """, (season,))
-        pre_playoff = [{'name': r[0], 'team': r[1], 'pts': r[2], 'date': str(r[3])} for r in c.fetchall()]
-
-        return {'dates': dates, 'top_pts_after_apr19': top_pts, 'pre_playoff_sample': pre_playoff}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            try: conn.close()
-            except Exception: pass
 
 
-@app.get("/api/debug/pgs-raw")
-async def debug_pgs_raw():
-    """Debug: raw row count, schema, and a test INSERT to diagnose missing playoff data."""
-    conn = None
-    try:
-        conn = get_db_conn()
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM player_game_stats")
-        total = c.fetchone()[0]
-        c.execute("SELECT game_date, season, COUNT(*) FROM player_game_stats GROUP BY game_date, season ORDER BY game_date DESC LIMIT 20")
-        rows = [{'date': str(r[0]), 'season': r[1], 'rows': r[2]} for r in c.fetchall()]
-        # Check if a test row for April 19 exists
-        c.execute("SELECT COUNT(*) FROM player_game_stats WHERE game_date = '2026-04-19'")
-        apr19_count = c.fetchone()[0]
-        # Try inserting a test row and immediately checking it (within same transaction, before commit)
-        c.execute("""
-            INSERT INTO player_game_stats
-                (espn_game_id, game_date, espn_player_id, player_name, espn_team_id, team_abbr, season,
-                 minutes, points, rebounds, assists, steals, blocks, turnovers,
-                 fgm, fga, fg3m, fg3a, ftm, fta, oreb, dreb, fouls, plus_minus)
-            VALUES ('TEST_DEBUG_99999', '2026-04-19', 'TEST_PID_99999', 'Debug TestPlayer', '999', 'TST', '2026',
-                    10.0, 25, 5, 3, 1, 0, 1, 8, 16, 3, 6, 2, 3, 1, 4, 2, 3)
-            ON CONFLICT (espn_game_id, espn_player_id) DO UPDATE SET points = EXCLUDED.points
-            RETURNING espn_game_id, game_date, points
-        """)
-        test_row = c.fetchone()
-        conn.rollback()  # don't keep the test row
-
-        # Now: INSERT, COMMIT, then re-read from a FRESH connection
-        c.execute("""
-            INSERT INTO player_game_stats
-                (espn_game_id, game_date, espn_player_id, player_name, espn_team_id, team_abbr, season,
-                 minutes, points, rebounds, assists, steals, blocks, turnovers,
-                 fgm, fga, fg3m, fg3a, ftm, fta, oreb, dreb, fouls, plus_minus)
-            VALUES ('TEST_COMMIT_99998', '2026-04-20', 'TEST_CPID_99998', 'Commit TestPlayer', '999', 'TST', '2026',
-                    10.0, 99, 5, 3, 1, 0, 1, 8, 16, 3, 6, 2, 3, 1, 4, 2, 3)
-            ON CONFLICT (espn_game_id, espn_player_id) DO UPDATE SET points = EXCLUDED.points
-        """)
-        conn.commit()  # commit it for real
-        conn.close()
-
-        # Now open a BRAND NEW connection and read it back
-        conn2 = get_db_conn()
-        c2 = conn2.cursor()
-        c2.execute("SELECT points, game_date FROM player_game_stats WHERE espn_game_id = 'TEST_COMMIT_99998'")
-        readback = c2.fetchone()
-        # Cleanup
-        c2.execute("DELETE FROM player_game_stats WHERE espn_game_id LIKE 'TEST_%'")
-        conn2.commit()
-        conn2.close()
-        conn = None
-
-        # Sample ESPN game IDs from the DB (first 5 most recent)
-        c2.execute("SELECT DISTINCT espn_game_id, game_date FROM player_game_stats ORDER BY game_date DESC LIMIT 10")
-        sample_ids = [{'id': r[0], 'date': str(r[1])} for r in c2.fetchall()]
-
-        # What does ESPN scoreboard return for April 19?
-        import requests as _http
-        espn_games = []
-        try:
-            resp = _http.get(
-                "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
-                params={"dates": "20260419", "limit": 20},
-                timeout=12,
-            )
-            for ev in resp.json().get("events", []):
-                espn_games.append({'id': ev.get('id'), 'name': ev.get('name'), 'date': ev.get('date')})
-        except Exception as ex:
-            espn_games = [{'error': str(ex)}]
-
-        # Check for triggers on player_game_stats
-        c2.execute("""
-            SELECT trigger_name, event_manipulation, action_statement
-            FROM information_schema.triggers
-            WHERE event_object_table = 'player_game_stats'
-        """)
-        triggers = [{'name': r[0], 'event': r[1], 'action': r[2][:100]} for r in c2.fetchall()]
-
-        # Check max espn_game_id in DB vs what ESPN Apr19 returned
-        c2.execute("SELECT MAX(espn_game_id::bigint) FROM player_game_stats WHERE espn_game_id ~ '^[0-9]+$'")
-        max_db_id = c2.fetchone()[0]
-
-        return {
-            'total_rows': total,
-            'apr19_rows': apr19_count,
-            'by_date_season': rows,
-            'test_insert_returned': str(test_row) if test_row else None,
-            'commit_then_readback': str(readback) if readback else 'NOT FOUND - commit not persisting!',
-            'sample_db_ids': sample_ids,
-            'espn_apr19_games': espn_games,
-            'triggers_on_pgs': triggers,
-            'max_espn_game_id_in_db': max_db_id,
-        }
-    except Exception as e:
-        import traceback
-        return {'error': str(e), 'trace': traceback.format_exc()[-500:]}
-    finally:
-        if conn:
-            try: conn.close()
-            except Exception: pass
 
 
 @app.get("/api/players/playoff-highs")
