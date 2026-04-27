@@ -1653,9 +1653,10 @@ const GlobalStatsTab = ({ currentUser }) => {
 
   // Live playoff single-game records — refreshes every 5 min (auto-updates when boxscores sync)
   const { data: highsData } = useQuery({
-    queryKey: ['playoffHighs'],
+    queryKey: ['playoffHighs', 'v3'],
     queryFn:  () => api.getPlayoffHighs('2026'),
     staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchInterval: 5 * 60 * 1000,
   });

@@ -8176,6 +8176,48 @@ async def player_leaders_endpoint(season: str = "2026", limit: int = 10, playoff
             except Exception: pass
 
 
+@app.get("/api/debug/boxscore-dates")
+async def debug_boxscore_dates(season: str = "2026"):
+    """Debug: show distinct game_date values and top scorers in player_game_stats."""
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT game_date, COUNT(DISTINCT espn_game_id) AS games, COUNT(*) AS rows
+            FROM player_game_stats
+            WHERE season = %s
+            GROUP BY game_date
+            ORDER BY game_date DESC
+            LIMIT 30
+        """, (season,))
+        dates = [{'date': str(r[0]), 'games': r[1], 'rows': r[2]} for r in c.fetchall()]
+
+        c.execute("""
+            SELECT player_name, team_abbr, points, game_date
+            FROM player_game_stats
+            WHERE season = %s AND game_date >= '2026-04-19'
+            ORDER BY points DESC LIMIT 10
+        """, (season,))
+        top_pts = [{'name': r[0], 'team': r[1], 'pts': r[2], 'date': str(r[3])} for r in c.fetchall()]
+
+        c.execute("""
+            SELECT player_name, team_abbr, points, game_date
+            FROM player_game_stats
+            WHERE season = %s AND game_date < '2026-04-19'
+            ORDER BY points DESC LIMIT 5
+        """, (season,))
+        pre_playoff = [{'name': r[0], 'team': r[1], 'pts': r[2], 'date': str(r[3])} for r in c.fetchall()]
+
+        return {'dates': dates, 'top_pts_after_apr19': top_pts, 'pre_playoff_sample': pre_playoff}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
 @app.get("/api/players/playoff-highs")
 async def get_playoff_highs(season: str = "2026"):
     """
@@ -8219,20 +8261,16 @@ async def get_playoff_highs(season: str = "2026"):
         highs = {}
 
         for cat, col in STATS:
-            # ── Step 1: max value from genuine playoff games only ──────────────
-            # Subquery also requires the team to be in a real playoff series so
-            # that stray boxscores (e.g. exhibition scrimmages) are excluded.
+            # ── Step 1: max value — simple date filter only ───────────────────
+            # After play-in ends (Apr 18), all remaining games are genuine playoffs.
+            # No series JOIN needed here; the date filter is the only gate required.
             c.execute(f"""
                 SELECT MAX(pgs.{col})
                 FROM player_game_stats pgs
-                JOIN teams t  ON t.abbreviation = pgs.team_abbr
-                JOIN series s ON (s.home_team_id = t.id OR s.away_team_id = t.id)
-                             AND s.season = pgs.season
-                             AND s.round = ANY(%s)
                 WHERE pgs.season = %s
                   AND pgs.game_date >= %s
                   AND pgs.{col} > 0
-            """, (list(PLAYOFF_ROUNDS), season, PLAYOFF_START))
+            """, (season, PLAYOFF_START))
             row = c.fetchone()
             if not row or row[0] is None:
                 highs[cat] = None
@@ -8240,23 +8278,45 @@ async def get_playoff_highs(season: str = "2026"):
             max_val = row[0]
 
             # ── Step 2: who set the record, with series context ────────────────
-            # game_number = how many distinct games have been played in this
-            # series up to (and including) the record game, counted by date.
+            # Use correlated subqueries for round/conference/game_number to avoid
+            # fan-out from the series JOIN when a team appears in multiple rounds.
             c.execute(f"""
                 SELECT
                     pgs.player_name,
                     pgs.team_abbr,
                     pgs.{col}   AS value,
                     pgs.game_date,
-                    s.round,
-                    s.conference,
+                    (
+                        SELECT s.round
+                        FROM series s
+                        JOIN teams t ON t.abbreviation = pgs.team_abbr
+                        WHERE (s.home_team_id = t.id OR s.away_team_id = t.id)
+                          AND s.season = pgs.season
+                          AND s.round = ANY(%s)
+                        ORDER BY s.id DESC
+                        LIMIT 1
+                    ) AS round,
+                    (
+                        SELECT s.conference
+                        FROM series s
+                        JOIN teams t ON t.abbreviation = pgs.team_abbr
+                        WHERE (s.home_team_id = t.id OR s.away_team_id = t.id)
+                          AND s.season = pgs.season
+                          AND s.round = ANY(%s)
+                        ORDER BY s.id DESC
+                        LIMIT 1
+                    ) AS conference,
                     (
                         SELECT COUNT(DISTINCT pgs2.espn_game_id)
                         FROM player_game_stats pgs2
                         JOIN teams t2 ON t2.abbreviation = pgs2.team_abbr
+                        JOIN series s2 ON (s2.home_team_id = t2.id OR s2.away_team_id = t2.id)
+                                      AND s2.season = pgs2.season
+                                      AND s2.round = ANY(%s)
+                        JOIN teams tp  ON tp.abbreviation = pgs.team_abbr
                         WHERE pgs2.season = %s
                           AND pgs2.game_date >= %s
-                          AND (t2.id = s.home_team_id OR t2.id = s.away_team_id)
+                          AND (s2.home_team_id = tp.id OR s2.away_team_id = tp.id)
                           AND (
                               pgs2.game_date < pgs.game_date
                               OR (pgs2.game_date = pgs.game_date
@@ -8264,16 +8324,13 @@ async def get_playoff_highs(season: str = "2026"):
                           )
                     ) AS game_number
                 FROM player_game_stats pgs
-                JOIN teams t  ON t.abbreviation = pgs.team_abbr
-                JOIN series s ON (s.home_team_id = t.id OR s.away_team_id = t.id)
-                             AND s.season = pgs.season
-                             AND s.round = ANY(%s)
                 WHERE pgs.season = %s
                   AND pgs.game_date >= %s
                   AND pgs.{col} = %s
                 ORDER BY pgs.game_date DESC, pgs.player_name
                 LIMIT 10
-            """, (season, PLAYOFF_START, list(PLAYOFF_ROUNDS), season, PLAYOFF_START, max_val))
+            """, (list(PLAYOFF_ROUNDS), list(PLAYOFF_ROUNDS), list(PLAYOFF_ROUNDS),
+                  season, PLAYOFF_START, season, PLAYOFF_START, max_val))
 
             rows = c.fetchall()
             if not rows:
