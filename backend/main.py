@@ -8182,20 +8182,28 @@ async def get_playoff_highs(season: str = "2026"):
     Returns the current single-game playoff record holder for each stat category
     (points, assists, rebounds, 3-pointers, steals, blocks).
 
-    Each entry includes:
-      - player_name   : who set the record
-      - team_abbr     : their team
-      - value         : the record value
-      - game_date     : ISO date string
-      - round         : series round name
-      - conference    : East / West / Finals
-      - game_number   : which game in the series (1-7)
-      - tied_players  : list of names when multiple players share the same max
-        (only present when tied; player_name is set to the most-recent one)
+    IMPORTANT — only genuine playoff games are considered:
+      • game_date >= PLAYOFF_START (day after play-in ends) — excludes regular season
+        and play-in games whose stats would otherwise contaminate the max.
+      • JOIN to series with an explicit round allowlist — only First Round,
+        Conference Semifinals, Conference Finals, NBA Finals.
+      • A team that played the play-in and then the playoffs would otherwise have
+        its play-in game matched by the series JOIN; the date filter prevents that.
 
-    The record updates automatically whenever boxscores are synced and a player
-    beats the current best.  If no boxscore data exists yet, the category returns null.
+    The record is dynamic: whenever boxscores sync and someone beats the current
+    best, the endpoint returns the new holder automatically.
     """
+    # 2026 NBA Play-In ended April 18; First Round tip-off: April 19.
+    # Any game before this date is regular-season or play-in — excluded.
+    PLAYOFF_START = '2026-04-19'
+
+    PLAYOFF_ROUNDS = (
+        'First Round',
+        'Conference Semifinals',
+        'Conference Finals',
+        'NBA Finals',
+    )
+
     STATS = [
         ('scorer',   'points'),
         ('assists',  'assists'),
@@ -8211,25 +8219,34 @@ async def get_playoff_highs(season: str = "2026"):
         highs = {}
 
         for cat, col in STATS:
-            # Step 1: find the max value in the whole playoff
-            c.execute(
-                f"SELECT MAX({col}) FROM player_game_stats WHERE season = %s AND {col} > 0",
-                (season,)
-            )
+            # ── Step 1: max value from genuine playoff games only ──────────────
+            # Subquery also requires the team to be in a real playoff series so
+            # that stray boxscores (e.g. exhibition scrimmages) are excluded.
+            c.execute(f"""
+                SELECT MAX(pgs.{col})
+                FROM player_game_stats pgs
+                JOIN teams t  ON t.abbreviation = pgs.team_abbr
+                JOIN series s ON (s.home_team_id = t.id OR s.away_team_id = t.id)
+                             AND s.season = pgs.season
+                             AND s.round = ANY(%s)
+                WHERE pgs.season = %s
+                  AND pgs.game_date >= %s
+                  AND pgs.{col} > 0
+            """, (list(PLAYOFF_ROUNDS), season, PLAYOFF_START))
             row = c.fetchone()
             if not row or row[0] is None:
                 highs[cat] = None
                 continue
             max_val = row[0]
 
-            # Step 2: find all players who hit that max, join to series for context.
-            # game_number = count of distinct games in the same series up to and
-            # including this game (ordered by date, then espn_game_id as tiebreak).
+            # ── Step 2: who set the record, with series context ────────────────
+            # game_number = how many distinct games have been played in this
+            # series up to (and including) the record game, counted by date.
             c.execute(f"""
                 SELECT
                     pgs.player_name,
                     pgs.team_abbr,
-                    pgs.{col}          AS value,
+                    pgs.{col}   AS value,
                     pgs.game_date,
                     s.round,
                     s.conference,
@@ -8238,6 +8255,7 @@ async def get_playoff_highs(season: str = "2026"):
                         FROM player_game_stats pgs2
                         JOIN teams t2 ON t2.abbreviation = pgs2.team_abbr
                         WHERE pgs2.season = %s
+                          AND pgs2.game_date >= %s
                           AND (t2.id = s.home_team_id OR t2.id = s.away_team_id)
                           AND (
                               pgs2.game_date < pgs.game_date
@@ -8249,31 +8267,17 @@ async def get_playoff_highs(season: str = "2026"):
                 JOIN teams t  ON t.abbreviation = pgs.team_abbr
                 JOIN series s ON (s.home_team_id = t.id OR s.away_team_id = t.id)
                              AND s.season = pgs.season
+                             AND s.round = ANY(%s)
                 WHERE pgs.season = %s
+                  AND pgs.game_date >= %s
                   AND pgs.{col} = %s
                 ORDER BY pgs.game_date DESC, pgs.player_name
                 LIMIT 10
-            """, (season, season, max_val))
+            """, (season, PLAYOFF_START, list(PLAYOFF_ROUNDS), season, PLAYOFF_START, max_val))
 
             rows = c.fetchall()
             if not rows:
-                # Max exists in player_game_stats but no series join — use simpler fallback
-                c.execute(f"""
-                    SELECT player_name, team_abbr, {col}, game_date
-                    FROM player_game_stats
-                    WHERE season = %s AND {col} = %s
-                    ORDER BY game_date DESC
-                    LIMIT 1
-                """, (season, max_val))
-                fb = c.fetchone()
-                if fb:
-                    highs[cat] = {
-                        'player_name': fb[0], 'team_abbr': fb[1], 'value': fb[2],
-                        'game_date': fb[3].isoformat() if fb[3] else None,
-                        'round': None, 'conference': None, 'game_number': None,
-                    }
-                else:
-                    highs[cat] = None
+                highs[cat] = None
                 continue
 
             # Check for a tie (multiple distinct players with the same max)
