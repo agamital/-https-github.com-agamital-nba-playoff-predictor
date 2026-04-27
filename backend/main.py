@@ -8288,6 +8288,18 @@ async def debug_pgs_raw():
         except Exception as ex:
             espn_games = [{'error': str(ex)}]
 
+        # Check for triggers on player_game_stats
+        c2.execute("""
+            SELECT trigger_name, event_manipulation, action_statement
+            FROM information_schema.triggers
+            WHERE event_object_table = 'player_game_stats'
+        """)
+        triggers = [{'name': r[0], 'event': r[1], 'action': r[2][:100]} for r in c2.fetchall()]
+
+        # Check max espn_game_id in DB vs what ESPN Apr19 returned
+        c2.execute("SELECT MAX(espn_game_id::bigint) FROM player_game_stats WHERE espn_game_id ~ '^[0-9]+$'")
+        max_db_id = c2.fetchone()[0]
+
         return {
             'total_rows': total,
             'apr19_rows': apr19_count,
@@ -8296,6 +8308,8 @@ async def debug_pgs_raw():
             'commit_then_readback': str(readback) if readback else 'NOT FOUND - commit not persisting!',
             'sample_db_ids': sample_ids,
             'espn_apr19_games': espn_games,
+            'triggers_on_pgs': triggers,
+            'max_espn_game_id_in_db': max_db_id,
         }
     except Exception as e:
         import traceback
