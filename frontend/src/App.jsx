@@ -2066,13 +2066,14 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
             </p>
           </div>
           <div className="text-right shrink-0">
-            <div className="flex items-baseline gap-1 justify-end">
-              <span className="text-2xl font-black text-orange-400">{myRank.points}</span>
-              {(myRank.provisional_leaders_pts ?? 0) > 0 && (
-                <span className="text-[13px] font-black text-amber-400">+{myRank.provisional_leaders_pts}✦</span>
-              )}
-            </div>
+            <div className="text-2xl font-black text-orange-400">{myRank.points}</div>
             <div className="text-[10px] text-slate-500 font-bold uppercase">pts</div>
+            {(myRank.provisional_leaders_pts ?? 0) > 0 && (
+              <div className="mt-1 flex items-center gap-1 justify-end bg-amber-400/20 border border-amber-400/50 rounded-full px-2 py-0.5 animate-pulse">
+                <span className="text-xs font-black text-amber-300">+{myRank.provisional_leaders_pts}</span>
+                <span className="text-[10px] text-amber-400">⚡</span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2196,37 +2197,51 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                   {/* Points + provisional + chevron */}
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="text-right">
-                      <div className="flex items-baseline gap-1 justify-end">
-                        <span className={`text-xl font-black ${isMe ? 'text-orange-400' : 'text-orange-400'}`}>{user.points}</span>
-                        {provPts > 0 && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setProvPopover(provPopover === user.user_id ? null : user.user_id); }}
-                            className="text-[11px] font-black text-amber-400 hover:text-amber-300 transition-colors leading-none"
-                            title="Provisional leaders pts — click to see breakdown"
-                          >
-                            +{provPts}✦
-                          </button>
-                        )}
-                      </div>
+                      <div className="text-xl font-black text-orange-400">{user.points}</div>
                       <div className="text-[10px] text-slate-500 font-bold">pts</div>
+                      {provPts > 0 && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setProvPopover(provPopover === user.user_id ? null : user.user_id); }}
+                          className="mt-1 flex items-center gap-0.5 bg-amber-400/20 hover:bg-amber-400/35 active:bg-amber-400/50 border border-amber-400/50 rounded-full px-2 py-0.5 transition-all cursor-pointer animate-pulse hover:animate-none"
+                          title="Provisional leaders pts — tap to see breakdown"
+                        >
+                          <span className="text-[11px] font-black text-amber-300">+{provPts}</span>
+                          <span className="text-[9px] text-amber-400">⚡</span>
+                        </button>
+                      )}
                     </div>
                     <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                   </div>
                 </div>
 
-                {/* Provisional popover */}
+                {/* Provisional breakdown panel */}
                 {provPopover === user.user_id && hasProvBreakdown && (
-                  <div className="mx-3 sm:mx-4 mb-1 bg-amber-500/10 border border-amber-500/30 rounded-xl p-3">
-                    <p className="text-[11px] font-black text-amber-400 mb-2">✦ Provisional Leaders Pts <span className="text-slate-500 font-normal">(based on current records)</span></p>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {Object.entries(provBreakdown).map(([cat, pts]) => (
-                        <div key={cat} className="bg-slate-800/70 rounded-lg px-2 py-1.5 text-center">
-                          <p className="text-[13px] font-black text-amber-400">+{pts}</p>
-                          <p className="text-[9px] text-slate-500 uppercase font-bold capitalize">{cat}</p>
-                        </div>
-                      ))}
+                  <div className="mx-3 sm:mx-4 mb-2 rounded-2xl overflow-hidden border border-amber-400/40 bg-gradient-to-b from-amber-500/10 to-amber-500/5">
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-4 py-2.5 border-b border-amber-400/20">
+                      <div className="flex items-center gap-2">
+                        <span className="text-amber-400 text-base">⚡</span>
+                        <span className="text-sm font-black text-amber-300">Provisional Pts</span>
+                        <span className="text-[10px] text-slate-500 font-normal">from Max Bets</span>
+                      </div>
+                      <span className="text-lg font-black text-amber-400">+{provPts}</span>
                     </div>
-                    <p className="text-[10px] text-slate-600 mt-2">These pts are temporary — finalized when playoffs end.</p>
+                    {/* Category tiles */}
+                    <div className="grid grid-cols-3 gap-2 p-3">
+                      {Object.entries(provBreakdown).map(([cat, catPts]) => {
+                        const catLabel = { scorer: '🏀 Points', assists: '🎯 Assists', rebounds: '💪 Rebounds', threes: '🎯 Threes', steals: '🤚 Steals', blocks: '🚫 Blocks' }[cat] || cat;
+                        return (
+                          <div key={cat} className="bg-amber-500/10 border border-amber-400/25 rounded-xl p-2.5 text-center">
+                            <p className="text-base font-black text-amber-300">+{catPts}</p>
+                            <p className="text-[10px] text-slate-400 font-bold mt-0.5">{catLabel}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Footer note */}
+                    <div className="px-4 pb-3 flex items-center gap-1.5">
+                      <span className="text-[10px] text-slate-500">⏳ Based on current records — points finalize when playoffs end</span>
+                    </div>
                   </div>
                 )}
 
