@@ -8220,7 +8220,7 @@ async def debug_boxscore_dates(season: str = "2026"):
 
 @app.get("/api/debug/pgs-raw")
 async def debug_pgs_raw():
-    """Debug: raw row count and latest dates from player_game_stats."""
+    """Debug: raw row count, schema, and a test INSERT to diagnose missing playoff data."""
     conn = None
     try:
         conn = get_db_conn()
@@ -8229,11 +8229,31 @@ async def debug_pgs_raw():
         total = c.fetchone()[0]
         c.execute("SELECT game_date, season, COUNT(*) FROM player_game_stats GROUP BY game_date, season ORDER BY game_date DESC LIMIT 20")
         rows = [{'date': str(r[0]), 'season': r[1], 'rows': r[2]} for r in c.fetchall()]
-        c.execute("SELECT points, player_name, game_date FROM player_game_stats WHERE game_date >= '2026-04-19' ORDER BY points DESC LIMIT 5")
-        top = [{'pts': r[0], 'name': r[1], 'date': str(r[2])} for r in c.fetchall()]
-        return {'total_rows': total, 'by_date_season': rows, 'top_pts_playoff': top}
+        # Check if a test row for April 19 exists
+        c.execute("SELECT COUNT(*) FROM player_game_stats WHERE game_date = '2026-04-19'")
+        apr19_count = c.fetchone()[0]
+        # Try inserting a test row and immediately checking it (within same transaction, before commit)
+        c.execute("""
+            INSERT INTO player_game_stats
+                (espn_game_id, game_date, espn_player_id, player_name, espn_team_id, team_abbr, season,
+                 minutes, points, rebounds, assists, steals, blocks, turnovers,
+                 fgm, fga, fg3m, fg3a, ftm, fta, oreb, dreb, fouls, plus_minus)
+            VALUES ('TEST_DEBUG_99999', '2026-04-19', 'TEST_PID_99999', 'Debug TestPlayer', '999', 'TST', '2026',
+                    10.0, 25, 5, 3, 1, 0, 1, 8, 16, 3, 6, 2, 3, 1, 4, 2, 3)
+            ON CONFLICT (espn_game_id, espn_player_id) DO UPDATE SET points = EXCLUDED.points
+            RETURNING espn_game_id, game_date, points
+        """)
+        test_row = c.fetchone()
+        conn.rollback()  # don't keep the test row
+        return {
+            'total_rows': total,
+            'apr19_rows': apr19_count,
+            'by_date_season': rows,
+            'test_insert_returned': str(test_row) if test_row else None,
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        return {'error': str(e), 'trace': traceback.format_exc()[-500:]}
     finally:
         if conn:
             try: conn.close()
