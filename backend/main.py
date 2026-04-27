@@ -3399,7 +3399,27 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
     except Exception as _avg_err:
         print(f"[Boxscore] ⚠ Average recompute failed: {_avg_err}")
 
-    conn.commit()
+    # ── Check transaction state before commit ─────────────────────────────────
+    try:
+        import psycopg2
+        raw_conn = object.__getattribute__(conn, '_c') if hasattr(conn, '_c') else conn
+        txn_status = raw_conn.get_transaction_status()
+        summary['txn_status_before_commit'] = txn_status  # 0=idle,1=active,2=intrans,3=inerror,4=unknown
+        print(f"[Boxscore] transaction status before commit: {txn_status} "
+              f"(2=ok,3=ABORTED — will rollback on commit)")
+    except Exception as _ts:
+        summary['txn_status_before_commit'] = f'check_error:{_ts}'
+
+    try:
+        conn.commit()
+        summary['commit_result'] = 'ok'
+        print(f"[Boxscore] conn.commit() succeeded")
+    except Exception as _ce:
+        summary['commit_result'] = f'FAILED:{_ce}'
+        print(f"[Boxscore] conn.commit() FAILED: {_ce}")
+        try: conn.rollback()
+        except Exception: pass
+
     conn.close()
     # Record successful sync timestamp so TTL gate can skip redundant calls
     _boxscore_last_sync[date_iso] = datetime.utcnow()
