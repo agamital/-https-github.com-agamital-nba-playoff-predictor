@@ -3399,6 +3399,56 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
         try: conn.rollback()
         except Exception: pass
 
+    # ── Step 6: Auto-update series leaders from player_game_stats ────────────
+    # For each active playoff series, recompute leading scorer / rebounder /
+    # assister by summing stats from player_game_stats for both teams, starting
+    # from game1_start_time so earlier-round games aren't double-counted.
+    try:
+        c.execute("""
+            SELECT s.id,
+                   ht.abbreviation AS home_abbr,
+                   at.abbreviation AS away_abbr,
+                   COALESCE(DATE(s.game1_start_time), %s::date) AS series_start
+            FROM series s
+            JOIN teams ht ON ht.id = s.home_team_id
+            JOIN teams at ON at.id = s.away_team_id
+            WHERE s.season = %s AND s.status = 'active'
+        """, ('2026-04-19', season))
+        active_series = c.fetchall()
+
+        for sid, home_abbr, away_abbr, series_start in active_series:
+            c.execute("""
+                SELECT player_name,
+                       SUM(points)   AS total_pts,
+                       SUM(rebounds) AS total_reb,
+                       SUM(assists)  AS total_ast
+                FROM player_game_stats
+                WHERE season = %s
+                  AND game_date >= %s
+                  AND team_abbr IN (%s, %s)
+                GROUP BY player_name
+            """, (season, series_start, home_abbr, away_abbr))
+            rows = c.fetchall()
+            if not rows:
+                continue
+            scorer    = max(rows, key=lambda r: r[1] or 0)[0]
+            rebounder = max(rows, key=lambda r: r[2] or 0)[0]
+            assister  = max(rows, key=lambda r: r[3] or 0)[0]
+            c.execute("""
+                UPDATE series SET
+                    actual_leading_scorer    = %s,
+                    actual_leading_rebounder = %s,
+                    actual_leading_assister  = %s
+                WHERE id = %s
+            """, (scorer, rebounder, assister, sid))
+
+        conn.commit()
+        print(f"[Boxscore] ✓ Updated leaders for {len(active_series)} active series")
+    except Exception as _leaders_err:
+        print(f"[Boxscore] ⚠ Series leaders update failed (non-critical): {type(_leaders_err).__name__}: {_leaders_err}")
+        try: conn.rollback()
+        except Exception: pass
+
     conn.close()
     # Record successful sync timestamp so TTL gate can skip redundant calls
     _boxscore_last_sync[date_iso] = datetime.utcnow()
