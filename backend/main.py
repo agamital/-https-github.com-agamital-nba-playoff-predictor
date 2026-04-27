@@ -5568,7 +5568,7 @@ async def leaderboard(season: str = "2026"):
                             awarded = tier_pts
                             break
                     if awarded > 0:
-                        breakdown[cat] = awarded
+                        breakdown[cat] = {'pts': awarded, 'predicted': int(pred), 'record': int(high)}
                         total_prov += awarded
 
                 entry['provisional_leaders_pts'] = total_prov

@@ -2116,6 +2116,12 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
             const provPts      = user.provisional_leaders_pts ?? 0;
             const provBreakdown = user.provisional_breakdown ?? {};
             const hasProvBreakdown = provPts > 0 && Object.keys(provBreakdown).length > 0;
+            // Support both old (int) and new (object) breakdown format
+            const provBreakdownNorm = Object.fromEntries(
+              Object.entries(provBreakdown).map(([k, v]) =>
+                [k, typeof v === 'object' ? v : { pts: v, predicted: null, record: null }]
+              )
+            );
             const hasBreakdown = [seriesPts, playinPts, futuresPts, leadersPts].some(v => v != null && v > 0);
             const bullseyes  = user.bullseyes_count ?? 0;
 
@@ -2227,13 +2233,29 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                       <span className="text-lg font-black text-amber-400">+{provPts}</span>
                     </div>
                     {/* Category tiles */}
-                    <div className="grid grid-cols-3 gap-2 p-3">
-                      {Object.entries(provBreakdown).map(([cat, catPts]) => {
-                        const catLabel = { scorer: '🏀 Points', assists: '🎯 Assists', rebounds: '💪 Rebounds', threes: '🎯 Threes', steals: '🤚 Steals', blocks: '🚫 Blocks' }[cat] || cat;
+                    <div className="grid grid-cols-2 gap-2 p-3">
+                      {Object.entries(provBreakdownNorm).map(([cat, info]) => {
+                        const { pts: catPts, predicted, record } = typeof info === 'object' ? info : { pts: info, predicted: null, record: null };
+                        const catLabel = { scorer: '🏀 Points', assists: '🎯 Assists', rebounds: '💪 Rebounds', threes: '3️⃣ Threes', steals: '🤚 Steals', blocks: '🚫 Blocks' }[cat] || cat;
+                        const exact = predicted === record;
                         return (
-                          <div key={cat} className="bg-amber-500/10 border border-amber-400/25 rounded-xl p-2.5 text-center">
-                            <p className="text-base font-black text-amber-300">+{catPts}</p>
-                            <p className="text-[10px] text-slate-400 font-bold mt-0.5">{catLabel}</p>
+                          <div key={cat} className="bg-amber-500/10 border border-amber-400/25 rounded-xl p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[11px] font-black text-slate-300">{catLabel}</span>
+                              <span className="text-sm font-black text-amber-300">+{catPts}</span>
+                            </div>
+                            {predicted != null && record != null && (
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2.5 py-1.5">
+                                  <span className="text-[10px] text-slate-500 font-bold">Your bet</span>
+                                  <span className="text-[13px] font-black text-white">{predicted}</span>
+                                </div>
+                                <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2.5 py-1.5">
+                                  <span className="text-[10px] text-slate-500 font-bold">Record</span>
+                                  <span className={`text-[13px] font-black ${exact ? 'text-green-400' : 'text-cyan-400'}`}>{record} {exact ? '✓' : ''}</span>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
