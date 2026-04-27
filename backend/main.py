@@ -3347,18 +3347,18 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
               f"scoreboard: {scoreboard_source})")
         summary['games_processed'] += 1
 
-    # ── Diagnostic: count rows visible in this transaction before commit ──────
+    # ── Commit boxscore data NOW before Step 5 so averages failure can't
+    # roll back the inserts we just did. ──────────────────────────────────────
     try:
-        c.execute("SELECT COUNT(*) FROM player_game_stats WHERE game_date >= '2026-04-19'")
-        _count_before_commit = c.fetchone()[0]
-        print(f"[Boxscore] PRE-COMMIT row count (game_date >= 2026-04-19): {_count_before_commit}")
-        c.execute("SELECT COUNT(*) FROM player_game_stats")
-        _total_before_commit = c.fetchone()[0]
-        print(f"[Boxscore] PRE-COMMIT total rows: {_total_before_commit}")
-        summary['pre_commit_playoff_rows'] = _count_before_commit
-        summary['pre_commit_total_rows'] = _total_before_commit
-    except Exception as _dc:
-        print(f"[Boxscore] Diagnostic count error: {_dc}")
+        conn.commit()
+        print(f"[Boxscore] ✓ Boxscore inserts committed ({summary['players_upserted']} rows)")
+    except Exception as _ce:
+        print(f"[Boxscore] ✗ Boxscore commit FAILED: {type(_ce).__name__}: {_ce}")
+        summary['boxscore_commit_error'] = str(_ce)
+        try: conn.rollback()
+        except Exception: pass
+        conn.close()
+        return summary
 
     # ── Step 5: Recompute per-game averages from player_game_stats ──────────
     # Match by espn_player_id first; fall back to player name so rows that
@@ -3397,26 +3397,13 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
         updated_rows = c.rowcount
         print(f"[Boxscore] ✓ Recomputed per-game averages for {updated_rows} players")
     except Exception as _avg_err:
-        print(f"[Boxscore] ⚠ Average recompute failed: {_avg_err}")
-
-    # ── Check transaction state before commit ─────────────────────────────────
-    try:
-        import psycopg2
-        raw_conn = object.__getattribute__(conn, '_c') if hasattr(conn, '_c') else conn
-        txn_status = raw_conn.get_transaction_status()
-        summary['txn_status_before_commit'] = txn_status  # 0=idle,1=active,2=intrans,3=inerror,4=unknown
-        print(f"[Boxscore] transaction status before commit: {txn_status} "
-              f"(2=ok,3=ABORTED — will rollback on commit)")
-    except Exception as _ts:
-        summary['txn_status_before_commit'] = f'check_error:{_ts}'
+        print(f"[Boxscore] ⚠ Average recompute failed (non-critical): {type(_avg_err).__name__}: {_avg_err}")
+        try: conn.rollback()
+        except Exception: pass
 
     try:
-        conn.commit()
-        summary['commit_result'] = 'ok'
-        print(f"[Boxscore] conn.commit() succeeded")
-    except Exception as _ce:
-        summary['commit_result'] = f'FAILED:{_ce}'
-        print(f"[Boxscore] conn.commit() FAILED: {_ce}")
+        conn.commit()  # commit the averages update (if it succeeded)
+    except Exception:
         try: conn.rollback()
         except Exception: pass
 
