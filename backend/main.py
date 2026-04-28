@@ -5119,6 +5119,46 @@ community_series_picks → for each series, how the community voted (% for each 
 - If user_leaders_picks is missing → the user is not logged in or hasn't made leaders picks yet
 - Never say you don't have access to data that IS present in the context JSON below
 
+== HEBREW GLOSSARY — map ANY of these Hebrew phrases to the correct data field ==
+These are all ways Israeli users ask about their bets. Recognize ALL of them:
+
+STAT BETS (user_leaders_picks):
+  top_scorer / נקודות / מלך הניקוד / מי שיקדד הכי הרבה / מקסימום נקודות / הכי הרבה נקודות / מי הניקוד שלי
+  top_assists / בישולים / אסיסטים / מי שיבשל הכי הרבה / מקס אסיסטים / מי הבישולים שלי
+  top_rebounds / ריבאונדים / כדורים / מי שיתפוס הכי הרבה / מקס ריבאונדים / מי הכדורים שלי
+  top_threes / שלשות / שלוש נקודות / מי שיזרוק הכי הרבה שלשות / מקס שלשות / מי השלשות שלי / הימור שלשות / הימור מקסימום שלשות / שלשות מקסימום
+  top_steals / גניבות / מי שיגנוב הכי הרבה / מקס גניבות / מי הגניבות שלי
+  top_blocks / חסימות / בלוקים / מי שיחסום הכי הרבה / מקס חסימות / מי הבלוקים שלי / מקסימום בלוקים
+
+FUTURES BETS (user_futures_picks):
+  champion / אלוף / מי יזכה / מי האלוף שלי / מי ינצח את ה-NBA / טייטל / כותרת
+  west_champ / אלוף המערב / מערב / מי ינצח במערב
+  east_champ / אלוף המזרח / מזרח / מי ינצח במזרח
+  finals_mvp / MVP הגמר / מי יהיה MVP / מי הMVP שלי
+
+SERIES BETS (user_series_picks):
+  הימורי סדרה / מי בחרתי / מי הבחירה שלי / מה ההימור שלי על הסדרה / ניצחון בסדרה
+
+SINGLE-GAME RECORDS:
+  מקסימום בלוק / חסימה מקסימלית / הכי הרבה בלוקים במשחק → record_most_blocks_one_game
+  מקסימום שלשות במשחק / הכי הרבה שלשות במשחק אחד → record_most_points_one_game (points) or stat_leaders_threes
+  מקסימום נקודות במשחק → record_most_points_one_game
+
+LEADERBOARD:
+  דירוג / כמה נקודות יש לי / איפה אני בטבלה / מה המיקום שלי / כמה צברתי
+
+COMMUNITY:
+  מה הקהילה חושבת / כמה אחוז בחרו / רוב המשתמשים / מה הפופולרי
+
+EXAMPLE MAPPINGS:
+  "מה ההימור שלי על שלשות" → user_leaders_picks.top_threes
+  "מי בחרתי כמלך הניקוד" → user_leaders_picks.top_scorer
+  "מה המקס בלוקים שלי" → user_leaders_picks.top_blocks
+  "מי הAVP שלי לגמר" → user_futures_picks.finals_mvp
+  "מה האלוף שלי" → user_futures_picks.champion
+  "כמה נקודות יש לי" → user_points + user_rank
+  "מה הקהילה חושבת על OKC" → community_series_picks for OKC matchup
+
 == STRATEGY TIPS ==
 - Picking a 1-seed upset (8 beats 1) yields up to 160pts vs 80pts for the favourite — high risk, high reward
 - Later rounds multiply all points — prioritise accuracy in Semis/Finals
