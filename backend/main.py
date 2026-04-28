@@ -5296,6 +5296,26 @@ async def chat_test():
     return result
 
 
+@app.get("/api/chat/ping")
+async def chat_ping():
+    """Diagnostic: actually calls Anthropic API with a tiny test message."""
+    key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not key:
+        return {"ok": False, "error": "ANTHROPIC_API_KEY not set"}
+    if not _ANTHROPIC_AVAILABLE:
+        return {"ok": False, "error": "anthropic package not installed"}
+    try:
+        client = _anthropic_sdk.Anthropic(api_key=key)
+        resp = client.messages.create(
+            model="claude-3-5-haiku-latest",
+            max_tokens=10,
+            messages=[{"role": "user", "content": "Say hi"}],
+        )
+        return {"ok": True, "reply": resp.content[0].text, "model": resp.model}
+    except Exception as e:
+        return {"ok": False, "error_type": type(e).__name__, "error": str(e)}
+
+
 @app.get("/api/health")
 async def health_check():
     try:
