@@ -364,6 +364,15 @@ class TeamOddsUpdate(BaseModel):
     odds_championship: float = 1.0
     odds_conference: float = 1.0
 
+class ChatMessage(BaseModel):
+    role: str        # "user" | "assistant"
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    user_id: Optional[int] = None
+    season: str = "2026"
+
 
 def init_db():
     conn = get_db_conn()
@@ -5033,6 +5042,218 @@ async def admin_test_standings():
             "error":          f"{type(nba_err).__name__}: {str(nba_err)[:400]}",
             "hint":           "Set RAPIDAPI_KEY in Railway env vars to use RapidAPI (not IP-blocked). Or use 'Fetch via Browser'.",
         }
+
+
+# ── AI Chatbot ────────────────────────────────────────────────────────────────
+
+_CHAT_SYSTEM_PROMPT = """You are an NBA Playoff Predictor assistant embedded in a pick-em game called "NBA Playoff Predictor 2026."
+Help users make informed decisions about their picks and answer questions about the playoff bracket.
+
+== YOUR ROLE ==
+- Answer questions about picks, strategy, and scoring
+- Suggest optimal picks backed by real data (standings, community votes, seedings)
+- Tell users their ranking and pick accuracy when asked
+- READ-ONLY — you cannot make or change picks for users
+
+== SCORING RULES ==
+PLAY-IN: Correct favourite=5pts | Correct underdog=8pts
+SERIES: Correct winner=50pts base | Exact games=+30pts bonus
+Round multipliers: R1x1.0 | Conf Semis x1.5 | Conf Finals x2.0 | NBA Finals x2.5
+R1 underdog multipliers: 1v8 x2.0 | 2v7 x1.5 | 3v6 x1.2 | 4v5 x1.0
+Stat leaders: +10pts each (scorer/rebounder/assister) per series
+FUTURES: Champion=100pts | Conf Champ=40pts | Finals MVP=30pts | Conf MVPs=20pts each
+
+== STRATEGY TIPS ==
+- Picking a 1-seed upset (8 beats 1) yields up to 160pts vs 80pts for the favourite — high risk, high reward
+- Later rounds multiply all points — prioritise accuracy in Semis/Finals
+- Stat leader bonuses (+30pts total per series) add up — pick them carefully
+- Exact game count doubles your payout for a correct winner pick
+- Community % can signal where the smart money is, but fading the crowd can pay off in upsets
+
+== TONE ==
+- Confident, concise, basketball-smart
+- Use concrete numbers from the context below
+- Keep responses under 200 words unless the user asks for detailed analysis
+- Never fabricate stats, scores, or standings not present in the context
+
+== LIVE CONTEXT (current as of this request) ==
+{context_json}
+
+When a user asks who to pick, cite specific community vote percentages and seedings from the context above.
+When they ask about their ranking, reference their exact rank and points from the context.
+"""
+
+
+def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
+    """Build a compact JSON context string from live DB data for the LLM."""
+    import json as _json
+    c = conn.cursor()
+    ctx = {}
+
+    # 1. Series status (active + completed only — skip pending)
+    c.execute("""
+        SELECT s.round, s.conference,
+               ht.name, ht.abbreviation, s.home_seed, s.home_wins,
+               at.name, at.abbreviation, s.away_seed, s.away_wins,
+               s.status, s.winner_team_id,
+               ht.id AS home_id, at.id AS away_id,
+               COALESCE(s.actual_games, 0)
+        FROM series s
+        JOIN teams ht ON s.home_team_id = ht.id
+        JOIN teams at ON s.away_team_id = at.id
+        WHERE s.season = %s AND s.status IN ('active', 'completed', 'locked')
+        ORDER BY s.round, s.conference
+    """, (season,))
+    series_rows = c.fetchall()
+    ctx["series"] = []
+    for r in series_rows:
+        winner_name = None
+        if r[11]:  # winner_team_id
+            winner_name = r[2] if r[12] == r[11] else r[6]
+        ctx["series"].append({
+            "round": r[0], "conf": r[1],
+            "home": r[3], "home_seed": r[4], "home_wins": r[5],
+            "away": r[7], "away_seed": r[8], "away_wins": r[9],
+            "status": r[10], "winner": winner_name, "total_games": r[14],
+        })
+
+    # 2. Community pick percentages (deduped per user)
+    c.execute("""
+        WITH lp AS (
+            SELECT DISTINCT ON (user_id, series_id)
+                   series_id, predicted_winner_id
+            FROM predictions
+            ORDER BY user_id, series_id, id DESC
+        )
+        SELECT s.id, ht.abbreviation, at.abbreviation,
+               COUNT(lp.predicted_winner_id)::int,
+               SUM(CASE WHEN lp.predicted_winner_id = s.home_team_id THEN 1 ELSE 0 END)::int,
+               SUM(CASE WHEN lp.predicted_winner_id = s.away_team_id THEN 1 ELSE 0 END)::int
+        FROM series s
+        JOIN teams ht ON s.home_team_id = ht.id
+        JOIN teams at ON s.away_team_id = at.id
+        LEFT JOIN lp ON lp.series_id = s.id
+        WHERE s.season = %s AND s.status IN ('active', 'locked')
+        GROUP BY s.id, ht.abbreviation, at.abbreviation
+    """, (season,))
+    ctx["community_picks"] = []
+    for r in c.fetchall():
+        total = r[3] or 0
+        home_v = r[4] or 0
+        away_v = r[5] or 0
+        ctx["community_picks"].append({
+            "home": r[1], "away": r[2],
+            "total_votes": total,
+            "home_pct": round(home_v / total * 100) if total else 50,
+            "away_pct": round(away_v / total * 100) if total else 50,
+        })
+
+    # 3. Leaderboard top 20
+    c.execute("""
+        SELECT username, points,
+               RANK() OVER (ORDER BY points DESC) AS rank
+        FROM users
+        ORDER BY points DESC
+        LIMIT 20
+    """)
+    ctx["leaderboard_top20"] = [
+        {"rank": int(r[2]), "username": r[0], "points": r[1] or 0}
+        for r in c.fetchall()
+    ]
+
+    # 4. User-specific data (if logged in)
+    if user_id:
+        c.execute("""
+            SELECT s.round, s.conference,
+                   ht.abbreviation, at.abbreviation, wt.abbreviation,
+                   p.predicted_games, p.is_correct, p.points_earned
+            FROM predictions p
+            JOIN series s   ON p.series_id = s.id
+            JOIN teams ht   ON s.home_team_id = ht.id
+            JOIN teams at   ON s.away_team_id = at.id
+            LEFT JOIN teams wt ON p.predicted_winner_id = wt.id
+            WHERE p.user_id = %s AND s.season = %s
+            ORDER BY s.round, s.conference
+        """, (user_id, season))
+        ctx["user_picks"] = [
+            {
+                "round": r[0], "conf": r[1],
+                "home": r[2], "away": r[3], "picked": r[4],
+                "games": r[5], "correct": r[6], "pts": r[7] or 0,
+            }
+            for r in c.fetchall()
+        ]
+        c.execute("""
+            SELECT username, points,
+                   (SELECT COUNT(*)+1 FROM users u2 WHERE u2.points > u.points) AS rank
+            FROM users u WHERE id = %s
+        """, (user_id,))
+        urow = c.fetchone()
+        if urow:
+            ctx["user_username"] = urow[0]
+            ctx["user_points"] = urow[1] or 0
+            ctx["user_rank"] = int(urow[2])
+
+    # 5. Top 5 scorers by PPG
+    c.execute("""
+        SELECT player_name, team_abbreviation,
+               pts_per_game, ast_per_game, reb_per_game
+        FROM player_stats
+        WHERE season = %s
+        ORDER BY pts_per_game DESC NULLS LAST
+        LIMIT 5
+    """, (season,))
+    ctx["top_scorers"] = [
+        {
+            "name": r[0], "team": r[1],
+            "ppg": float(r[2] or 0), "apg": float(r[3] or 0), "rpg": float(r[4] or 0),
+        }
+        for r in c.fetchall()
+    ]
+
+    return _json.dumps(ctx, default=str)
+
+
+@app.post("/api/chat")
+async def chat_endpoint(req: ChatRequest):
+    """AI chatbot: builds live DB context, sends to Claude, returns reply."""
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not anthropic_key:
+        raise HTTPException(status_code=503, detail="AI service not configured")
+
+    # Build context from DB
+    conn = None
+    context_json = "{}"
+    try:
+        conn = get_db_conn()
+        context_json = _build_chat_context(conn, req.user_id, req.season)
+    except Exception as e:
+        print(f"[chat] context build error: {e}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    system = _CHAT_SYSTEM_PROMPT.replace("{context_json}", context_json)
+
+    # Only send the last 10 messages to keep token budget bounded
+    history = [{"role": m.role, "content": m.content} for m in req.messages[-10:]]
+
+    try:
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=anthropic_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=512,
+            system=system,
+            messages=history,
+        )
+        return {"reply": response.content[0].text}
+    except Exception as e:
+        print(f"[chat] Anthropic API error: {e}")
+        raise HTTPException(status_code=500, detail="AI service temporarily unavailable")
 
 
 @app.get("/api/health")

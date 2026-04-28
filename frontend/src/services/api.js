@@ -447,6 +447,16 @@ export const lockSeries = async (seriesId, locked) => {
   return response.data;
 };
 
+// AI Chatbot
+export const sendChatMessage = async (messages, userId = null, season = '2026') => {
+  const response = await api.post('/api/chat', {
+    messages,
+    user_id: userId,
+    season,
+  });
+  return response.data; // { reply: string }
+};
+
 export const getTeamRoster = async (teamId) => {
   const response = await api.get(`/api/teams/${teamId}/roster`);
   return response.data;

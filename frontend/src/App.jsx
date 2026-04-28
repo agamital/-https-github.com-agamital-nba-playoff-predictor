@@ -109,6 +109,7 @@ import './index.css';
 // Eagerly-loaded small pages
 import StandingsPage from './StandingsPage';
 import ScoringGuide from './ScoringGuide';
+import ChatBot from './components/ChatBot';
 
 // Lazy-loaded heavy pages (split into separate chunks)
 const MyPredictionsPage  = lazy(() => import('./MyPredictionsPage'));
@@ -3371,6 +3372,9 @@ function App() {
           </button>
         )}
       </nav>
+
+      {/* ── AI CHATBOT ── */}
+      <ChatBot currentUser={currentUser} />
     </div>
   );
 }
