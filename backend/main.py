@@ -5253,7 +5253,7 @@ async def chat_endpoint(req: ChatRequest):
         import anthropic as _anthropic
         client = _anthropic.Anthropic(api_key=anthropic_key)
         response = client.messages.create(
-            model="claude-haiku-4-5",
+            model="claude-3-5-haiku-20241022",
             max_tokens=512,
             system=system,
             messages=history,

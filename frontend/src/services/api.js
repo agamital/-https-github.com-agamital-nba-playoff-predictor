@@ -447,13 +447,13 @@ export const lockSeries = async (seriesId, locked) => {
   return response.data;
 };
 
-// AI Chatbot
+// AI Chatbot — 60s timeout (DB query + Anthropic API + Railway cold-start)
 export const sendChatMessage = async (messages, userId = null, season = '2026') => {
   const response = await api.post('/api/chat', {
     messages,
     user_id: userId,
     season,
-  });
+  }, { timeout: 60000 });
   return response.data; // { reply: string }
 };
 
