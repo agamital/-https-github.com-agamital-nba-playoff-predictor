@@ -5308,26 +5308,32 @@ async def chat_ping():
 
     sdk_version = getattr(_anth_check, "__version__", "unknown")
 
-    # Try models in order of preference
-    models_to_try = [
-        "claude-3-5-haiku-20241022",
-        "claude-3-haiku-20240307",
-        "claude-3-sonnet-20240229",
-    ]
-    client = _anthropic_sdk.Anthropic(api_key=key)
-    errors = {}
-    for model in models_to_try:
-        try:
-            resp = client.messages.create(
-                model=model,
-                max_tokens=10,
-                messages=[{"role": "user", "content": "Say hi"}],
-            )
-            return {"ok": True, "reply": resp.content[0].text, "model": resp.model, "sdk_version": sdk_version}
-        except Exception as e:
-            errors[model] = f"{type(e).__name__}: {str(e)[:120]}"
+    # Check for any env vars that might override the base URL
+    base_url_env = os.getenv("ANTHROPIC_BASE_URL", None)
+    key_len = len(key)
+    key_stripped = key.strip()
+    key_has_whitespace = (key != key_stripped)
 
-    return {"ok": False, "sdk_version": sdk_version, "errors": errors}
+    diag = {
+        "sdk_version": sdk_version,
+        "key_length": key_len,
+        "key_has_whitespace": key_has_whitespace,
+        "key_prefix": key_stripped[:20] + "...",
+        "base_url_env": base_url_env,
+    }
+
+    # Use stripped key
+    client = _anthropic_sdk.Anthropic(api_key=key_stripped)
+
+    try:
+        resp = client.messages.create(
+            model="claude-3-haiku-20240307",
+            max_tokens=10,
+            messages=[{"role": "user", "content": "Say hi"}],
+        )
+        return {"ok": True, "reply": resp.content[0].text, "model": resp.model, **diag}
+    except Exception as e:
+        return {"ok": False, "error_type": type(e).__name__, "error": str(e)[:300], **diag}
 
 
 @app.get("/api/health")
