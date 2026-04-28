@@ -5,14 +5,14 @@ import { sendChatMessage } from '../services/api';
 
 const WELCOME_MESSAGE = {
   role: 'assistant',
-  content: "Hey! 🏀 I'm your NBA Picks AI. Ask me who to pick in any series, what the community thinks, how many points you can earn, or check your current ranking.",
+  content: "Hey! 🏀 I'm your NBA Picks AI.\nAsk me who to pick, what the community thinks, how scoring works, or check your ranking.\n\nאפשר גם לשאול אותי בעברית — אני מבין הכל! 🇮🇱",
 };
 
 const SUGGESTION_CHIPS = [
   "Who should I pick to win the West?",
-  "What does the community think about OKC?",
+  "מה הקהילה חושבת על OKC?",
   "How do underdog picks score?",
-  "What's the highest risk/reward pick right now?",
+  "כמה נקודות אני יכול להרוויח עכשיו?",
 ];
 
 export default function ChatBot({ currentUser }) {
@@ -111,6 +111,7 @@ export default function ChatBot({ currentUser }) {
               </div>
             )}
             <div
+              dir="auto"
               className={`max-w-[82%] rounded-2xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap
                 ${m.role === 'user'
                   ? 'bg-orange-500 text-white rounded-br-sm font-medium'
@@ -163,10 +164,11 @@ export default function ChatBot({ currentUser }) {
       <div className="shrink-0 border-t border-slate-700/80 px-3 py-2.5 flex gap-2 items-end bg-slate-900/50">
         <input
           ref={inputRef}
+          dir="auto"
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask about picks, points, rankings..."
+          placeholder="Ask / שאל אותי על הפלייאוף..."
           disabled={loading}
           className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white
                      placeholder-slate-500 focus:outline-none focus:border-orange-500/70 transition-colors
