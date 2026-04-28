@@ -5299,21 +5299,35 @@ async def chat_test():
 @app.get("/api/chat/ping")
 async def chat_ping():
     """Diagnostic: actually calls Anthropic API with a tiny test message."""
+    import anthropic as _anth_check
     key = os.getenv("ANTHROPIC_API_KEY", "")
     if not key:
         return {"ok": False, "error": "ANTHROPIC_API_KEY not set"}
     if not _ANTHROPIC_AVAILABLE:
         return {"ok": False, "error": "anthropic package not installed"}
-    try:
-        client = _anthropic_sdk.Anthropic(api_key=key)
-        resp = client.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=10,
-            messages=[{"role": "user", "content": "Say hi"}],
-        )
-        return {"ok": True, "reply": resp.content[0].text, "model": resp.model}
-    except Exception as e:
-        return {"ok": False, "error_type": type(e).__name__, "error": str(e)}
+
+    sdk_version = getattr(_anth_check, "__version__", "unknown")
+
+    # Try models in order of preference
+    models_to_try = [
+        "claude-3-5-haiku-20241022",
+        "claude-3-haiku-20240307",
+        "claude-3-sonnet-20240229",
+    ]
+    client = _anthropic_sdk.Anthropic(api_key=key)
+    errors = {}
+    for model in models_to_try:
+        try:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=10,
+                messages=[{"role": "user", "content": "Say hi"}],
+            )
+            return {"ok": True, "reply": resp.content[0].text, "model": resp.model, "sdk_version": sdk_version}
+        except Exception as e:
+            errors[model] = f"{type(e).__name__}: {str(e)[:120]}"
+
+    return {"ok": False, "sdk_version": sdk_version, "errors": errors}
 
 
 @app.get("/api/health")
