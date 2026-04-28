@@ -5263,7 +5263,7 @@ async def chat_endpoint(req: ChatRequest):
             raise HTTPException(status_code=503, detail="anthropic package not installed on server")
         client = _anthropic_sdk.Anthropic(api_key=anthropic_key)
         response = client.messages.create(
-            model="claude-opus-4-7",
+            model="claude-haiku-4-5-20251001",
             max_tokens=512,
             system=system,
             messages=history,
