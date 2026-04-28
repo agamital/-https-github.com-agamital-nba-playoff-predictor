@@ -5077,13 +5077,51 @@ PLAY-IN: Correct favourite=5pts | Correct underdog=8pts
 SERIES: Correct winner=50pts base | Exact games=+30pts bonus
 Round multipliers: R1x1.0 | Conf Semis x1.5 | Conf Finals x2.0 | NBA Finals x2.5
 R1 underdog multipliers: 1v8 x2.0 | 2v7 x1.5 | 3v6 x1.2 | 4v5 x1.0
-Stat leaders: +10pts each (scorer/rebounder/assister) per series
 FUTURES: Champion=100pts | Conf Champ=40pts | Finals MVP=30pts | Conf MVPs=20pts each
+PLAYOFF LEADERS (season-long): Top Scorer=50pts | Top Rebounder=30pts | Top Assister=30pts | Top 3s=30pts | Top Steals=30pts | Top Blocks=30pts
+
+== HOW TO READ THE LIVE CONTEXT JSON ==
+The context contains several sections — here is what each key means:
+
+user_series_picks → the user's picks for each playoff series (who they picked to win, in how many games, whether it was correct, and points earned)
+user_futures_picks → the user's season-long futures bets:
+  • champion = team they picked to win the NBA title
+  • west_champ / east_champ = conference champions they picked
+  • finals_mvp / west_finals_mvp / east_finals_mvp = MVP picks
+user_leaders_picks → the user's bets on which PLAYER will lead the ENTIRE playoffs in each stat category:
+  • top_scorer = player they bet will score the most PPG across all playoff games
+  • top_assists = player they bet will lead playoffs in assists
+  • top_rebounds = player they bet will lead playoffs in rebounds
+  • top_threes = player they bet will make the most 3-pointers per game in the playoffs
+  • top_steals = player they bet will lead playoffs in steals
+  • top_blocks = player they bet will lead playoffs in blocks (most BPG across all playoff games)
+  • correct=1 means that bet was correct, correct=0 means wrong, correct=null means still pending
+user_playin_picks → the user's play-in tournament picks
+
+community_top_blocks_picks → how many users picked each player as the playoff blocks leader, with %
+community_top_threes_picks → how many users picked each player as the 3-pointers leader, with %
+community_champion_picks / community_west_champ_picks / community_east_champ_picks → futures picks from all users
+community_finals_mvp_picks → Finals MVP picks across all users
+
+stat_leaders_blocks → current per-game blocks leaders in the playoffs (actual live stats)
+stat_leaders_scoring → current per-game scoring leaders
+stat_leaders_threes → current per-game 3-pointers leaders
+record_most_blocks_one_game → highest single-game block totals this postseason
+record_most_points_one_game → highest single-game scoring performances
+community_series_picks → for each series, how the community voted (% for each team)
+
+== IMPORTANT RULES FOR ANSWERING ==
+- "What is my [stat] bet?" or "Who did I bet on for [stat]?" → look in user_leaders_picks
+- "Who leads in [stat]?" → look in stat_leaders_[stat]
+- "What is the record for most [stat] in one game?" → look in record_most_[stat]_one_game
+- "What does the community think about [X]?" → look in community_* sections
+- "What are my futures picks?" → look in user_futures_picks
+- If user_leaders_picks is missing → the user is not logged in or hasn't made leaders picks yet
+- Never say you don't have access to data that IS present in the context JSON below
 
 == STRATEGY TIPS ==
 - Picking a 1-seed upset (8 beats 1) yields up to 160pts vs 80pts for the favourite — high risk, high reward
 - Later rounds multiply all points — prioritise accuracy in Semis/Finals
-- Stat leader bonuses (+30pts total per series) add up — pick them carefully
 - Exact game count doubles your payout for a correct winner pick
 - Community % can signal where the smart money is, but fading the crowd can pay off in upsets
 
@@ -5331,32 +5369,32 @@ def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
                 "points_earned": frow[9] or 0,
             }
 
-        # Leaders/stat picks (top scorer, blocks, etc.)
+        # Leaders/stat picks — fetch raw player IDs first, then resolve names
         c.execute("""
-            SELECT ts.player_name, ta.player_name, tr.player_name,
-                   tth.player_name, tst.player_name, tbl.player_name,
-                   lp.is_correct_scorer, lp.is_correct_assists,
-                   lp.is_correct_rebounds, lp.is_correct_threes,
-                   lp.is_correct_steals, lp.is_correct_blocks,
-                   lp.points_earned
-            FROM leaders_predictions lp
-            LEFT JOIN player_stats ts  ON ts.player_id = lp.top_scorer   AND ts.season = %s
-            LEFT JOIN player_stats ta  ON ta.player_id = lp.top_assists   AND ta.season = %s
-            LEFT JOIN player_stats tr  ON tr.player_id = lp.top_rebounds  AND tr.season = %s
-            LEFT JOIN player_stats tth ON tth.player_id = lp.top_threes   AND tth.season = %s
-            LEFT JOIN player_stats tst ON tst.player_id = lp.top_steals   AND tst.season = %s
-            LEFT JOIN player_stats tbl ON tbl.player_id = lp.top_blocks   AND tbl.season = %s
-            WHERE lp.user_id = %s AND lp.season = %s
-        """, (season,) * 6 + (user_id, season))
+            SELECT top_scorer, top_assists, top_rebounds,
+                   top_threes, top_steals, top_blocks,
+                   is_correct_scorer, is_correct_assists,
+                   is_correct_rebounds, is_correct_threes,
+                   is_correct_steals, is_correct_blocks,
+                   points_earned
+            FROM leaders_predictions
+            WHERE user_id = %s AND season = %s
+        """, (user_id, season))
         lrow = c.fetchone()
         if lrow:
+            def _resolve_player(pid):
+                if not pid:
+                    return None
+                c.execute("SELECT player_name FROM player_stats WHERE player_id = %s LIMIT 1", (pid,))
+                r = c.fetchone()
+                return r[0] if r else f"player_id:{pid}"
             ctx["user_leaders_picks"] = {
-                "top_scorer":    {"player": lrow[0],  "correct": lrow[6]},
-                "top_assists":   {"player": lrow[1],  "correct": lrow[7]},
-                "top_rebounds":  {"player": lrow[2],  "correct": lrow[8]},
-                "top_threes":    {"player": lrow[3],  "correct": lrow[9]},
-                "top_steals":    {"player": lrow[4],  "correct": lrow[10]},
-                "top_blocks":    {"player": lrow[5],  "correct": lrow[11]},
+                "top_scorer":    {"player": _resolve_player(lrow[0]),  "correct": lrow[6]},
+                "top_assists":   {"player": _resolve_player(lrow[1]),  "correct": lrow[7]},
+                "top_rebounds":  {"player": _resolve_player(lrow[2]),  "correct": lrow[8]},
+                "top_threes":    {"player": _resolve_player(lrow[3]),  "correct": lrow[9]},
+                "top_steals":    {"player": _resolve_player(lrow[4]),  "correct": lrow[10]},
+                "top_blocks":    {"player": _resolve_player(lrow[5]),  "correct": lrow[11]},
                 "points_earned": lrow[12] or 0,
             }
 
