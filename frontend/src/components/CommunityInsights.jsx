@@ -110,10 +110,19 @@ const CommunityInsights = ({
       })
     : null;
 
+  // Gold = correct winner AND correct games; green = correct winner only; red = wrong
+  const isPerfect = (p) =>
+    p.is_correct === 1 &&
+    p.predicted_games != null &&
+    actuals?.games != null &&
+    +p.predicted_games === +actuals.games;
+
   // Row styling by correctness
   const rowClass = (p) => {
     if (!isCompleted || p.is_correct === null || p.is_correct === undefined)
       return 'hover:bg-slate-800/20 transition-colors';
+    if (isPerfect(p))
+      return 'bg-amber-500/10 border-l-2 border-amber-400/70 hover:bg-amber-500/15 transition-colors';
     if (p.is_correct === 1)
       return 'bg-green-500/8 border-l-2 border-green-500/60 hover:bg-green-500/12 transition-colors';
     return 'bg-red-500/8 border-l-2 border-red-500/50 hover:bg-red-500/12 transition-colors';
@@ -273,6 +282,7 @@ const CommunityInsights = ({
                               </div>
                             )}
                             <span className={`text-[10px] font-bold truncate max-w-[70px] ${
+                              isPerfect(p)    ? 'text-amber-300' :
                               p.is_correct === 1 ? 'text-green-300' :
                               p.is_correct === 0 ? 'text-red-300'   : 'text-slate-300'
                             }`}>
@@ -280,9 +290,11 @@ const CommunityInsights = ({
                             </span>
                             {/* Result icon next to name */}
                             {hasResult && isCompleted && (
-                              p.is_correct === 1
-                                ? <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />
-                                : <XCircle    className="w-3 h-3 text-red-400   shrink-0" />
+                              isPerfect(p)
+                                ? <span className="text-amber-400 text-[10px] shrink-0">🏆</span>
+                                : p.is_correct === 1
+                                  ? <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />
+                                  : <XCircle    className="w-3 h-3 text-red-400   shrink-0" />
                             )}
                           </div>
                         </td>
@@ -297,6 +309,7 @@ const CommunityInsights = ({
                               onError={e => e.target.style.display = 'none'}
                             />
                             <span className={`text-[10px] font-black whitespace-nowrap ${
+                              isPerfect(p)    ? 'text-amber-400' :
                               p.is_correct === 1 ? 'text-green-400' :
                               p.is_correct === 0 ? 'text-red-400'   : 'text-orange-400'
                             }`}>

@@ -1173,11 +1173,19 @@ const SeriesVoteBar = ({ s, currentUser }) => {
                         const rebounderOk = leaderOk(p.leading_rebounder, actualReb);
                         const assisterOk  = leaderOk(p.leading_assister,  actualAst);
 
+                        // Gold = correct winner + correct games; green = winner only; red = wrong
+                        const actualGames = s.actual_games || picksData?.actual_games;
+                        const perfect = isCompleted && p.is_correct === 1 &&
+                          p.predicted_games != null && actualGames != null &&
+                          +p.predicted_games === +actualGames;
+
                         // Row color by correctness
                         const rowCls = isCompleted && p.is_correct !== null && p.is_correct !== undefined
-                          ? p.is_correct === 1
-                            ? 'bg-green-500/8 border-l-2 border-green-500/60 hover:bg-green-500/12'
-                            : 'bg-red-500/8 border-l-2 border-red-500/50 hover:bg-red-500/12'
+                          ? perfect
+                            ? 'bg-amber-500/10 border-l-2 border-amber-400/70 hover:bg-amber-500/15'
+                            : p.is_correct === 1
+                              ? 'bg-green-500/8 border-l-2 border-green-500/60 hover:bg-green-500/12'
+                              : 'bg-red-500/8 border-l-2 border-red-500/50 hover:bg-red-500/12'
                           : `hover:bg-slate-800/20 ${isMe ? 'bg-orange-500/8' : ''}`;
 
                         return (
@@ -1193,13 +1201,15 @@ const SeriesVoteBar = ({ s, currentUser }) => {
                                   </div>
                                 )}
                                 <span className={`text-[10px] font-bold truncate max-w-[65px] ${
+                                  perfect                         ? 'text-amber-300' :
                                   isCompleted && p.is_correct === 1 ? 'text-green-300' :
                                   isCompleted && p.is_correct === 0 ? 'text-red-300'   :
                                   isMe ? 'text-orange-300' : 'text-slate-300'
                                 }`}>{p.username}</span>
                                 {isMe && !isCompleted && <span className="text-[7px] font-black text-orange-400 bg-orange-500/20 border border-orange-500/30 px-1 py-0.5 rounded-full shrink-0">YOU</span>}
-                                {isCompleted && p.is_correct === 1 && <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />}
-                                {isCompleted && p.is_correct === 0 && <XCircle    className="w-3 h-3 text-red-400   shrink-0" />}
+                                {perfect                          && <span className="text-amber-400 text-[10px] shrink-0">🏆</span>}
+                                {!perfect && isCompleted && p.is_correct === 1 && <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />}
+                                {isCompleted && p.is_correct === 0 && <XCircle className="w-3 h-3 text-red-400 shrink-0" />}
                               </div>
                             </td>
                             {/* Pick */}
@@ -1207,6 +1217,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
                               <div className="flex items-center justify-center gap-1">
                                 <img src={p.team_logo_url} alt="" className="w-4 h-4 shrink-0" onError={e => e.target.style.display = 'none'} />
                                 <span className={`text-[10px] font-black whitespace-nowrap ${
+                                  perfect                         ? 'text-amber-400' :
                                   isCompleted && p.is_correct === 1 ? 'text-green-400' :
                                   isCompleted && p.is_correct === 0 ? 'text-red-400'   : 'text-orange-400'
                                 }`}>
