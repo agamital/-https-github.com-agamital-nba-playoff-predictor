@@ -5263,7 +5263,7 @@ async def chat_endpoint(req: ChatRequest):
             raise HTTPException(status_code=503, detail="anthropic package not installed on server")
         client = _anthropic_sdk.Anthropic(api_key=anthropic_key)
         response = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-opus-4-7",
             max_tokens=512,
             system=system,
             messages=history,
@@ -5325,15 +5325,34 @@ async def chat_ping():
     # Use stripped key
     client = _anthropic_sdk.Anthropic(api_key=key_stripped)
 
+    # First: list available models so we know what this account can use
+    try:
+        models_page = client.models.list()
+        available_models = [m.id for m in models_page.data]
+        diag["available_models"] = available_models
+    except Exception as e:
+        diag["models_list_error"] = str(e)[:200]
+        available_models = []
+
+    # Try to find a haiku/small model, fall back to first available
+    preferred = ["claude-haiku-4-5", "claude-haiku-4-0", "claude-3-5-haiku-20241022",
+                 "claude-3-haiku-20240307"]
+    model_to_use = next((m for m in preferred if m in available_models), None)
+    if not model_to_use and available_models:
+        model_to_use = available_models[-1]  # cheapest (usually last)
+    if not model_to_use:
+        model_to_use = "claude-haiku-4-5"  # best guess
+
     try:
         resp = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model=model_to_use,
             max_tokens=10,
             messages=[{"role": "user", "content": "Say hi"}],
         )
         return {"ok": True, "reply": resp.content[0].text, "model": resp.model, **diag}
     except Exception as e:
-        return {"ok": False, "error_type": type(e).__name__, "error": str(e)[:300], **diag}
+        return {"ok": False, "error_type": type(e).__name__, "error": str(e)[:300],
+                "tried_model": model_to_use, **diag}
 
 
 @app.get("/api/health")
