@@ -55,11 +55,12 @@ export default function ChatBot({ currentUser }) {
         currentUser?.user_id ?? null,
       );
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-    } catch {
-      setMessages(prev => [
-        ...prev,
-        { role: 'assistant', content: "Sorry, I had trouble connecting. Please try again! 🙏" },
-      ]);
+    } catch (err) {
+      console.error('[ChatBot] error:', err?.response?.status, err?.response?.data, err?.message);
+      const status = err?.response?.status;
+      let msg = "Sorry, I had trouble connecting. Please try again! 🙏";
+      if (status === 503) msg = "⚙️ The AI service isn't set up on the server yet. Check Railway env vars.";
+      setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
     } finally {
       setLoading(false);
     }

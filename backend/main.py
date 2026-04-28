@@ -26,6 +26,15 @@ from scoring import (
     SERIES_LEADER_BONUS,
 )
 
+# ── Anthropic SDK (optional — chatbot feature) ────────────────────────────────
+try:
+    import anthropic as _anthropic_sdk
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _anthropic_sdk = None
+    _ANTHROPIC_AVAILABLE = False
+    print("[startup] WARNING: anthropic package not installed — /api/chat will return 503")
+
 _standings_cache = {"data": None, "expires": None, "fetched_at": None}
 
 # Sync runs once daily (04:00 UTC) until end-of-day April 20 2026 (last regular-season day).
@@ -5250,18 +5259,41 @@ async def chat_endpoint(req: ChatRequest):
     history = [{"role": m.role, "content": m.content} for m in req.messages[-10:]]
 
     try:
-        import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=anthropic_key)
+        if not _ANTHROPIC_AVAILABLE:
+            raise HTTPException(status_code=503, detail="anthropic package not installed on server")
+        client = _anthropic_sdk.Anthropic(api_key=anthropic_key)
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-3-5-haiku-latest",
             max_tokens=512,
             system=system,
             messages=history,
         )
         return {"reply": response.content[0].text}
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"[chat] Anthropic API error: {e}")
-        raise HTTPException(status_code=500, detail="AI service temporarily unavailable")
+        print(f"[chat] Anthropic API error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"AI error: {type(e).__name__}: {str(e)[:200]}")
+
+
+@app.get("/api/chat/test")
+async def chat_test():
+    """Diagnostic endpoint — checks anthropic package, API key, and DB."""
+    key = os.getenv("ANTHROPIC_API_KEY", "")
+    result = {
+        "anthropic_installed": _ANTHROPIC_AVAILABLE,
+        "api_key_set": bool(key),
+        "api_key_prefix": (key[:16] + "...") if key else None,
+        "db": "unknown",
+    }
+    try:
+        conn = get_db_conn()
+        conn.cursor().execute("SELECT 1")
+        conn.close()
+        result["db"] = "connected"
+    except Exception as e:
+        result["db"] = f"error: {e}"
+    return result
 
 
 @app.get("/api/health")
