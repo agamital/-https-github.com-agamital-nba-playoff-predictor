@@ -5256,7 +5256,8 @@ async def api_series(response: Response, season: str = "2026", background_tasks:
                      s.actual_leading_scorer, s.actual_leading_rebounder,
                      s.actual_leading_assister,
                      s.game1_start_time,
-                     (SELECT COUNT(*) FROM predictions p WHERE p.series_id = s.id) AS pred_count
+                     (SELECT COUNT(*) FROM predictions p WHERE p.series_id = s.id) AS pred_count,
+                     COALESCE(s.bracket_group, \'A\')
                      FROM series s
                      JOIN teams ht ON s.home_team_id = ht.id
                      JOIN teams at ON s.away_team_id = at.id
@@ -5276,6 +5277,8 @@ async def api_series(response: Response, season: str = "2026", background_tasks:
             _seen_series_matchups.add(_mkey)
 
             g1_start = row[22]
+            # row[23] = pred_count, row[24] = bracket_group
+            bracket_group = row[24] if len(row) > 24 else 'A'
             # A series is picks_locked when game1_start_time has passed OR status != active
             if g1_start:
                 g1_dt = datetime.fromisoformat(g1_start.replace('Z', '+00:00'))
@@ -5311,6 +5314,7 @@ async def api_series(response: Response, season: str = "2026", background_tasks:
                 'leading_assister':  row[21],
                 'game1_start_time':  g1_start,
                 'picks_locked':      picks_locked,
+                'bracket_group':     bracket_group,
             })
 
         response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=60"
@@ -5678,7 +5682,9 @@ async def global_stats(response: Response, season: str = "2026"):
                        COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.home_team_id THEN 1 ELSE 0 END), 0),
                        COALESCE(SUM(CASE WHEN p.predicted_winner_id = s.away_team_id THEN 1 ELSE 0 END), 0),
                        COUNT(p.id),
-                       s.game1_start_time
+                       s.game1_start_time,
+                       s.winner_team_id, s.actual_games,
+                       s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister
                 FROM series s
                 JOIN teams ht ON s.home_team_id = ht.id
                 JOIN teams at ON s.away_team_id = at.id
@@ -5687,7 +5693,9 @@ async def global_stats(response: Response, season: str = "2026"):
                 GROUP BY s.id, s.round, s.conference,
                          s.home_team_id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
                          s.away_team_id, at.name, at.abbreviation, at.logo_url, s.away_seed,
-                         s.status, s.game1_start_time
+                         s.status, s.game1_start_time,
+                         s.winner_team_id, s.actual_games,
+                         s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister
                 ORDER BY COUNT(p.id) DESC, s.id ASC
             """, (season,))
             series_stats = []
@@ -5713,6 +5721,18 @@ async def global_stats(response: Response, season: str = "2026"):
                         _picks_locked = datetime.now(_tz.utc) >= _start_dt
                     except Exception:
                         pass
+                winner_team_id_gs = row[18]
+                actual_games_gs   = row[19]
+                actual_scorer_gs  = row[20]
+                actual_reb_gs     = row[21]
+                actual_ast_gs     = row[22]
+                # Derive winner team object from home/away
+                if winner_team_id_gs == row[3]:
+                    winner_team_gs = {'id': row[3], 'name': row[4], 'abbreviation': row[5], 'logo_url': row[6], 'seed': row[7]}
+                elif winner_team_id_gs == row[8]:
+                    winner_team_gs = {'id': row[8], 'name': row[9], 'abbreviation': row[10], 'logo_url': row[11], 'seed': row[12]}
+                else:
+                    winner_team_gs = None
                 series_stats.append({
                     'series_id':    row[0],
                     'round':        row[1],
@@ -5727,6 +5747,12 @@ async def global_stats(response: Response, season: str = "2026"):
                     'away_pct':     round(away_v / total * 100) if total > 0 else 50,
                     'game1_start_time': g1_start,
                     'picks_locked': _picks_locked,
+                    'winner_team_id':          winner_team_id_gs,
+                    'winner_team':             winner_team_gs,
+                    'actual_games':            actual_games_gs,
+                    'actual_leading_scorer':   actual_scorer_gs,
+                    'actual_leading_rebounder':actual_reb_gs,
+                    'actual_leading_assister': actual_ast_gs,
                 })
         except Exception as e:
             print(f"global_stats series query error: {e}")

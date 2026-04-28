@@ -870,6 +870,54 @@ const R1Col = ({ label, slots, picks, onTeamClick, onGamesSelect, onLeaderSelect
   </div>
 );
 
+// ── Provisional semis card — shows known winner while waiting for opponent ─────
+const ProvisionalSemiMobileCard = ({ slot }) => {
+  const { knownWinner, knownWinner2, pendingSeries } = slot;
+  const pendingTeams = pendingSeries
+    ? `${pendingSeries.home_team?.abbreviation} / ${pendingSeries.away_team?.abbreviation}`
+    : null;
+
+  if (knownWinner2) {
+    // Both winners known — show vs matchup (pending creation in DB)
+    return (
+      <div className="rounded-xl border border-orange-500/30 bg-orange-500/5 p-3 flex items-center gap-3">
+        <div className="flex flex-col items-center gap-1 flex-1">
+          <img src={knownWinner.logo_url} alt="" className="w-10 h-10" onError={e => e.target.style.display='none'} />
+          <span className="text-xs font-black text-orange-400">#{knownWinner.seed} {knownWinner.abbreviation}</span>
+        </div>
+        <div className="text-slate-600 font-black text-xs shrink-0">vs</div>
+        <div className="flex flex-col items-center gap-1 flex-1">
+          <img src={knownWinner2.logo_url} alt="" className="w-10 h-10" onError={e => e.target.style.display='none'} />
+          <span className="text-xs font-black text-orange-400">#{knownWinner2.seed} {knownWinner2.abbreviation}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // One winner, one TBD
+  return (
+    <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3 flex items-center gap-3">
+      <div className="flex flex-col items-center gap-1 flex-1">
+        <img src={knownWinner.logo_url} alt="" className="w-10 h-10" onError={e => e.target.style.display='none'} />
+        <span className="text-xs font-black text-green-400">#{knownWinner.seed} {knownWinner.abbreviation}</span>
+        <span className="text-[9px] text-green-500/60 font-bold">✓ Advanced</span>
+      </div>
+      <div className="text-slate-600 font-black text-xs shrink-0">vs</div>
+      <div className="flex flex-col items-center gap-1 flex-1">
+        <div className="w-10 h-10 rounded-full border-2 border-dashed border-slate-700 flex items-center justify-center">
+          <span className="text-slate-600 text-[10px] font-black">?</span>
+        </div>
+        <span className="text-[9px] font-black text-slate-500">TBD</span>
+        {pendingTeams && (
+          <span className="text-[8px] text-slate-600 text-center leading-tight">
+            {pendingTeams}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const SemisCol = ({ label }) => {
   const pt = (BH + 28) / 8 - CH / 2;
   return (
@@ -1801,7 +1849,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     });
   };
 
-  const { westSlots, eastSlots, westSemisSlots, eastSemisSlots, westSeries, eastSeries, westPI, eastPI, westSeed1, westSeed2, eastSeed1, eastSeed2, westSeedTeams, eastSeedTeams } = useMemo(() => {
+  const { westSlots, eastSlots, westSemisSlots, eastSemisSlots, westProvisionalSemis, eastProvisionalSemis, westSeries, eastSeries, westPI, eastPI, westSeed1, westSeed2, eastSeed1, eastSeed2, westSeedTeams, eastSeedTeams } = useMemo(() => {
     const minSeed = s => Math.min(
       s.home_seed ?? s.home_team?.seed ?? 99,
       s.away_seed ?? s.away_team?.seed ?? 99
@@ -1829,6 +1877,44 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     const wSemis = [...westR2].sort((a, b) => minSeed(a) - minSeed(b));
     const eSemis = [...eastR2].sort((a, b) => minSeed(a) - minSeed(b));
 
+    // ── Provisional semis: show known R1 winners as "waiting for opponent" ──────
+    // Only used when no real R2 series exists for that bracket_group yet.
+    // Groups R1 series by bracket_group; when one (or both) complete, show the
+    // winner(s) as a placeholder slot so the UI advances immediately.
+    const buildProvisionalSemis = (r1Series, r2Series) => {
+      if (r2Series.length > 0) return [];          // real R2 exists — don't show provisional
+      const byGroup = {};
+      r1Series.forEach(s => {
+        const bg = s.bracket_group || 'A';
+        if (!byGroup[bg]) byGroup[bg] = [];
+        byGroup[bg].push(s);
+      });
+      const provisional = [];
+      Object.entries(byGroup).forEach(([bg, groupSeries]) => {
+        const completedInGroup = groupSeries.filter(s => s.status === 'completed' && s.winner_team_id);
+        if (completedInGroup.length === 0) return;  // nobody won yet in this group
+        const winner1 = completedInGroup[0];
+        const winner2 = completedInGroup[1] || null;
+        const w1Team = winner1.home_team.id === winner1.winner_team_id ? winner1.home_team : winner1.away_team;
+        const w2Team = winner2
+          ? (winner2.home_team.id === winner2.winner_team_id ? winner2.home_team : winner2.away_team)
+          : null;
+        // The pending opponent comes from the still-running series in the group
+        const pendingSeries = groupSeries.find(s => s.status !== 'completed');
+        provisional.push({
+          _provisional: true,
+          bracket_group: bg,
+          knownWinner: w1Team,
+          knownWinner2: w2Team,
+          pendingSeries,              // the series still deciding the other slot
+          minKnownSeed: Math.min(w1Team?.seed ?? 99, w2Team?.seed ?? 99),
+        });
+      });
+      return provisional.sort((a, b) => a.minKnownSeed - b.minKnownSeed);
+    };
+    const wProvisionalSemis = buildProvisionalSemis(westR1, westR2);
+    const eProvisionalSemis = buildProvisionalSemis(eastR1, eastR2);
+
     // Build seed→team maps from standings
     const buildSeedMap = (standingsArr) => {
       const map = {};
@@ -1851,7 +1937,9 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
       eastSlots: eSlots,
       westSemisSlots: wSemis,
       eastSemisSlots: eSemis,
-      westSeries: west,
+      westProvisionalSemis: wProvisionalSemis,
+      eastProvisionalSemis: eProvisionalSemis,
+      westSeries:  west,
       eastSeries: east,
       westPI: playInGames.filter(g => g.conference === 'Western'),
       eastPI: playInGames.filter(g => g.conference === 'Eastern'),
@@ -2376,7 +2464,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
           )}
 
           {/* ── Conference Semifinals ── */}
-          {(westSemisSlots.length > 0 || r1WestAllDone) && (
+          {(westSemisSlots.length > 0 || westProvisionalSemis.length > 0 || r1WestAllDone) && (
             <div>
               <div className="flex items-center gap-2 my-4">
                 <div className="h-px flex-1 bg-orange-500/20" />
@@ -2387,6 +2475,12 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                 <div className="space-y-3">
                   {westSemisSlots.map(s => (
                     <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+                  ))}
+                </div>
+              ) : westProvisionalSemis.length > 0 ? (
+                <div className="space-y-3">
+                  {westProvisionalSemis.map((slot, i) => (
+                    <ProvisionalSemiMobileCard key={i} slot={slot} />
                   ))}
                 </div>
               ) : (
@@ -2498,7 +2592,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
           )}
 
           {/* ── Conference Semifinals ── */}
-          {(eastSemisSlots.length > 0 || r1EastAllDone) && (
+          {(eastSemisSlots.length > 0 || eastProvisionalSemis.length > 0 || r1EastAllDone) && (
             <div>
               <div className="flex items-center gap-2 my-4">
                 <div className="h-px flex-1 bg-blue-500/20" />
@@ -2509,6 +2603,12 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                 <div className="space-y-3">
                   {eastSemisSlots.map(s => (
                     <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+                  ))}
+                </div>
+              ) : eastProvisionalSemis.length > 0 ? (
+                <div className="space-y-3">
+                  {eastProvisionalSemis.map((slot, i) => (
+                    <ProvisionalSemiMobileCard key={i} slot={slot} />
                   ))}
                 </div>
               ) : (

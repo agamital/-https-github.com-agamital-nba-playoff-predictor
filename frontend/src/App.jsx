@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronUp, ChevronRight, Share, Bell, Lock } from 'lucide-react';
+import { Trophy, Users, BarChart3, Home as HomeIcon, LogOut, Star, Shield, Download, X, Settings, Info, ChevronDown, ChevronUp, ChevronRight, Share, Bell, Lock, CheckCircle, XCircle } from 'lucide-react';
 import * as api from './services/api';
 import * as ns from './utils/notifications';
 
@@ -1107,81 +1107,152 @@ const SeriesVoteBar = ({ s, currentUser }) => {
               <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : picks && picks.filter(Boolean).length > 0 ? (
-            <div className="overflow-x-auto max-h-64">
-              <table className="w-full" style={{ minWidth: 320 }}>
-                <thead className="sticky top-0 bg-slate-900/95 border-b border-slate-800">
-                  <tr>
-                    <th className="text-left px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">User</th>
-                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">Pick</th>
-                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">🏀 Scorer</th>
-                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">💪 Reb</th>
-                    <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">🎯 Ast</th>
-                    <th className="px-2 py-1.5 w-8" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/40">
-                  {picks.filter(Boolean).map((p, i) => {
-                    const isMe = currentUser && p.username === currentUser.username;
-                    const ln = name => {
-                      if (!name) return null;
-                      const parts = name.trim().split(' ');
-                      return parts[parts.length - 1];
-                    };
+            <>
+              {/* ── Actuals banner (completed series) ── */}
+              {seriesStatus === 'completed' && (s.winner_team || picksData?.actual_leading_scorer) && (
+                <div className="px-4 py-2.5 bg-green-500/10 border-b border-green-500/20 flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {/* Winner */}
+                  {(s.winner_team || picksData?.winner_team_id) && (() => {
+                    const wt = s.winner_team || (picksData?.winner_team_id === s.home_team.id ? s.home_team : s.away_team);
+                    return wt ? (
+                      <div className="flex items-center gap-1.5">
+                        <Trophy className="w-3.5 h-3.5 text-green-400 shrink-0" />
+                        <img src={wt.logo_url} alt="" className="w-5 h-5 shrink-0" onError={e => e.target.style.display='none'} />
+                        <span className="text-[11px] font-black text-green-400">
+                          {wt.abbreviation}{s.actual_games ? ` in ${s.actual_games}` : ''}
+                        </span>
+                      </div>
+                    ) : null;
+                  })()}
+                  {/* Actual stat leaders */}
+                  {(s.actual_leading_scorer || picksData?.actual_leading_scorer) && (() => {
+                    const ln = name => { if (!name) return null; const p = name.trim().split(' '); return p[p.length-1]; };
+                    const scorer   = s.actual_leading_scorer    || picksData?.actual_leading_scorer;
+                    const rebounder= s.actual_leading_rebounder || picksData?.actual_leading_rebounder;
+                    const assister = s.actual_leading_assister  || picksData?.actual_leading_assister;
                     return (
-                      <tr key={i} className={`hover:bg-slate-800/20 transition-colors ${isMe ? 'bg-orange-500/8' : ''}`}>
-                        {/* User */}
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-1.5">
-                            {p.avatar_url ? (
-                              <img src={p.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" onError={e => { e.target.style.display = 'none'; }} />
-                            ) : (
-                              <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-orange-500/30' : 'bg-slate-700'}`}>
-                                <span className={`text-[6px] font-black ${isMe ? 'text-orange-400' : 'text-slate-400'}`}>{(p.username || '?')[0].toUpperCase()}</span>
-                              </div>
-                            )}
-                            <span className={`text-[10px] font-bold truncate max-w-[65px] ${isMe ? 'text-orange-300' : 'text-slate-300'}`}>{p.username}</span>
-                            {isMe && <span className="text-[7px] font-black text-orange-400 bg-orange-500/20 border border-orange-500/30 px-1 py-0.5 rounded-full shrink-0">YOU</span>}
-                          </div>
-                        </td>
-                        {/* Pick */}
-                        <td className="px-1 py-2 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <img src={p.team_logo_url} alt="" className="w-4 h-4 shrink-0" onError={e => e.target.style.display = 'none'} />
-                            <span className={`text-[10px] font-black whitespace-nowrap ${isMe ? 'text-orange-400' : 'text-orange-400'}`}>
-                              {p.team_abbreviation}{p.predicted_games ? ` G${p.predicted_games}` : ''}
-                            </span>
-                          </div>
-                        </td>
-                        {/* Scorer */}
-                        <td className="px-1 py-2 text-center">
-                          <span className="text-[10px] font-bold text-slate-300 whitespace-nowrap">
-                            {ln(p.leading_scorer) || <span className="text-slate-700">—</span>}
-                          </span>
-                        </td>
-                        {/* Rebounder */}
-                        <td className="px-1 py-2 text-center">
-                          <span className="text-[10px] font-bold text-slate-300 whitespace-nowrap">
-                            {ln(p.leading_rebounder) || <span className="text-slate-700">—</span>}
-                          </span>
-                        </td>
-                        {/* Assister */}
-                        <td className="px-1 py-2 text-center">
-                          <span className="text-[10px] font-bold text-slate-300 whitespace-nowrap">
-                            {ln(p.leading_assister) || <span className="text-slate-700">—</span>}
-                          </span>
-                        </td>
-                        {/* Result */}
-                        <td className="px-2 py-2 text-right">
-                          {seriesStatus === 'completed' && (
-                            <ResultBadge isCorrect={p.is_correct} pts={p.is_correct ? p.points_earned : null} />
-                          )}
-                        </td>
-                      </tr>
+                      <>
+                        {scorer    && <span className="text-[9px] font-bold text-slate-400">🏀 <span className="text-slate-300">{ln(scorer)}</span></span>}
+                        {rebounder && <span className="text-[9px] font-bold text-slate-400">💪 <span className="text-slate-300">{ln(rebounder)}</span></span>}
+                        {assister  && <span className="text-[9px] font-bold text-slate-400">🎯 <span className="text-slate-300">{ln(assister)}</span></span>}
+                      </>
                     );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  })()}
+                </div>
+              )}
+              <div className="overflow-x-auto max-h-64">
+                <table className="w-full" style={{ minWidth: 320 }}>
+                  <thead className="sticky top-0 bg-slate-900/95 border-b border-slate-800">
+                    <tr>
+                      <th className="text-left px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">User</th>
+                      <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">Pick</th>
+                      <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">🏀</th>
+                      <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">💪</th>
+                      <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">🎯</th>
+                      <th className="text-center px-2 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider w-10">Pts</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/40">
+                    {[...picks.filter(Boolean)]
+                      .sort((a, b) => {
+                        const sc = p => p.is_correct === 1 ? 0 : p.is_correct === null ? 1 : 2;
+                        return sc(a) - sc(b);
+                      })
+                      .map((p, i) => {
+                        const isMe = currentUser && p.username === currentUser.username;
+                        const isCompleted = seriesStatus === 'completed';
+                        const ln = name => { if (!name) return null; const pts = name.trim().split(' '); return pts[pts.length-1]; };
+                        const actualScorer   = s.actual_leading_scorer    || picksData?.actual_leading_scorer;
+                        const actualReb      = s.actual_leading_rebounder || picksData?.actual_leading_rebounder;
+                        const actualAst      = s.actual_leading_assister  || picksData?.actual_leading_assister;
+                        const leaderOk = (picked, actual) => {
+                          if (!picked || !actual) return null;
+                          return picked.trim().toLowerCase() === actual.trim().toLowerCase();
+                        };
+                        const scorerOk    = leaderOk(p.leading_scorer,    actualScorer);
+                        const rebounderOk = leaderOk(p.leading_rebounder, actualReb);
+                        const assisterOk  = leaderOk(p.leading_assister,  actualAst);
+
+                        // Row color by correctness
+                        const rowCls = isCompleted && p.is_correct !== null && p.is_correct !== undefined
+                          ? p.is_correct === 1
+                            ? 'bg-green-500/8 border-l-2 border-green-500/60 hover:bg-green-500/12'
+                            : 'bg-red-500/8 border-l-2 border-red-500/50 hover:bg-red-500/12'
+                          : `hover:bg-slate-800/20 ${isMe ? 'bg-orange-500/8' : ''}`;
+
+                        return (
+                          <tr key={i} className={`transition-colors ${rowCls}`}>
+                            {/* User */}
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-1.5">
+                                {p.avatar_url ? (
+                                  <img src={p.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" onError={e => { e.target.style.display = 'none'; }} />
+                                ) : (
+                                  <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-orange-500/30' : 'bg-slate-700'}`}>
+                                    <span className={`text-[6px] font-black ${isMe ? 'text-orange-400' : 'text-slate-400'}`}>{(p.username || '?')[0].toUpperCase()}</span>
+                                  </div>
+                                )}
+                                <span className={`text-[10px] font-bold truncate max-w-[65px] ${
+                                  isCompleted && p.is_correct === 1 ? 'text-green-300' :
+                                  isCompleted && p.is_correct === 0 ? 'text-red-300'   :
+                                  isMe ? 'text-orange-300' : 'text-slate-300'
+                                }`}>{p.username}</span>
+                                {isMe && !isCompleted && <span className="text-[7px] font-black text-orange-400 bg-orange-500/20 border border-orange-500/30 px-1 py-0.5 rounded-full shrink-0">YOU</span>}
+                                {isCompleted && p.is_correct === 1 && <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />}
+                                {isCompleted && p.is_correct === 0 && <XCircle    className="w-3 h-3 text-red-400   shrink-0" />}
+                              </div>
+                            </td>
+                            {/* Pick */}
+                            <td className="px-1 py-2 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <img src={p.team_logo_url} alt="" className="w-4 h-4 shrink-0" onError={e => e.target.style.display = 'none'} />
+                                <span className={`text-[10px] font-black whitespace-nowrap ${
+                                  isCompleted && p.is_correct === 1 ? 'text-green-400' :
+                                  isCompleted && p.is_correct === 0 ? 'text-red-400'   : 'text-orange-400'
+                                }`}>
+                                  {p.team_abbreviation}{p.predicted_games ? ` G${p.predicted_games}` : ''}
+                                </span>
+                              </div>
+                            </td>
+                            {/* Scorer */}
+                            <td className="px-1 py-2 text-center">
+                              {p.leading_scorer ? (
+                                <span className={`text-[10px] font-bold whitespace-nowrap ${
+                                  scorerOk === true ? 'text-green-400' : scorerOk === false ? 'text-red-400' : 'text-slate-300'
+                                }`}>{ln(p.leading_scorer)}{scorerOk === true ? ' ✓' : scorerOk === false ? ' ✗' : ''}</span>
+                              ) : <span className="text-slate-700">—</span>}
+                            </td>
+                            {/* Rebounder */}
+                            <td className="px-1 py-2 text-center">
+                              {p.leading_rebounder ? (
+                                <span className={`text-[10px] font-bold whitespace-nowrap ${
+                                  rebounderOk === true ? 'text-green-400' : rebounderOk === false ? 'text-red-400' : 'text-slate-300'
+                                }`}>{ln(p.leading_rebounder)}{rebounderOk === true ? ' ✓' : rebounderOk === false ? ' ✗' : ''}</span>
+                              ) : <span className="text-slate-700">—</span>}
+                            </td>
+                            {/* Assister */}
+                            <td className="px-1 py-2 text-center">
+                              {p.leading_assister ? (
+                                <span className={`text-[10px] font-bold whitespace-nowrap ${
+                                  assisterOk === true ? 'text-green-400' : assisterOk === false ? 'text-red-400' : 'text-slate-300'
+                                }`}>{ln(p.leading_assister)}{assisterOk === true ? ' ✓' : assisterOk === false ? ' ✗' : ''}</span>
+                              ) : <span className="text-slate-700">—</span>}
+                            </td>
+                            {/* Points */}
+                            <td className="px-2 py-2 text-center">
+                              {p.points_earned > 0 ? (
+                                <span className="text-[9px] font-black text-green-400">+{p.points_earned}</span>
+                              ) : isCompleted && p.is_correct === 0 ? (
+                                <span className="text-[9px] font-black text-red-500">0</span>
+                              ) : null}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
             <p className="text-xs text-slate-600 text-center py-4">No picks yet — be the first!</p>
           )}
