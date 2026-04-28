@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Trophy, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info, Clock, Lock, CheckCircle, XCircle, Edit2 } from 'lucide-react';
+import { Trophy, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Info, Clock, Lock, CheckCircle, XCircle, Edit2, Users } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 import { calcSeriesPts, getUnderdogMult, getRoundMult, PLAYIN_PTS, PLAYIN_UNDERDOG_PTS } from './scoringConstants';
@@ -1378,8 +1378,211 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
           scorer:    series.leading_scorer    ?? null,
           rebounder: series.leading_rebounder ?? null,
           assister:  series.leading_assister  ?? null,
+          games:     series.actual_games      ?? null,
+          winnerTeam: series.winner_team_id
+            ? (series.home_team.id === series.winner_team_id ? series.home_team : series.away_team)
+            : null,
         } : null}
       />
+    </div>
+  );
+};
+
+// ── Community Picks Browser ───────────────────────────────────────────────────
+
+const _normRound = r => (r || '').toLowerCase().replace(/[\s-]/g, '_');
+
+const ROUND_META = [
+  { key: 'play_in',            label: 'Play-In Tournament',     color: 'text-purple-400',  border: 'border-purple-500/20', div: 'bg-purple-500/20' },
+  { key: 'first_round',        label: 'First Round',            color: 'text-orange-400',  border: 'border-orange-500/20', div: 'bg-orange-500/20' },
+  { key: 'second_round',       label: 'Conference Semifinals',  color: 'text-cyan-400',    border: 'border-cyan-500/20',   div: 'bg-cyan-500/20'   },
+  { key: 'conference_finals',  label: 'Conference Finals',      color: 'text-yellow-400',  border: 'border-yellow-500/20', div: 'bg-yellow-500/20' },
+  { key: 'nba_finals',         label: 'NBA Finals',             color: 'text-yellow-300',  border: 'border-yellow-400/20', div: 'bg-yellow-400/20' },
+];
+
+// Compact row showing two teams + community picks inline
+const CommunitySeriesRow = ({ series, communityStats }) => {
+  const h = series.home_team;
+  const a = series.away_team;
+  const isCompleted = series.status === 'completed';
+  const hWon = isCompleted && series.winner_team_id === h.id;
+  const aWon = isCompleted && series.winner_team_id === a.id;
+
+  const seriesActuals = isCompleted ? {
+    scorer:    series.leading_scorer    ?? null,
+    rebounder: series.leading_rebounder ?? null,
+    assister:  series.leading_assister  ?? null,
+    games:     series.actual_games      ?? null,
+    winnerTeam: series.winner_team_id
+      ? (h.id === series.winner_team_id ? h : a)
+      : null,
+  } : null;
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2.5">
+      {/* Teams row */}
+      <div className="flex items-center gap-2 mb-1.5">
+        {/* Home team */}
+        <div className={`flex items-center gap-1.5 flex-1 min-w-0 ${hWon ? '' : isCompleted ? 'opacity-40' : ''}`}>
+          <img src={h.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display='none'} />
+          <span className={`text-xs font-black truncate ${hWon ? 'text-green-400' : 'text-slate-200'}`}>
+            {h.seed ? `#${h.seed} ` : ''}{h.abbreviation}
+          </span>
+          {hWon && series.actual_games && (
+            <span className="text-[9px] text-green-400 font-bold shrink-0">in {series.actual_games}</span>
+          )}
+        </div>
+
+        {/* VS / status */}
+        <div className="shrink-0 text-center px-1">
+          {isCompleted ? (
+            <span className="text-[8px] font-black text-green-500/60 uppercase tracking-widest">Final</span>
+          ) : series.status === 'locked' ? (
+            <span className="text-[8px] font-black text-red-400/60 uppercase tracking-widest">Live</span>
+          ) : (
+            <span className="text-[8px] text-slate-600 font-bold">vs</span>
+          )}
+        </div>
+
+        {/* Away team */}
+        <div className={`flex items-center gap-1.5 flex-1 min-w-0 justify-end ${aWon ? '' : isCompleted ? 'opacity-40' : ''}`}>
+          {aWon && series.actual_games && (
+            <span className="text-[9px] text-green-400 font-bold shrink-0">in {series.actual_games}</span>
+          )}
+          <span className={`text-xs font-black truncate ${aWon ? 'text-green-400' : 'text-slate-200'}`}>
+            {a.seed ? `#${a.seed} ` : ''}{a.abbreviation}
+          </span>
+          <img src={a.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display='none'} />
+        </div>
+      </div>
+
+      {/* Community insights */}
+      <CommunityInsights
+        seriesId={series.id}
+        homeTeam={h}
+        awayTeam={a}
+        initialStats={communityStats ?? null}
+        status={series.status}
+        startZ={series.game1_start_time || null}
+        seriesActuals={seriesActuals}
+      />
+    </div>
+  );
+};
+
+const CommunityBrowser = ({ series, communityMap }) => {
+  const [collapsed, setCollapsed] = useState({});
+  const toggle = key => setCollapsed(p => ({ ...p, [key]: !p[key] }));
+
+  // Group series by round → conference
+  const grouped = useMemo(() => {
+    const map = {};
+    series.forEach(s => {
+      const rk = _normRound(s.round);
+      const ck = s.conference || 'All';
+      if (!map[rk]) map[rk] = {};
+      if (!map[rk][ck]) map[rk][ck] = [];
+      map[rk][ck].push(s);
+    });
+    return map;
+  }, [series]);
+
+  const presentRounds = ROUND_META.filter(r => grouped[r.key]);
+
+  if (presentRounds.length === 0) {
+    return <p className="text-center text-slate-600 py-6 text-sm">No series data yet</p>;
+  }
+
+  return (
+    <div className="space-y-4">
+      {presentRounds.map(roundMeta => {
+        const rKey = roundMeta.key;
+        const confMap = grouped[rKey];
+        const roundCollapsed = collapsed[rKey];
+        // Count total picks across this round
+        const roundVotes = Object.values(confMap).flat().reduce((sum, s) =>
+          sum + (communityMap[s.id]?.total_votes || 0), 0);
+
+        return (
+          <div key={rKey}>
+            {/* Round header */}
+            <button
+              onClick={() => toggle(rKey)}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition-all group"
+            >
+              <div className="flex items-center gap-2">
+                <Trophy className={`w-4 h-4 ${roundMeta.color} shrink-0`} />
+                <span className={`text-sm font-black ${roundMeta.color} uppercase tracking-wider`}>
+                  {roundMeta.label}
+                </span>
+                {roundVotes > 0 && (
+                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-slate-700/60 text-slate-400">
+                    {roundVotes} picks
+                  </span>
+                )}
+              </div>
+              {roundCollapsed
+                ? <ChevronDown className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                : <ChevronUp   className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+              }
+            </button>
+
+            {!roundCollapsed && (
+              <div className="mt-2 space-y-3 pl-1">
+                {Object.entries(confMap)
+                  .sort(([a], [b]) => a === 'Western' ? -1 : b === 'Western' ? 1 : a.localeCompare(b))
+                  .map(([conf, confSeries]) => {
+                    const ck = `${rKey}-${conf}`;
+                    const confCollapsed = collapsed[ck];
+                    const isWest = conf === 'Western';
+                    const confColor = isWest ? 'text-red-400' : conf === 'Eastern' ? 'text-blue-400' : 'text-slate-400';
+                    const confDotClass = isWest ? 'bg-red-500' : conf === 'Eastern' ? 'bg-blue-500' : 'bg-slate-500';
+                    const confVotes = confSeries.reduce((sum, s) =>
+                      sum + (communityMap[s.id]?.total_votes || 0), 0);
+                    const completedCount = confSeries.filter(s => s.status === 'completed').length;
+
+                    return (
+                      <div key={conf}>
+                        {/* Conference sub-header */}
+                        <button
+                          onClick={() => toggle(ck)}
+                          className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-slate-800/60 bg-slate-900/30 hover:border-slate-700/60 transition-all group mb-2"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full ${confDotClass} shrink-0`} />
+                            <span className={`text-xs font-black uppercase tracking-wider ${confColor}`}>
+                              {conf} Conference
+                            </span>
+                            <span className="text-[9px] text-slate-500 font-bold">
+                              {completedCount}/{confSeries.length} done
+                              {confVotes > 0 ? ` · ${confVotes} picks` : ''}
+                            </span>
+                          </div>
+                          {confCollapsed
+                            ? <ChevronDown className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 transition-colors" />
+                            : <ChevronUp   className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 transition-colors" />
+                          }
+                        </button>
+
+                        {!confCollapsed && (
+                          <div className="space-y-2 pl-2">
+                            {confSeries.map(s => (
+                              <CommunitySeriesRow
+                                key={s.id}
+                                series={s}
+                                communityStats={communityMap[s.id] ?? null}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -1442,6 +1645,8 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const [showPlayIn, setShowPlayIn]   = useState(false);
   const [showR1West, setShowR1West]   = useState(true);
   const [showR1East, setShowR1East]   = useState(true);
+  const [showCommunityBrowser, setShowCommunityBrowser] = useState(false);
+  const [communityCollapsed, setCommunityCollapsed] = useState({});
   const [saveError, setSaveError]     = useState('');
   // Deep-link highlight — set when navigating from a notification
   const [highlightedId, setHighlightedId] = useState(null);
@@ -2317,6 +2522,34 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
         </div>
 
       </div>
+
+      {/* ── Community Picks Browser ── */}
+      {series.length > 0 && (
+        <div className="mt-10 pt-6 border-t border-slate-800">
+          {/* Section toggle */}
+          <button
+            onClick={() => setShowCommunityBrowser(v => !v)}
+            className="w-full flex items-center justify-between px-5 py-4 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition-all mb-4 group"
+          >
+            <div className="flex items-center gap-2.5">
+              <Users className="w-5 h-5 text-purple-400 shrink-0" />
+              <span className="text-base font-black text-white">Community Picks</span>
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-400">
+                Browse by round
+              </span>
+            </div>
+            {showCommunityBrowser
+              ? <ChevronUp   className="w-5 h-5 text-slate-400 group-hover:text-slate-200 transition-colors" />
+              : <ChevronDown className="w-5 h-5 text-slate-400 group-hover:text-slate-200 transition-colors" />
+            }
+          </button>
+
+          {showCommunityBrowser && (
+            <CommunityBrowser series={series} communityMap={communityMap} />
+          )}
+        </div>
+      )}
+
     </div>
   );
 };

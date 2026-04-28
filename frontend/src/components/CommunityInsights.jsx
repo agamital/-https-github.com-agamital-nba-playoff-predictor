@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, ChevronDown, Lock } from 'lucide-react';
+import { Users, ChevronDown, Lock, CheckCircle, XCircle, Trophy } from 'lucide-react';
 import * as api from '../services/api';
 import { picksRevealed } from '../scoringConstants';
 
@@ -14,7 +14,11 @@ import { picksRevealed } from '../scoringConstants';
  *   initialStats  – pre-fetched { total_votes, home_pct, away_pct } or null
  *   status        – 'active' | 'locked' | 'completed'
  *   startZ        – ISO UTC string of Game 1 tipoff
- *   seriesActuals – { scorer, rebounder, assister } actual leaders (completed series)
+ *   seriesActuals – {
+ *       scorer, rebounder, assister,   ← actual stat leaders
+ *       games,                          ← actual games played (e.g. 6)
+ *       winnerTeam: { name, abbreviation, logo_url }  ← actual winner
+ *     } (completed series only, else null)
  */
 
 const lastName = (name) => {
@@ -90,11 +94,30 @@ const CommunityInsights = ({
     scorer:    picks.actual_leading_scorer    ?? null,
     rebounder: picks.actual_leading_rebounder ?? null,
     assister:  picks.actual_leading_assister  ?? null,
+    games:     null,
+    winnerTeam: null,
   } : null);
 
   const isCompleted = status === 'completed' || picks?.series_status === 'completed';
-  const userPicks   = picks?.picks ?? null;
   const isSeries    = !!seriesId;
+
+  // Sort picks: correct winner first, then unknown, then wrong
+  const rawPicks = picks?.picks ?? null;
+  const userPicks = rawPicks
+    ? [...rawPicks].sort((a, b) => {
+        const score = p => p.is_correct === 1 ? 0 : p.is_correct === null ? 1 : 2;
+        return score(a) - score(b);
+      })
+    : null;
+
+  // Row styling by correctness
+  const rowClass = (p) => {
+    if (!isCompleted || p.is_correct === null || p.is_correct === undefined)
+      return 'hover:bg-slate-800/20 transition-colors';
+    if (p.is_correct === 1)
+      return 'bg-green-500/8 border-l-2 border-green-500/60 hover:bg-green-500/12 transition-colors';
+    return 'bg-red-500/8 border-l-2 border-red-500/50 hover:bg-red-500/12 transition-colors';
+  };
 
   return (
     <div className="pt-2 border-t border-slate-800/60 mt-1">
@@ -150,6 +173,45 @@ const CommunityInsights = ({
       {/* Expanded picks table */}
       {open && picksVisible && (
         <div className="mt-2 rounded-xl bg-slate-900/60 border border-slate-800/80 overflow-hidden">
+
+          {/* ── Actuals banner (completed series only) ── */}
+          {isCompleted && actuals && (actuals.winnerTeam || actuals.scorer) && (
+            <div className="px-3 py-2 bg-green-500/10 border-b border-green-500/20 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {/* Winner */}
+              {actuals.winnerTeam && (
+                <div className="flex items-center gap-1.5">
+                  <Trophy className="w-3 h-3 text-green-400 shrink-0" />
+                  <img
+                    src={actuals.winnerTeam.logo_url}
+                    alt=""
+                    className="w-4 h-4 shrink-0"
+                    onError={e => e.target.style.display = 'none'}
+                  />
+                  <span className="text-[10px] font-black text-green-400">
+                    {actuals.winnerTeam.abbreviation}
+                    {actuals.games ? ` in ${actuals.games}` : ''}
+                  </span>
+                </div>
+              )}
+              {/* Leaders */}
+              {actuals.scorer && (
+                <span className="text-[9px] font-bold text-slate-400">
+                  🏀 <span className="text-slate-300">{lastName(actuals.scorer)}</span>
+                </span>
+              )}
+              {actuals.rebounder && (
+                <span className="text-[9px] font-bold text-slate-400">
+                  💪 <span className="text-slate-300">{lastName(actuals.rebounder)}</span>
+                </span>
+              )}
+              {actuals.assister && (
+                <span className="text-[9px] font-bold text-slate-400">
+                  🎯 <span className="text-slate-300">{lastName(actuals.assister)}</span>
+                </span>
+              )}
+            </div>
+          )}
+
           {loading ? (
             <div className="flex items-center justify-center py-4">
               <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
@@ -169,17 +231,19 @@ const CommunityInsights = ({
                     {isSeries && (
                       <>
                         <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">
-                          🏀 Scorer
+                          🏀
                         </th>
                         <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">
-                          💪 Reb
+                          💪
                         </th>
                         <th className="text-center px-1 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-wider">
-                          🎯 Ast
+                          🎯
                         </th>
                       </>
                     )}
-                    <th className="px-2 py-1.5 w-8" />
+                    <th className="px-2 py-1.5 w-10 text-center text-[8px] font-black text-slate-500 uppercase tracking-wider">
+                      Pts
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/40">
@@ -190,7 +254,7 @@ const CommunityInsights = ({
                     const assisterOk  = leaderCorrect(p.leading_assister,  actuals?.assister);
 
                     return (
-                      <tr key={i} className="hover:bg-slate-800/20 transition-colors">
+                      <tr key={i} className={rowClass(p)}>
                         {/* User */}
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-1.5">
@@ -208,9 +272,18 @@ const CommunityInsights = ({
                                 </span>
                               </div>
                             )}
-                            <span className="text-[10px] font-bold text-slate-300 truncate max-w-[70px]">
+                            <span className={`text-[10px] font-bold truncate max-w-[70px] ${
+                              p.is_correct === 1 ? 'text-green-300' :
+                              p.is_correct === 0 ? 'text-red-300'   : 'text-slate-300'
+                            }`}>
                               {p.username}
                             </span>
+                            {/* Result icon next to name */}
+                            {hasResult && isCompleted && (
+                              p.is_correct === 1
+                                ? <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />
+                                : <XCircle    className="w-3 h-3 text-red-400   shrink-0" />
+                            )}
                           </div>
                         </td>
 
@@ -223,7 +296,10 @@ const CommunityInsights = ({
                               className="w-4 h-4 shrink-0"
                               onError={e => e.target.style.display = 'none'}
                             />
-                            <span className="text-[10px] font-black text-orange-400 whitespace-nowrap">
+                            <span className={`text-[10px] font-black whitespace-nowrap ${
+                              p.is_correct === 1 ? 'text-green-400' :
+                              p.is_correct === 0 ? 'text-red-400'   : 'text-orange-400'
+                            }`}>
                               {p.team_abbreviation}
                               {p.predicted_games ? ` G${p.predicted_games}` : ''}
                             </span>
@@ -281,17 +357,15 @@ const CommunityInsights = ({
                           </>
                         )}
 
-                        {/* Result badge */}
-                        <td className="px-2 py-2 text-right">
-                          {hasResult && isCompleted && (
-                            p.is_correct === 1 ? (
-                              <span className="text-[8px] font-black text-green-400 whitespace-nowrap">
-                                ✓{p.points_earned > 0 ? ` +${p.points_earned}` : ''}
-                              </span>
-                            ) : (
-                              <span className="text-[8px] font-black text-red-400">✗</span>
-                            )
-                          )}
+                        {/* Points earned */}
+                        <td className="px-2 py-2 text-center">
+                          {p.points_earned > 0 ? (
+                            <span className="text-[9px] font-black text-green-400 whitespace-nowrap">
+                              +{p.points_earned}
+                            </span>
+                          ) : hasResult && isCompleted && p.is_correct === 0 ? (
+                            <span className="text-[9px] font-black text-red-500">0</span>
+                          ) : null}
                         </td>
                       </tr>
                     );
