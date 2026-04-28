@@ -78,10 +78,10 @@ export default function ChatBot({ currentUser }) {
 
   const panel = open && (
     <div
-      className="fixed bottom-[100px] right-4 md:bottom-24 md:right-6 z-[60]
+      className="chat-btn-bottom fixed right-4 md:bottom-24 md:right-6 z-[60]
                  flex flex-col bg-slate-900 border border-slate-700/80 rounded-2xl
                  shadow-2xl shadow-black/70 overflow-hidden"
-      style={{ width: 'min(380px, calc(100vw - 2rem))', height: 490 }}
+      style={{ width: 'min(380px, calc(100vw - 2rem))', height: 490, marginBottom: '3.75rem' }}
     >
       {/* ── Header ── */}
       <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-orange-500 to-red-600 shrink-0">
@@ -193,7 +193,7 @@ export default function ChatBot({ currentUser }) {
       {/* ── Floating button ── */}
       <button
         onClick={() => setOpen(o => !o)}
-        className="fixed bottom-[88px] right-4 md:bottom-8 md:right-6 z-[55]
+        className="chat-btn-bottom fixed right-4 md:bottom-8 md:right-6 z-[55]
                    w-14 h-14 rounded-full bg-gradient-to-br from-orange-500 to-red-600
                    shadow-lg shadow-orange-500/30 hover:shadow-orange-500/50
                    flex items-center justify-center transition-all duration-200

@@ -108,6 +108,11 @@ button, a, [role="button"], input, select, textarea, label {
   padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
 }
 
+/* Chat button: sits above the mobile bottom nav + iPhone home indicator */
+.chat-btn-bottom {
+  bottom: calc(5rem + env(safe-area-inset-bottom, 0px) + 0.5rem);
+}
+
 /* Top bar padding for Face ID notch area (when used as PWA) */
 .pt-safe {
   padding-top: env(safe-area-inset-top, 0px);
