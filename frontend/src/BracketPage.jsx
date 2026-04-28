@@ -957,12 +957,21 @@ const ProvisionalSemiDesktopCard = ({ slot }) => {
   );
 };
 
+// Infer bracket group from min-seed: 1,4,5,8 → 'A' (top half); 2,3,6,7 → 'B' (bottom half)
+const inferSemisGroup = (s) => {
+  const ms = Math.min(
+    s.home_seed ?? s.home_team?.seed ?? 99,
+    s.away_seed ?? s.away_team?.seed ?? 99
+  );
+  return (ms === 1 || ms === 4 || ms === 5 || ms === 8) ? 'A' : 'B';
+};
+
 const SemisCol = ({ label, semisSlots = [], provisionalSlots = [], picks = {}, onTeamClick, myPredMap = {} }) => {
   const pt = (BH + 28) / 8 - CH / 2;
 
   const renderSlot = (groupKey) => {
-    // 1. Real R2 series for this bracket_group
-    const real = semisSlots.find(s => (s.bracket_group || 'A') === groupKey);
+    // 1. Real R2 series for this bracket_group (use seed-based inference as fallback)
+    const real = semisSlots.find(s => (s.bracket_group || inferSemisGroup(s)) === groupKey);
     if (real) {
       const pick = picks[real.id];
       const hasBet = !!(myPredMap && myPredMap[real.id]);
@@ -1934,21 +1943,41 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     const eSemis = [...eastR2].sort((a, b) => minSeed(a) - minSeed(b));
 
     // ── Provisional semis: show known R1 winners as "waiting for opponent" ──────
-    // Only used when no real R2 series exists for that bracket_group yet.
-    // Groups R1 series by bracket_group; when one (or both) complete, show the
-    // winner(s) as a placeholder slot so the UI advances immediately.
+    // Groups R1 series by bracket_group. When bracket_group is null in the DB,
+    // we infer it from seeds: seeds 1,4,5,8 → 'A' (top bracket);
+    // seeds 2,3,6,7 → 'B' (bottom bracket).
+    // Shows a placeholder card for each group where at least one R1 series is
+    // complete but no real R2 series exists for that group yet.
+    const inferGroup = (s) => {
+      const ms = minSeed(s);
+      return (ms === 1 || ms === 4 || ms === 5 || ms === 8) ? 'A' : 'B';
+    };
+
     const buildProvisionalSemis = (r1Series, r2Series) => {
-      if (r2Series.length > 0) return [];          // real R2 exists — don't show provisional
+      // Build set of groups that already have a real R2 series
+      const r2Groups = new Set(r2Series.map(s => s.bracket_group || 'A'));
+
+      // Group R1 series by bracket_group (inferred from seeds when not in DB)
       const byGroup = {};
       r1Series.forEach(s => {
-        const bg = s.bracket_group || 'A';
+        const bg = s.bracket_group || inferGroup(s);
         if (!byGroup[bg]) byGroup[bg] = [];
         byGroup[bg].push(s);
       });
+
       const provisional = [];
       Object.entries(byGroup).forEach(([bg, groupSeries]) => {
+        if (r2Groups.has(bg)) return;             // real R2 exists for this group — skip
         const completedInGroup = groupSeries.filter(s => s.status === 'completed' && s.winner_team_id);
         if (completedInGroup.length === 0) return;  // nobody won yet in this group
+
+        // Sort completed by seed so the lower-seed winner comes first
+        completedInGroup.sort((a, b) => {
+          const aWinner = a.home_team.id === a.winner_team_id ? a.home_team : a.away_team;
+          const bWinner = b.home_team.id === b.winner_team_id ? b.home_team : b.away_team;
+          return (aWinner?.seed ?? 99) - (bWinner?.seed ?? 99);
+        });
+
         const winner1 = completedInGroup[0];
         const winner2 = completedInGroup[1] || null;
         const w1Team = winner1.home_team.id === winner1.winner_team_id ? winner1.home_team : winner1.away_team;
