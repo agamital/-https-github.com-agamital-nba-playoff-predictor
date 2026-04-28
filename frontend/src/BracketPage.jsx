@@ -918,13 +918,69 @@ const ProvisionalSemiMobileCard = ({ slot }) => {
   );
 };
 
-const SemisCol = ({ label }) => {
+// Desktop bracket: provisional semi card — shown when one R1 winner is known but R2 hasn't started yet
+const ProvisionalSemiDesktopCard = ({ slot }) => {
+  const { knownWinner, knownWinner2, pendingSeries } = slot;
+  const pendingTeams = pendingSeries
+    ? `${pendingSeries.home_team?.abbreviation}/${pendingSeries.away_team?.abbreviation}`
+    : null;
+
+  const knownRow = (team) => (
+    <div className="flex-1 flex items-center gap-2 px-3 w-full">
+      <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
+      <span className="text-sm font-black text-green-300 truncate flex-1">{team.abbreviation}</span>
+      <span className="text-[10px] text-green-400/60 shrink-0">#{team.seed}</span>
+    </div>
+  );
+
+  const tbdRow = () => (
+    <div className="flex-1 flex items-center gap-2 px-3 w-full">
+      <div className="w-8 h-8 rounded-full bg-slate-800/60 border border-dashed border-slate-600 flex items-center justify-center shrink-0">
+        <span className="text-slate-500 text-[10px] font-black">?</span>
+      </div>
+      <div className="flex flex-col min-w-0">
+        <span className="text-sm text-slate-500 font-medium">TBD</span>
+        {pendingTeams && (
+          <span className="text-[8px] text-slate-600 leading-tight">{pendingTeams}</span>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ height: CH }}
+      className="w-44 bg-slate-900/90 border-2 border-green-500/30 rounded-xl flex flex-col overflow-hidden shadow-sm shadow-green-500/5">
+      {knownRow(knownWinner)}
+      <div className="h-px shrink-0 bg-slate-800/70" />
+      {knownWinner2 ? knownRow(knownWinner2) : tbdRow()}
+    </div>
+  );
+};
+
+const SemisCol = ({ label, semisSlots = [], provisionalSlots = [], picks = {}, onTeamClick, myPredMap = {} }) => {
   const pt = (BH + 28) / 8 - CH / 2;
+
+  const renderSlot = (groupKey) => {
+    // 1. Real R2 series for this bracket_group
+    const real = semisSlots.find(s => (s.bracket_group || 'A') === groupKey);
+    if (real) {
+      const pick = picks[real.id];
+      const hasBet = !!(myPredMap && myPredMap[real.id]);
+      return <MatchCard key={real.id} series={real} pick={pick} onTeamClick={onTeamClick} hasBet={hasBet} />;
+    }
+    // 2. Provisional (R1 winner(s) known, no R2 yet)
+    const prov = provisionalSlots.find(p => p.bracket_group === groupKey);
+    if (prov) return <ProvisionalSemiDesktopCard key={`prov-${groupKey}`} slot={prov} />;
+    // 3. TBD fallback
+    return <TBDCard key={`tbd-${groupKey}`} />;
+  };
+
   return (
     <div style={{ flexShrink: 0 }}>
       <p className="text-xs text-slate-500 uppercase font-bold mb-3 text-center tracking-wider">{label}</p>
       <div style={{ height: BH + 28, paddingTop: Math.max(pt, 0), paddingBottom: Math.max(pt, 0), display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-        <TBDCard /><TBDCard />
+        {renderSlot('A')}
+        {renderSlot('B')}
       </div>
     </div>
   );
@@ -1959,6 +2015,14 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   useEffect(() => { if (r1WestAllDone) setShowR1West(false); }, [r1WestAllDone]);
   useEffect(() => { if (r1EastAllDone) setShowR1East(false); }, [r1EastAllDone]);
 
+  // Auto-show Conf Semis column when any team has advanced (real or provisional)
+  useEffect(() => {
+    const hasSemisData =
+      westSemisSlots.length > 0 || eastSemisSlots.length > 0 ||
+      westProvisionalSemis.length > 0 || eastProvisionalSemis.length > 0;
+    if (hasSemisData) setShowFull(true);
+  }, [westSemisSlots.length, eastSemisSlots.length, westProvisionalSemis.length, eastProvisionalSemis.length]);
+
   const handleTeamClick = (seriesObj, teamId) => {
     if (!currentUser) return;
     setPicks(p => ({ ...p, [seriesObj.id]: { ...p[seriesObj.id], teamId } }));
@@ -2257,7 +2321,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
             {showFull && (
               <>
                 <ConnectorCol count={2} dir="right" />
-                <SemisCol label="Conf Semis" />
+                <SemisCol label="Conf Semis" semisSlots={westSemisSlots} provisionalSlots={westProvisionalSemis} picks={picks} onTeamClick={handleTeamClick} myPredMap={myPredMap} />
                 <ConnectorCol count={1} dir="right" />
                 <CFCol label="Conf Finals" />
                 <HLine />
@@ -2265,7 +2329,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                 <HLine />
                 <CFCol label="Conf Finals" />
                 <ConnectorCol count={1} dir="left" />
-                <SemisCol label="Conf Semis" />
+                <SemisCol label="Conf Semis" semisSlots={eastSemisSlots} provisionalSlots={eastProvisionalSemis} picks={picks} onTeamClick={handleTeamClick} myPredMap={myPredMap} />
                 <ConnectorCol count={2} dir="left" />
               </>
             )}
