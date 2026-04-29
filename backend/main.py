@@ -5327,278 +5327,269 @@ Study the context carefully before answering. Every number you quote must come f
 
 
 def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
-    """Build a comprehensive JSON context from all DB tables for the LLM."""
+    """Build a comprehensive JSON context from all DB tables for the LLM.
+    Each section is wrapped in its own try/except so one failing query
+    never blanks the whole context — partial data is always better than none.
+    """
     import json as _json
     c = conn.cursor()
-    ctx = {}
+    ctx = {"_debug_user_id": user_id, "_debug_season": season, "_errors": []}
 
-    # ── 1. All series (status, score, winner) ─────────────────────────────────
-    c.execute("""
-        SELECT s.round, s.conference,
-               ht.name, ht.abbreviation, s.home_seed, s.home_wins,
-               at.name, at.abbreviation, s.away_seed, s.away_wins,
-               s.status, s.winner_team_id,
-               ht.id, at.id, COALESCE(s.actual_games, 0)
-        FROM series s
-        JOIN teams ht ON s.home_team_id = ht.id
-        JOIN teams at ON s.away_team_id = at.id
-        WHERE s.season = %s
-        ORDER BY s.round, s.conference
-    """, (season,))
-    ctx["series"] = []
-    for r in c.fetchall():
-        winner = r[3] if (r[11] and r[12] == r[11]) else (r[7] if r[11] else None)
-        ctx["series"].append({
-            "round": r[0], "conf": r[1],
-            "home": r[3], "home_seed": r[4], "home_wins": r[5],
-            "away": r[7], "away_seed": r[8], "away_wins": r[9],
-            "status": r[10], "winner": winner, "total_games": r[14],
-        })
+    def _run(label, fn):
+        """Run a context-building section; on error log it but keep going."""
+        try:
+            fn()
+        except Exception as e:
+            ctx["_errors"].append(f"{label}: {type(e).__name__}: {str(e)[:120]}")
+            print(f"[chat_ctx] {label} failed: {e}")
 
-    # ── 2. Community series picks (% per team, all series) ────────────────────
-    c.execute("""
-        WITH lp AS (
-            SELECT DISTINCT ON (user_id, series_id) series_id, predicted_winner_id
-            FROM predictions ORDER BY user_id, series_id, id DESC
-        )
-        SELECT s.round, s.conference, ht.abbreviation, at.abbreviation,
-               COUNT(lp.predicted_winner_id)::int AS total,
-               SUM(CASE WHEN lp.predicted_winner_id = s.home_team_id THEN 1 ELSE 0 END)::int,
-               SUM(CASE WHEN lp.predicted_winner_id = s.away_team_id THEN 1 ELSE 0 END)::int
-        FROM series s
-        JOIN teams ht ON s.home_team_id = ht.id
-        JOIN teams at ON s.away_team_id = at.id
-        LEFT JOIN lp ON lp.series_id = s.id
-        WHERE s.season = %s
-        GROUP BY s.round, s.conference, ht.abbreviation, at.abbreviation
-        ORDER BY s.round, s.conference
-    """, (season,))
-    ctx["community_series_picks"] = []
-    for r in c.fetchall():
-        total = r[4] or 0
-        hv, av = r[5] or 0, r[6] or 0
-        ctx["community_series_picks"].append({
-            "round": r[0], "conf": r[1], "home": r[2], "away": r[3],
-            "total_votes": total,
-            "home_pct": round(hv / total * 100) if total else 50,
-            "away_pct": round(av / total * 100) if total else 50,
-        })
-
-    # ── 3. Community futures picks (champion / west / east champ) ─────────────
-    for col, label in [("champion_team_id", "champion"), ("west_champ_team_id", "west_champ"),
-                       ("east_champ_team_id", "east_champ")]:
-        c.execute(f"""
-            SELECT t.name, t.abbreviation, COUNT(*)::int AS votes
-            FROM futures_predictions fp
-            JOIN teams t ON t.id = fp.{col}
-            WHERE fp.season = %s AND fp.{col} IS NOT NULL
-            GROUP BY t.name, t.abbreviation
-            ORDER BY votes DESC
-        """, (season,))
-        rows = c.fetchall()
-        total = sum(r[2] for r in rows)
-        ctx[f"community_{label}_picks"] = [
-            {"team": r[1], "votes": r[2], "pct": round(r[2] / total * 100) if total else 0}
-            for r in rows
-        ]
-
-    # ── 4. Community Finals MVP picks ─────────────────────────────────────────
-    for col, label in [("finals_mvp", "finals_mvp"), ("west_finals_mvp", "west_finals_mvp"),
-                       ("east_finals_mvp", "east_finals_mvp")]:
-        c.execute(f"""
-            SELECT {col}, COUNT(*)::int AS votes
-            FROM futures_predictions
-            WHERE season = %s AND {col} IS NOT NULL AND {col} != ''
-            GROUP BY {col} ORDER BY votes DESC LIMIT 10
-        """, (season,))
-        rows = c.fetchall()
-        total = sum(r[1] for r in rows)
-        ctx[f"community_{label}_picks"] = [
-            {"player": r[0], "votes": r[1], "pct": round(r[1] / total * 100) if total else 0}
-            for r in rows
-        ]
-
-    # ── 5. Community stat-leader picks (top_blocks, top_scorer, etc.) ─────────
-    for col, label in [
-        ("top_scorer",   "community_top_scorer_picks"),
-        ("top_assists",  "community_top_assists_picks"),
-        ("top_rebounds", "community_top_rebounds_picks"),
-        ("top_threes",   "community_top_threes_picks"),
-        ("top_steals",   "community_top_steals_picks"),
-        ("top_blocks",   "community_top_blocks_picks"),
-    ]:
-        c.execute(f"""
-            SELECT ps.player_name, COUNT(*)::int AS votes
-            FROM leaders_predictions lp
-            JOIN player_stats ps ON ps.player_id = lp.{col} AND ps.season = %s
-            WHERE lp.season = %s AND lp.{col} IS NOT NULL
-            GROUP BY ps.player_name ORDER BY votes DESC LIMIT 10
-        """, (season, season))
-        rows = c.fetchall()
-        total = sum(r[1] for r in rows)
-        ctx[label] = [
-            {"player": r[0], "votes": r[1], "pct": round(r[1] / total * 100) if total else 0}
-            for r in rows
-        ]
-
-    # ── 6. Leaderboard top 20 ─────────────────────────────────────────────────
-    c.execute("""
-        SELECT username, points,
-               RANK() OVER (ORDER BY points DESC) AS rank
-        FROM users ORDER BY points DESC LIMIT 20
-    """)
-    ctx["leaderboard_top20"] = [
-        {"rank": int(r[2]), "username": r[0], "points": r[1] or 0}
-        for r in c.fetchall()
-    ]
-
-    # ── 7. Playoff stat leaders — per-game averages ───────────────────────────
-    for cat, col in [
-        ("stat_leaders_scoring",   "pts_per_game"),
-        ("stat_leaders_blocks",    "blk_per_game"),
-        ("stat_leaders_rebounds",  "reb_per_game"),
-        ("stat_leaders_assists",   "ast_per_game"),
-        ("stat_leaders_steals",    "stl_per_game"),
-        ("stat_leaders_threes",    "fg3m_per_game"),
-    ]:
-        c.execute(f"""
-            SELECT player_name, team_abbreviation, games_played,
-                   pts_per_game, ast_per_game, reb_per_game,
-                   stl_per_game, blk_per_game, fg3m_per_game, {col}
-            FROM player_stats
-            WHERE season = %s AND {col} > 0
-            ORDER BY {col} DESC NULLS LAST LIMIT 5
-        """, (season,))
-        ctx[cat] = [
-            {
-                "name": r[0], "team": r[1], "gp": r[2],
-                "ppg": round(float(r[3] or 0), 1),
-                "apg": round(float(r[4] or 0), 1),
-                "rpg": round(float(r[5] or 0), 1),
-                "spg": round(float(r[6] or 0), 1),
-                "bpg": round(float(r[7] or 0), 1),
-                "3pg": round(float(r[8] or 0), 1),
-                "stat_value": round(float(r[9] or 0), 1),
-            }
-            for r in c.fetchall()
-        ]
-
-    # ── 8. Single-game records from game logs ─────────────────────────────────
-    for stat_col, label in [
-        ("blocks",   "record_most_blocks_one_game"),
-        ("points",   "record_most_points_one_game"),
-        ("rebounds", "record_most_rebounds_one_game"),
-        ("assists",  "record_most_assists_one_game"),
-        ("steals",   "record_most_steals_one_game"),
-    ]:
-        c.execute(f"""
-            SELECT player_name, team_abbr, {stat_col}, game_date
-            FROM player_game_stats
-            WHERE season = %s AND {stat_col} > 0
-            ORDER BY {stat_col} DESC NULLS LAST LIMIT 5
-        """, (season,))
-        ctx[label] = [
-            {"name": r[0], "team": r[1], "value": r[2], "date": str(r[3])}
-            for r in c.fetchall()
-        ]
-
-    # ── 9. User-specific data (if logged in) ──────────────────────────────────
-    if user_id:
-        # User info + rank
-        c.execute("""
-            SELECT username, points,
-                   (SELECT COUNT(*)+1 FROM users u2 WHERE u2.points > u.points)
-            FROM users u WHERE id = %s
-        """, (user_id,))
-        urow = c.fetchone()
-        if urow:
-            ctx["user_username"] = urow[0]
-            ctx["user_points"] = urow[1] or 0
-            ctx["user_rank"] = int(urow[2])
-
-        # Series picks
+    # ── 1. All series ─────────────────────────────────────────────────────────
+    def _sec_series():
         c.execute("""
             SELECT s.round, s.conference,
-                   ht.abbreviation, at.abbreviation, wt.abbreviation,
-                   p.predicted_games, p.is_correct, p.points_earned
-            FROM predictions p
-            JOIN series s ON p.series_id = s.id
+                   ht.name, ht.abbreviation, s.home_seed, s.home_wins,
+                   at.name, at.abbreviation, s.away_seed, s.away_wins,
+                   s.status, s.winner_team_id, ht.id, at.id, COALESCE(s.actual_games, 0)
+            FROM series s
             JOIN teams ht ON s.home_team_id = ht.id
             JOIN teams at ON s.away_team_id = at.id
-            LEFT JOIN teams wt ON p.predicted_winner_id = wt.id
-            WHERE p.user_id = %s AND s.season = %s
+            WHERE s.season = %s ORDER BY s.round, s.conference
+        """, (season,))
+        ctx["series"] = []
+        for r in c.fetchall():
+            winner = r[3] if (r[11] and r[12] == r[11]) else (r[7] if r[11] else None)
+            ctx["series"].append({
+                "round": r[0], "conf": r[1],
+                "home": r[3], "home_seed": r[4], "home_wins": r[5],
+                "away": r[7], "away_seed": r[8], "away_wins": r[9],
+                "status": r[10], "winner": winner, "total_games": r[14],
+            })
+    _run("series", _sec_series)
+
+    # ── 2. Community series picks ─────────────────────────────────────────────
+    def _sec_community_series():
+        c.execute("""
+            WITH lp AS (
+                SELECT DISTINCT ON (user_id, series_id) series_id, predicted_winner_id
+                FROM predictions ORDER BY user_id, series_id, id DESC
+            )
+            SELECT s.round, s.conference, ht.abbreviation, at.abbreviation,
+                   COUNT(lp.predicted_winner_id)::int,
+                   SUM(CASE WHEN lp.predicted_winner_id = s.home_team_id THEN 1 ELSE 0 END)::int,
+                   SUM(CASE WHEN lp.predicted_winner_id = s.away_team_id THEN 1 ELSE 0 END)::int
+            FROM series s
+            JOIN teams ht ON s.home_team_id = ht.id
+            JOIN teams at ON s.away_team_id = at.id
+            LEFT JOIN lp ON lp.series_id = s.id
+            WHERE s.season = %s
+            GROUP BY s.round, s.conference, ht.abbreviation, at.abbreviation
             ORDER BY s.round, s.conference
-        """, (user_id, season))
-        ctx["user_series_picks"] = [
-            {"round": r[0], "conf": r[1], "home": r[2], "away": r[3],
-             "picked": r[4], "games": r[5], "correct": r[6], "pts": r[7] or 0}
-            for r in c.fetchall()
-        ]
+        """, (season,))
+        ctx["community_series_picks"] = []
+        for r in c.fetchall():
+            total = r[4] or 0
+            hv, av = r[5] or 0, r[6] or 0
+            ctx["community_series_picks"].append({
+                "round": r[0], "conf": r[1], "home": r[2], "away": r[3],
+                "total_votes": total,
+                "home_pct": round(hv / total * 100) if total else 50,
+                "away_pct": round(av / total * 100) if total else 50,
+            })
+    _run("community_series", _sec_community_series)
 
-        # Futures picks (champion / MVP)
-        c.execute("""
-            SELECT tc.abbreviation, tw.abbreviation, te.abbreviation,
-                   fp.finals_mvp, fp.west_finals_mvp, fp.east_finals_mvp,
-                   fp.is_correct_champion, fp.is_correct_west, fp.is_correct_east,
-                   fp.points_earned
-            FROM futures_predictions fp
-            LEFT JOIN teams tc ON tc.id = fp.champion_team_id
-            LEFT JOIN teams tw ON tw.id = fp.west_champ_team_id
-            LEFT JOIN teams te ON te.id = fp.east_champ_team_id
-            WHERE fp.user_id = %s AND fp.season = %s
-        """, (user_id, season))
-        frow = c.fetchone()
-        if frow:
-            ctx["user_futures_picks"] = {
-                "champion": frow[0], "west_champ": frow[1], "east_champ": frow[2],
-                "finals_mvp": frow[3], "west_finals_mvp": frow[4], "east_finals_mvp": frow[5],
-                "champion_correct": frow[6], "west_correct": frow[7], "east_correct": frow[8],
-                "points_earned": frow[9] or 0,
-            }
+    # ── 3. Community futures picks ────────────────────────────────────────────
+    def _sec_community_futures():
+        for col, label in [("champion_team_id","champion"),("west_champ_team_id","west_champ"),("east_champ_team_id","east_champ")]:
+            c.execute(f"""
+                SELECT t.abbreviation, COUNT(*)::int AS votes
+                FROM futures_predictions fp JOIN teams t ON t.id = fp.{col}
+                WHERE fp.season = %s AND fp.{col} IS NOT NULL
+                GROUP BY t.abbreviation ORDER BY votes DESC
+            """, (season,))
+            rows = c.fetchall(); total = sum(r[1] for r in rows)
+            ctx[f"community_{label}_picks"] = [
+                {"team": r[0], "votes": r[1], "pct": round(r[1]/total*100) if total else 0}
+                for r in rows]
+        for col, label in [("finals_mvp","finals_mvp"),("west_finals_mvp","west_finals_mvp"),("east_finals_mvp","east_finals_mvp")]:
+            c.execute(f"""
+                SELECT {col}, COUNT(*)::int FROM futures_predictions
+                WHERE season=%s AND {col} IS NOT NULL AND {col}!=''
+                GROUP BY {col} ORDER BY 2 DESC LIMIT 10
+            """, (season,))
+            rows = c.fetchall(); total = sum(r[1] for r in rows)
+            ctx[f"community_{label}_picks"] = [
+                {"player": r[0], "votes": r[1], "pct": round(r[1]/total*100) if total else 0}
+                for r in rows]
+    _run("community_futures", _sec_community_futures)
 
-        # Leaders/stat picks — fetch raw player IDs first, then resolve names
-        c.execute("""
-            SELECT top_scorer, top_assists, top_rebounds,
-                   top_threes, top_steals, top_blocks,
-                   is_correct_scorer, is_correct_assists,
-                   is_correct_rebounds, is_correct_threes,
-                   is_correct_steals, is_correct_blocks,
-                   points_earned
-            FROM leaders_predictions
-            WHERE user_id = %s AND season = %s
-        """, (user_id, season))
-        lrow = c.fetchone()
-        if lrow:
-            def _resolve_player(pid):
-                if not pid:
-                    return None
-                c.execute("SELECT player_name FROM player_stats WHERE player_id = %s LIMIT 1", (pid,))
-                r = c.fetchone()
-                return r[0] if r else f"player_id:{pid}"
-            ctx["user_leaders_picks"] = {
-                "top_scorer":    {"player": _resolve_player(lrow[0]),  "correct": lrow[6]},
-                "top_assists":   {"player": _resolve_player(lrow[1]),  "correct": lrow[7]},
-                "top_rebounds":  {"player": _resolve_player(lrow[2]),  "correct": lrow[8]},
-                "top_threes":    {"player": _resolve_player(lrow[3]),  "correct": lrow[9]},
-                "top_steals":    {"player": _resolve_player(lrow[4]),  "correct": lrow[10]},
-                "top_blocks":    {"player": _resolve_player(lrow[5]),  "correct": lrow[11]},
-                "points_earned": lrow[12] or 0,
-            }
+    # ── 4. Community stat-leader picks ────────────────────────────────────────
+    def _sec_community_leaders():
+        for col, label in [
+            ("top_scorer","community_top_scorer_picks"), ("top_assists","community_top_assists_picks"),
+            ("top_rebounds","community_top_rebounds_picks"), ("top_threes","community_top_threes_picks"),
+            ("top_steals","community_top_steals_picks"), ("top_blocks","community_top_blocks_picks"),
+        ]:
+            # Try joining player_stats; fall back to raw player_id display
+            c.execute(f"""
+                SELECT COALESCE(ps.player_name, CAST(lp.{col} AS TEXT)), COUNT(*)::int
+                FROM leaders_predictions lp
+                LEFT JOIN player_stats ps ON ps.player_id = lp.{col}
+                WHERE lp.season = %s AND lp.{col} IS NOT NULL
+                GROUP BY 1 ORDER BY 2 DESC LIMIT 10
+            """, (season,))
+            rows = c.fetchall(); total = sum(r[1] for r in rows)
+            ctx[label] = [
+                {"player": r[0], "votes": r[1], "pct": round(r[1]/total*100) if total else 0}
+                for r in rows]
+    _run("community_leaders", _sec_community_leaders)
 
-        # Play-in picks
+    # ── 5. Leaderboard top 20 ─────────────────────────────────────────────────
+    def _sec_leaderboard():
         c.execute("""
-            SELECT g.home_team_id, g.away_team_id, g.conference, g.round,
-                   wt.abbreviation, pp.is_correct, pp.points_earned
-            FROM playin_predictions pp
-            JOIN playin_games g ON pp.game_id = g.id
-            LEFT JOIN teams wt ON wt.id = pp.predicted_winner_id
-            WHERE pp.user_id = %s AND g.season = %s
-        """, (user_id, season))
-        ctx["user_playin_picks"] = [
-            {"conf": r[2], "round": r[3], "picked": r[4],
-             "correct": r[5], "pts": r[6] or 0}
-            for r in c.fetchall()
-        ]
+            SELECT username, points, RANK() OVER (ORDER BY points DESC)
+            FROM users ORDER BY points DESC LIMIT 20
+        """)
+        ctx["leaderboard_top20"] = [
+            {"rank": int(r[2]), "username": r[0], "points": r[1] or 0}
+            for r in c.fetchall()]
+    _run("leaderboard", _sec_leaderboard)
+
+    # ── 6. Playoff stat leaders ───────────────────────────────────────────────
+    def _sec_stat_leaders():
+        for cat, col in [
+            ("stat_leaders_scoring","pts_per_game"), ("stat_leaders_blocks","blk_per_game"),
+            ("stat_leaders_rebounds","reb_per_game"), ("stat_leaders_assists","ast_per_game"),
+            ("stat_leaders_steals","stl_per_game"), ("stat_leaders_threes","fg3m_per_game"),
+        ]:
+            c.execute(f"""
+                SELECT player_name, team_abbreviation, games_played,
+                       pts_per_game, ast_per_game, reb_per_game,
+                       stl_per_game, blk_per_game, fg3m_per_game, {col}
+                FROM player_stats WHERE season=%s AND {col}>0
+                ORDER BY {col} DESC NULLS LAST LIMIT 5
+            """, (season,))
+            ctx[cat] = [
+                {"name": r[0], "team": r[1], "gp": r[2],
+                 "ppg": round(float(r[3] or 0),1), "apg": round(float(r[4] or 0),1),
+                 "rpg": round(float(r[5] or 0),1), "spg": round(float(r[6] or 0),1),
+                 "bpg": round(float(r[7] or 0),1), "3pg": round(float(r[8] or 0),1),
+                 "stat_value": round(float(r[9] or 0),1)}
+                for r in c.fetchall()]
+    _run("stat_leaders", _sec_stat_leaders)
+
+    # ── 7. Single-game records ────────────────────────────────────────────────
+    def _sec_game_records():
+        for stat_col, label in [
+            ("blocks","record_most_blocks_one_game"), ("points","record_most_points_one_game"),
+            ("rebounds","record_most_rebounds_one_game"), ("assists","record_most_assists_one_game"),
+            ("steals","record_most_steals_one_game"),
+        ]:
+            c.execute(f"""
+                SELECT player_name, team_abbr, {stat_col}, game_date
+                FROM player_game_stats WHERE season=%s AND {stat_col}>0
+                ORDER BY {stat_col} DESC NULLS LAST LIMIT 5
+            """, (season,))
+            ctx[label] = [
+                {"name": r[0], "team": r[1], "value": r[2], "date": str(r[3])}
+                for r in c.fetchall()]
+    _run("game_records", _sec_game_records)
+
+    # ── 8. User-specific data ─────────────────────────────────────────────────
+    if user_id:
+        def _sec_user_info():
+            c.execute("""
+                SELECT username, points,
+                       (SELECT COUNT(*)+1 FROM users u2 WHERE u2.points > u.points)
+                FROM users u WHERE id = %s
+            """, (user_id,))
+            urow = c.fetchone()
+            if urow:
+                ctx["user_username"] = urow[0]
+                ctx["user_points"] = urow[1] or 0
+                ctx["user_rank"] = int(urow[2])
+        _run("user_info", _sec_user_info)
+
+        def _sec_user_series():
+            c.execute("""
+                SELECT s.round, s.conference,
+                       ht.abbreviation, at.abbreviation, wt.abbreviation,
+                       p.predicted_games, p.is_correct, p.points_earned
+                FROM predictions p
+                JOIN series s ON p.series_id = s.id
+                JOIN teams ht ON s.home_team_id = ht.id
+                JOIN teams at ON s.away_team_id = at.id
+                LEFT JOIN teams wt ON p.predicted_winner_id = wt.id
+                WHERE p.user_id = %s AND s.season = %s ORDER BY s.round, s.conference
+            """, (user_id, season))
+            ctx["user_series_picks"] = [
+                {"round": r[0], "conf": r[1], "home": r[2], "away": r[3],
+                 "picked": r[4], "games": r[5], "correct": r[6], "pts": r[7] or 0}
+                for r in c.fetchall()]
+        _run("user_series", _sec_user_series)
+
+        def _sec_user_futures():
+            c.execute("""
+                SELECT tc.abbreviation, tw.abbreviation, te.abbreviation,
+                       fp.finals_mvp, fp.west_finals_mvp, fp.east_finals_mvp,
+                       fp.is_correct_champion, fp.is_correct_west, fp.is_correct_east,
+                       fp.points_earned
+                FROM futures_predictions fp
+                LEFT JOIN teams tc ON tc.id = fp.champion_team_id
+                LEFT JOIN teams tw ON tw.id = fp.west_champ_team_id
+                LEFT JOIN teams te ON te.id = fp.east_champ_team_id
+                WHERE fp.user_id = %s AND fp.season = %s
+            """, (user_id, season))
+            frow = c.fetchone()
+            if frow:
+                ctx["user_futures_picks"] = {
+                    "champion": frow[0], "west_champ": frow[1], "east_champ": frow[2],
+                    "finals_mvp": frow[3], "west_finals_mvp": frow[4], "east_finals_mvp": frow[5],
+                    "champion_correct": frow[6], "west_correct": frow[7], "east_correct": frow[8],
+                    "points_earned": frow[9] or 0,
+                }
+        _run("user_futures", _sec_user_futures)
+
+        def _sec_user_leaders():
+            c.execute("""
+                SELECT top_scorer, top_assists, top_rebounds,
+                       top_threes, top_steals, top_blocks,
+                       is_correct_scorer, is_correct_assists,
+                       is_correct_rebounds, is_correct_threes,
+                       is_correct_steals, is_correct_blocks, points_earned
+                FROM leaders_predictions WHERE user_id = %s AND season = %s
+            """, (user_id, season))
+            lrow = c.fetchone()
+            if lrow:
+                def _name(pid):
+                    if not pid: return None
+                    c.execute("SELECT player_name FROM player_stats WHERE player_id=%s LIMIT 1", (pid,))
+                    r = c.fetchone()
+                    return r[0] if r else str(pid)
+                ctx["user_leaders_picks"] = {
+                    "top_scorer":    {"player": _name(lrow[0]), "correct": lrow[6]},
+                    "top_assists":   {"player": _name(lrow[1]), "correct": lrow[7]},
+                    "top_rebounds":  {"player": _name(lrow[2]), "correct": lrow[8]},
+                    "top_threes":    {"player": _name(lrow[3]), "correct": lrow[9]},
+                    "top_steals":    {"player": _name(lrow[4]), "correct": lrow[10]},
+                    "top_blocks":    {"player": _name(lrow[5]), "correct": lrow[11]},
+                    "points_earned": lrow[12] or 0,
+                }
+            else:
+                ctx["user_leaders_picks"] = "NO_LEADERS_PICKS_FOUND_FOR_THIS_USER"
+        _run("user_leaders", _sec_user_leaders)
+
+        def _sec_user_playin():
+            c.execute("""
+                SELECT g.conference, g.round, wt.abbreviation, pp.is_correct, pp.points_earned
+                FROM playin_predictions pp
+                JOIN playin_games g ON pp.game_id = g.id
+                LEFT JOIN teams wt ON wt.id = pp.predicted_winner_id
+                WHERE pp.user_id = %s AND g.season = %s
+            """, (user_id, season))
+            ctx["user_playin_picks"] = [
+                {"conf": r[0], "round": r[1], "picked": r[2], "correct": r[3], "pts": r[4] or 0}
+                for r in c.fetchall()]
+        _run("user_playin", _sec_user_playin)
 
     return _json.dumps(ctx, default=str)
 
@@ -5646,6 +5637,19 @@ async def chat_endpoint(req: ChatRequest):
     except Exception as e:
         print(f"[chat] Anthropic API error: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"AI error: {type(e).__name__}: {str(e)[:200]}")
+
+
+@app.get("/api/chat/context")
+async def chat_context(user_id: Optional[int] = None, season: str = "2026"):
+    """Debug: show the exact JSON context that would be sent to the AI for a given user."""
+    try:
+        conn = get_db_conn()
+        ctx_json = _build_chat_context(conn, user_id, season)
+        conn.close()
+        import json as _j
+        return _j.loads(ctx_json)
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/api/chat/test")
