@@ -2167,6 +2167,13 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
   const [expanded, setExpanded] = useState(null);
   const [tab, setTab] = useState('rankings');
   const [provPopover, setProvPopover] = useState(null); // user_id whose popover is open
+  const [sortCol, setSortCol]   = useState('total');    // 'total' | 'real' | 'prov' | 'accuracy'
+  const [sortDir, setSortDir]   = useState('desc');
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setSortCol(col); setSortDir('desc'); }
+  };
 
   const { data: leaderboard = [], isLoading: loading } = useQuery({
     queryKey: ['leaderboard', 'v2'],
@@ -2233,21 +2240,61 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
       </div>
 
       {tab === 'global' ? <GlobalStatsTab currentUser={currentUser} /> : loading ? (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           {[1,2,3,4,5].map(i => (
-            <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex items-center gap-3 animate-pulse">
-              <div className="w-10 h-10 rounded-full bg-slate-800 shrink-0" />
-              <div className="flex-1 space-y-2">
-                <div className="h-3.5 w-28 bg-slate-800 rounded" />
-                <div className="h-2.5 w-20 bg-slate-800/60 rounded" />
+            <div key={i} className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 flex items-center gap-3 animate-pulse">
+              <div className="w-8 h-8 rounded-full bg-slate-800 shrink-0" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3 w-28 bg-slate-800 rounded" />
+                <div className="h-2.5 w-16 bg-slate-800/60 rounded" />
               </div>
-              <div className="w-12 h-8 bg-slate-800 rounded" />
+              <div className="w-20 h-10 bg-slate-800 rounded-xl" />
             </div>
           ))}
         </div>
-      ) : (
-        <div className="space-y-2">
-          {leaderboard.map((user) => {
+      ) : (() => {
+        // ── Sort leaderboard client-side ────────────────────────────────
+        const sorted = [...leaderboard].sort((a, b) => {
+          const ap = a.provisional_total ?? 0, bp = b.provisional_total ?? 0;
+          let av, bv;
+          if (sortCol === 'total')    { av = a.points + ap; bv = b.points + bp; }
+          else if (sortCol === 'real'){ av = a.points;       bv = b.points; }
+          else if (sortCol === 'prov'){ av = ap;              bv = bp; }
+          else                        { av = a.accuracy ?? 0; bv = b.accuracy ?? 0; }
+          return sortDir === 'desc' ? bv - av : av - bv;
+        });
+
+        // Column header helper
+        const SortHdr = ({ col, label, cls = '' }) => {
+          const active = sortCol === col;
+          return (
+            <button onClick={() => handleSort(col)}
+              className={`flex items-center gap-0.5 font-black uppercase tracking-wide text-[10px] transition-colors ${
+                active ? 'text-orange-400' : 'text-slate-500 hover:text-slate-300'
+              } ${cls}`}>
+              {label}
+              <span className="text-[9px]">{active ? (sortDir === 'desc' ? '▼' : '▲') : '⇅'}</span>
+            </button>
+          );
+        };
+
+        return (
+        <div className="rounded-2xl border border-slate-800 overflow-hidden">
+          {/* Table header */}
+          <div className="grid grid-cols-[2rem_1fr_auto] sm:grid-cols-[2.5rem_1fr_5rem_auto] items-center gap-x-3 px-3 py-2 bg-slate-900/80 border-b border-slate-800">
+            <span className="text-[10px] font-black text-slate-600 uppercase">#</span>
+            <span className="text-[10px] font-black text-slate-600 uppercase">Player</span>
+            <SortHdr col="accuracy" label="Acc%" cls="hidden sm:flex justify-center" />
+            <div className="flex items-center gap-2 justify-end">
+              <SortHdr col="real"  label="Real" />
+              <SortHdr col="prov"  label="⚡Prov" />
+              <SortHdr col="total" label="Total" />
+            </div>
+          </div>
+
+          {/* Rows */}
+          <div className="divide-y divide-slate-800/60">
+          {sorted.map((user) => {
             const isMe       = currentUser && user.user_id === currentUser.user_id;
             const isExpanded = expanded === user.rank;
             const accuracy   = user.accuracy ?? 0;
@@ -2277,114 +2324,116 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                               : ppc > 0    ? { label: '🛡️ Safe',     cls: 'text-green-400 bg-green-500/10 border-green-500/30' }
                               : null;
 
-            const rankBorder = isMe
-              ? 'border-orange-500/50 ring-1 ring-orange-500/20'
-              : user.rank <= 3 ? 'border-amber-500/30' : 'border-slate-800';
+            const rowBg = isMe ? 'bg-orange-500/5' : user.rank <= 3 ? 'bg-amber-500/5' : 'bg-slate-900/30';
+            const leftBar = isMe ? 'border-l-2 border-l-orange-500' : user.rank <= 3 ? 'border-l-2 border-l-amber-500/60' : '';
 
             return (
-              <div key={user.rank} className={`bg-slate-900/50 border rounded-xl transition-all overflow-hidden ${rankBorder} ${isMe ? 'bg-orange-500/5' : ''}`}>
-                <div className="p-3 sm:p-4 flex items-center gap-3">
-                  {/* Rank number */}
-                  <div className="text-xs font-black text-slate-600 w-5 text-center shrink-0 hidden sm:block">
-                    {user.rank <= 3 ? medals[user.rank - 1] : `${user.rank}`}
+              <div key={user.rank} className={`transition-colors ${rowBg} ${leftBar}`}>
+                {/* Main table row */}
+                <div className="grid grid-cols-[2rem_1fr_auto] sm:grid-cols-[2.5rem_1fr_5rem_auto] items-center gap-x-3 px-3 py-2.5">
+
+                  {/* Rank */}
+                  <div className={`text-sm font-black text-center ${
+                    user.rank === 1 ? 'text-amber-400' :
+                    user.rank === 2 ? 'text-slate-300' :
+                    user.rank === 3 ? 'text-orange-500' : 'text-slate-600'
+                  }`}>
+                    {user.rank <= 3 ? medals[user.rank - 1] : user.rank}
                   </div>
 
-                  {/* Avatar */}
-                  <div className="relative shrink-0">
-                    {user.avatar_url ? (
-                      <img src={user.avatar_url} alt={user.username}
-                        className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full object-cover border-2 ${
-                          isMe ? 'border-orange-500/60' :
-                          user.rank === 1 ? 'border-amber-500/60' :
-                          user.rank === 2 ? 'border-slate-400/60' :
-                          user.rank === 3 ? 'border-orange-600/60' : 'border-slate-700'
-                        }`}
-                        onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
-                    ) : null}
-                    <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-black text-sm ${user.avatar_url ? 'hidden' : ''} ${
-                      isMe ? 'bg-orange-500/20 text-orange-400 border border-orange-500/40' :
-                      user.rank === 1 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' :
-                      user.rank === 2 ? 'bg-slate-400/20 text-slate-300 border border-slate-400/40' :
-                      user.rank === 3 ? 'bg-orange-700/20 text-orange-400 border border-orange-700/40' :
-                      'bg-slate-800 text-slate-400'
-                    }`}>
-                      {user.rank <= 3 ? medals[user.rank - 1] : user.rank}
-                    </div>
-                    {user.rank <= 3 && user.avatar_url && (
-                      <span className="absolute -bottom-1 -right-1 text-xs leading-none">{medals[user.rank - 1]}</span>
-                    )}
-                  </div>
-
-                  {/* Name + stats */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <button className={`font-black text-sm hover:text-orange-400 transition-colors text-left truncate ${isMe ? 'text-orange-300' : 'text-white'}`}
-                        onClick={() => onUserClick(user)}>
-                        {user.username}
-                        {isMe && <span className="ml-1 text-[9px] text-orange-400 font-black align-middle">(you)</span>}
-                      </button>
-                      {riskProfile && (
-                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border hidden sm:inline ${riskProfile.cls}`}>
-                          {riskProfile.label}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                      <span className="text-[11px] text-slate-500">
-                        {user.correct_predictions ?? 0}/{user.total_predictions ?? 0} correct
-                      </span>
-                      <span className={`text-[11px] font-black ${
-                        accuracy >= 70 ? 'text-green-400' : accuracy >= 50 ? 'text-yellow-400' : 'text-slate-500'
-                      }`}>{accuracy}%</span>
-                      {bullseyes > 0 && (
-                        <span className="text-[10px] text-amber-400 font-black hidden sm:inline">🎯 {bullseyes}</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Score area */}
-                  <div className="shrink-0 flex flex-col items-center gap-0.5 min-w-[6rem]">
-                    {/* Combined total — biggest number */}
-                    <div className="text-2xl font-black text-orange-400 leading-none">{user.points + provPts}</div>
-                    <div className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">total pts</div>
-
-                    {/* Two equal columns — real pts + provisional */}
-                    <div className={`grid gap-1 w-full mt-1 ${provPts > 0 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                      {/* Real pts → expands score breakdown */}
-                      <button
-                        onClick={() => setExpanded(isExpanded ? null : user.rank)}
-                        title="Tap to see score breakdown"
-                        className={`flex flex-col items-center rounded-xl px-2 py-1.5 border transition-all ${
-                          isExpanded
-                            ? 'bg-orange-500/25 border-orange-500/60'
-                            : 'bg-slate-800 border-slate-700 hover:bg-slate-700 hover:border-slate-600'
-                        }`}
-                      >
-                        <span className="text-lg font-black text-orange-300 leading-none">{user.points}</span>
-                        <div className="flex items-center gap-0.5 mt-0.5">
-                          <span className="text-[9px] text-slate-400 font-bold">pts</span>
-                          <ChevronDown className={`w-2.5 h-2.5 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                        </div>
-                      </button>
-
-                      {/* Provisional → expands provisional breakdown */}
-                      {provPts > 0 && (
-                        <button
-                          onClick={() => setProvPopover(provPopover === user.user_id ? null : user.user_id)}
-                          title="Tap to see provisional pts"
-                          className={`flex flex-col items-center rounded-xl px-2 py-1.5 border transition-all ${
-                            provPopover === user.user_id
-                              ? 'bg-amber-400/30 border-amber-400/60'
-                              : 'bg-amber-400/10 border-amber-400/35 hover:bg-amber-400/20 animate-pulse hover:animate-none'
+                  {/* Player — avatar + name + sub-info */}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="relative shrink-0">
+                      {user.avatar_url ? (
+                        <img src={user.avatar_url} alt={user.username}
+                          className={`w-8 h-8 rounded-full object-cover border-2 ${
+                            isMe ? 'border-orange-500/60' :
+                            user.rank === 1 ? 'border-amber-500/60' :
+                            user.rank === 2 ? 'border-slate-400/60' :
+                            user.rank === 3 ? 'border-orange-600/60' : 'border-slate-700'
                           }`}
-                        >
-                          <span className="text-lg font-black text-amber-300 leading-none">{provPts}</span>
-                          <div className="flex items-center gap-0.5 mt-0.5">
-                            <span className="text-[9px] text-amber-400 font-bold">⚡</span>
-                            <ChevronDown className={`w-2.5 h-2.5 text-amber-500 transition-transform ${provPopover === user.user_id ? 'rotate-180' : ''}`} />
-                          </div>
+                          onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
+                      ) : null}
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs ${user.avatar_url ? 'hidden' : ''} ${
+                        isMe ? 'bg-orange-500/20 text-orange-400 border border-orange-500/40' :
+                        user.rank === 1 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' :
+                        user.rank === 2 ? 'bg-slate-400/20 text-slate-300 border border-slate-400/40' :
+                        user.rank === 3 ? 'bg-orange-700/20 text-orange-400 border border-orange-700/40' :
+                        'bg-slate-800 text-slate-400'
+                      }`}>
+                        {(user.username || '?')[0].toUpperCase()}
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button className={`font-black text-sm hover:text-orange-400 transition-colors text-left truncate ${isMe ? 'text-orange-300' : 'text-white'}`}
+                          onClick={() => onUserClick(user)}>
+                          {user.username}
+                          {isMe && <span className="ml-1 text-[9px] text-orange-400 font-black">(you)</span>}
                         </button>
-                      )}
+                        {riskProfile && (
+                          <span className={`text-[9px] font-black px-1 py-0.5 rounded border hidden sm:inline ${riskProfile.cls}`}>
+                            {riskProfile.label}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[10px] text-slate-500">{user.correct_predictions ?? 0}/{user.total_predictions ?? 0}</span>
+                        {bullseyes > 0 && <span className="text-[10px] text-amber-400 font-bold hidden sm:inline">🎯{bullseyes}</span>}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Accuracy — desktop only */}
+                  <div className="hidden sm:flex flex-col items-center">
+                    <span className={`text-base font-black ${
+                      accuracy >= 70 ? 'text-green-400' : accuracy >= 50 ? 'text-yellow-400' : 'text-slate-500'
+                    }`}>{accuracy}%</span>
+                    <span className="text-[9px] text-slate-600 font-bold uppercase">acc</span>
+                  </div>
+
+                  {/* Score columns — Total / Real / Prov */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Real pts */}
+                    <button
+                      onClick={() => setExpanded(isExpanded ? null : user.rank)}
+                      title="Tap to see score breakdown"
+                      className={`flex flex-col items-center rounded-xl px-2.5 py-1.5 border min-w-[3rem] transition-all ${
+                        isExpanded
+                          ? 'bg-orange-500/25 border-orange-500/60'
+                          : 'bg-slate-800/80 border-slate-700 hover:bg-slate-700 hover:border-slate-600'
+                      }`}
+                    >
+                      <span className="text-lg font-black text-orange-300 leading-none">{user.points}</span>
+                      <div className="flex items-center gap-0.5 mt-0.5">
+                        <span className="text-[9px] text-slate-400 font-bold">pts</span>
+                        <ChevronDown className={`w-2.5 h-2.5 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      </div>
+                    </button>
+
+                    {/* Provisional pts */}
+                    <button
+                      onClick={() => provPts > 0 && setProvPopover(provPopover === user.user_id ? null : user.user_id)}
+                      title={provPts > 0 ? 'Tap to see provisional pts' : 'No provisional pts yet'}
+                      className={`flex flex-col items-center rounded-xl px-2.5 py-1.5 border min-w-[3rem] transition-all ${
+                        provPts === 0
+                          ? 'border-slate-800/50 bg-transparent cursor-default opacity-40'
+                          : provPopover === user.user_id
+                          ? 'bg-amber-400/30 border-amber-400/60'
+                          : 'bg-amber-400/10 border-amber-400/35 hover:bg-amber-400/20 animate-pulse hover:animate-none'
+                      }`}
+                    >
+                      <span className={`text-lg font-black leading-none ${provPts > 0 ? 'text-amber-300' : 'text-slate-600'}`}>{provPts}</span>
+                      <div className="flex items-center gap-0.5 mt-0.5">
+                        <span className={`text-[9px] font-bold ${provPts > 0 ? 'text-amber-400' : 'text-slate-600'}`}>⚡</span>
+                        {provPts > 0 && <ChevronDown className={`w-2.5 h-2.5 text-amber-500 transition-transform ${provPopover === user.user_id ? 'rotate-180' : ''}`} />}
+                      </div>
+                    </button>
+
+                    {/* Total */}
+                    <div className="flex flex-col items-center rounded-xl px-2.5 py-1.5 border border-orange-500/30 bg-orange-500/10 min-w-[3rem]">
+                      <span className="text-xl font-black text-orange-400 leading-none">{user.points + provPts}</span>
+                      <span className="text-[9px] text-orange-500/70 font-bold mt-0.5">total</span>
                     </div>
                   </div>
                 </div>
@@ -2507,7 +2556,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                       <span>{user.correct_predictions}/{user.total_predictions} correct picks</span>
                       {bullseyes > 0 && <span className="text-amber-400 font-bold">🎯 {bullseyes} bullseyes</span>}
                       <button className="text-slate-500 hover:text-orange-400 font-bold transition-colors"
-                        onClick={(e) => { e.stopPropagation(); onUserClick(user); }}>
+                        onClick={() => onUserClick(user)}>
                         View profile →
                       </button>
                     </div>
@@ -2516,8 +2565,11 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
               </div>
             );
           })}
+          </div>
         </div>
-      )}
+        );
+      })()
+      }
     </div>
   );
 };
