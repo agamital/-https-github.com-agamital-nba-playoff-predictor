@@ -5079,22 +5079,29 @@ SERIES: Correct winner=50pts base | Exact games=+30pts bonus
 Round multipliers: R1x1.0 | Conf Semis x1.5 | Conf Finals x2.0 | NBA Finals x2.5
 R1 underdog multipliers: 1v8 x2.0 | 2v7 x1.5 | 3v6 x1.2 | 4v5 x1.0
 FUTURES: Champion=100pts | Conf Champ=40pts | Finals MVP=30pts | Conf MVPs=20pts each
-PLAYOFF LEADERS (season-long): Top Scorer=50pts | Top Rebounder=30pts | Top Assister=30pts | Top 3s=30pts | Top Steals=30pts | Top Blocks=30pts
+PLAYOFF LEADERS BETS (single-game max predictions):
+  Users predict the MAX single-game performance by ANY player across ALL playoff games.
+  Scoring is PROXIMITY-based — the closer your guess to the actual record, the more points.
+  Categories: Top Scorer (pts in 1 game) | Top Rebounder | Top Assister | Top 3s Made | Most Steals | Most Blocks
 
 == HOW TO READ THE LIVE CONTEXT JSON ==
 The context contains several sections — here is what each key means:
 
-user_series_picks → the user's picks for each playoff series (who they picked to win, in how many games, whether it was correct, and points earned)
-user_futures_picks → the user's season-long futures bets:
-  • champion = team they picked to win the NBA title
-  • west_champ / east_champ = conference champions they picked
+user_series_picks → the user's picks for each playoff series (who they picked to win, in how many games, whether correct, points earned)
+user_futures_picks → season-long futures bets:
+  • champion = team picked to win the NBA title
+  • west_champ / east_champ = conference champions picked
   • finals_mvp / west_finals_mvp / east_finals_mvp = MVP picks
-user_leaders_picks → the user's bets on which PLAYER will lead the ENTIRE playoffs in each stat category:
-  • top_scorer = player they bet will score the most PPG across all playoff games
-  • top_assists = player they bet will lead playoffs in assists
-  • top_rebounds = player they bet will lead playoffs in rebounds
-  • top_threes = player they bet will make the most 3-pointers per game in the playoffs
-  • top_steals = player they bet will lead playoffs in steals
+user_leaders_picks → IMPORTANT: these are bets on the MAX SINGLE-GAME STAT by any player in the playoffs:
+  • top_scorer   = the NUMBER the user predicted as the highest single-game points total in the playoffs (e.g. they guessed "45 points in one game")
+  • top_assists  = their predicted max assists in one game
+  • top_rebounds = their predicted max rebounds in one game
+  • top_threes   = their predicted max 3-pointers made in one game (e.g. "9 threes in one game")
+  • top_steals   = their predicted max steals in one game
+  • top_blocks   = their predicted max blocks in one game
+  • correct=1 means correct, correct=0 means wrong, correct=null means still pending (playoffs ongoing)
+  NOTE: These are NUMERIC GUESSES stored as player_id integers in the DB. The "player" field shows the number they guessed.
+user_playin_picks → play-in tournament picks
   • top_blocks = player they bet will lead playoffs in blocks (most BPG across all playoff games)
   • correct=1 means that bet was correct, correct=0 means wrong, correct=null means still pending
 user_playin_picks → the user's play-in tournament picks
@@ -5422,24 +5429,24 @@ def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
                 for r in rows]
     _run("community_futures", _sec_community_futures)
 
-    # ── 4. Community stat-leader picks ────────────────────────────────────────
+    # ── 4. Community stat-leader picks (numeric guesses distribution) ─────────
     def _sec_community_leaders():
+        # These are numeric predictions (e.g. "45 pts max in one game"),
+        # so we show the distribution of guesses, not player names.
         for col, label in [
             ("top_scorer","community_top_scorer_picks"), ("top_assists","community_top_assists_picks"),
             ("top_rebounds","community_top_rebounds_picks"), ("top_threes","community_top_threes_picks"),
             ("top_steals","community_top_steals_picks"), ("top_blocks","community_top_blocks_picks"),
         ]:
-            # Try joining player_stats; fall back to raw player_id display
             c.execute(f"""
-                SELECT COALESCE(ps.player_name, CAST(lp.{col} AS TEXT)), COUNT(*)::int
-                FROM leaders_predictions lp
-                LEFT JOIN player_stats ps ON ps.player_id = lp.{col}
-                WHERE lp.season = %s AND lp.{col} IS NOT NULL
-                GROUP BY 1 ORDER BY 2 DESC LIMIT 10
+                SELECT {col} AS guessed_value, COUNT(*)::int AS votes
+                FROM leaders_predictions
+                WHERE season = %s AND {col} IS NOT NULL
+                GROUP BY {col} ORDER BY votes DESC, {col} DESC LIMIT 10
             """, (season,))
             rows = c.fetchall(); total = sum(r[1] for r in rows)
             ctx[label] = [
-                {"player": r[0], "votes": r[1], "pct": round(r[1]/total*100) if total else 0}
+                {"guessed_value": r[0], "votes": r[1], "pct": round(r[1]/total*100) if total else 0}
                 for r in rows]
     _run("community_leaders", _sec_community_leaders)
 
@@ -5550,6 +5557,9 @@ def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
         _run("user_futures", _sec_user_futures)
 
         def _sec_user_leaders():
+            # These are NUMERIC guesses (e.g. top_scorer=45 means user predicted
+            # "45 points will be the max single-game score in the playoffs")
+            # They are NOT player IDs.
             c.execute("""
                 SELECT top_scorer, top_assists, top_rebounds,
                        top_threes, top_steals, top_blocks,
@@ -5560,18 +5570,13 @@ def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
             """, (user_id, season))
             lrow = c.fetchone()
             if lrow:
-                def _name(pid):
-                    if not pid: return None
-                    c.execute("SELECT player_name FROM player_stats WHERE player_id=%s LIMIT 1", (pid,))
-                    r = c.fetchone()
-                    return r[0] if r else str(pid)
                 ctx["user_leaders_picks"] = {
-                    "top_scorer":    {"player": _name(lrow[0]), "correct": lrow[6]},
-                    "top_assists":   {"player": _name(lrow[1]), "correct": lrow[7]},
-                    "top_rebounds":  {"player": _name(lrow[2]), "correct": lrow[8]},
-                    "top_threes":    {"player": _name(lrow[3]), "correct": lrow[9]},
-                    "top_steals":    {"player": _name(lrow[4]), "correct": lrow[10]},
-                    "top_blocks":    {"player": _name(lrow[5]), "correct": lrow[11]},
+                    "top_scorer":    {"guessed_max": lrow[0], "correct": lrow[6]},
+                    "top_assists":   {"guessed_max": lrow[1], "correct": lrow[7]},
+                    "top_rebounds":  {"guessed_max": lrow[2], "correct": lrow[8]},
+                    "top_threes":    {"guessed_max": lrow[3], "correct": lrow[9]},
+                    "top_steals":    {"guessed_max": lrow[4], "correct": lrow[10]},
+                    "top_blocks":    {"guessed_max": lrow[5], "correct": lrow[11]},
                     "points_earned": lrow[12] or 0,
                 }
             else:

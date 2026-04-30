@@ -1691,29 +1691,43 @@ const _fmtHighDate = (iso) => {
   } catch { return iso; }
 };
 
-const PlayoffCurrentHighs = ({ highs }) => {
+const PlayoffCurrentHighs = ({ highs, compact = false }) => {
   if (highs === undefined) return null;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
+      {/* Header */}
       <div className="flex items-center gap-2 px-1">
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Current Playoff Records</span>
+        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+          🏆 Current Playoff Records
+        </span>
         <div className="flex-1 h-px bg-slate-800" />
-        <span className="text-[9px] text-slate-700 font-bold">Updates live · resets if broken</span>
+        <span className="text-[9px] text-slate-600 font-bold">Live · updates after each game</span>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+
+      {/* Grid — 1 col mobile, 2 col tablet, 3 col desktop */}
+      <div className={`grid gap-2 ${compact ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'}`}>
         {HIGH_META.map(({ cat, emoji, label, unit, cls, bg }) => {
           const h = highs?.[cat];
+          const hasTie = h?.tied_players?.length > 1;
           return (
-            <div key={cat} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${bg}`}>
-              <span className="text-lg leading-none shrink-0">{emoji}</span>
+            <div
+              key={cat}
+              className={`relative flex items-center gap-3 rounded-2xl border px-3.5 py-3 transition-all ${bg} ${h ? 'hover:scale-[1.01]' : 'opacity-60'}`}
+            >
+              {/* Emoji icon */}
+              <span className="text-xl leading-none shrink-0">{emoji}</span>
+
+              {/* Text */}
               <div className="flex-1 min-w-0">
-                <p className="text-[9px] font-black uppercase tracking-wider text-slate-600 leading-none mb-0.5">{label}</p>
+                <p className="text-[9px] font-black uppercase tracking-wider text-slate-500 leading-none mb-1">
+                  {label}
+                </p>
                 {h ? (
                   <>
-                    <p className={`text-xs font-black truncate ${cls}`}>
-                      {h.tied_players && h.tied_players.length > 1
-                        ? `${h.player_name} +${h.tied_players.length - 1} others`
+                    <p className={`text-sm font-black leading-tight truncate ${cls}`}>
+                      {hasTie
+                        ? `${h.player_name} +${h.tied_players.length - 1}`
                         : h.player_name}
                     </p>
                     <p className="text-[9px] text-slate-500 leading-tight mt-0.5 truncate">
@@ -1723,14 +1737,28 @@ const PlayoffCurrentHighs = ({ highs }) => {
                     </p>
                   </>
                 ) : (
-                  <p className="text-[9px] text-slate-700 italic">No data yet</p>
+                  <p className="text-[10px] text-slate-600 italic">No record yet</p>
                 )}
               </div>
-              {h && (
+
+              {/* Big stat number */}
+              {h ? (
                 <div className="shrink-0 text-right">
-                  <span className={`text-xl font-black tabular-nums leading-none ${cls}`}>{h.value}</span>
-                  <span className="text-[9px] text-slate-600 font-bold ml-0.5">{unit}</span>
+                  <div className={`text-2xl font-black tabular-nums leading-none ${cls}`}>{h.value}</div>
+                  <div className="text-[9px] text-slate-500 font-bold mt-0.5">{unit}</div>
                 </div>
+              ) : (
+                <div className="shrink-0 text-right">
+                  <div className="text-2xl font-black tabular-nums leading-none text-slate-700">—</div>
+                  <div className="text-[9px] text-slate-700 font-bold mt-0.5">{unit}</div>
+                </div>
+              )}
+
+              {/* Tie badge */}
+              {hasTie && (
+                <span className="absolute top-1.5 right-1.5 text-[8px] font-black px-1 py-0.5 rounded-full bg-white/10 text-slate-400">
+                  TIED
+                </span>
               )}
             </div>
           );
@@ -1842,6 +1870,13 @@ const GlobalStatsTab = ({ currentUser }) => {
 
   return (
     <div className="space-y-6">
+
+      {/* ── Current Playoff Records (top of stats tab) ── */}
+      {playoffHighs !== null && (
+        <div className="bg-slate-900/60 border border-slate-700/60 rounded-2xl p-4">
+          <PlayoffCurrentHighs highs={playoffHighs} compact />
+        </div>
+      )}
 
       {/* ── Participation banner ── */}
       <div className="bg-gradient-to-r from-orange-500/10 to-amber-500/10 border border-orange-500/20 rounded-2xl p-4">
@@ -2023,7 +2058,7 @@ const GlobalStatsTab = ({ currentUser }) => {
             </p>
 
             {/* ── Live current record holders ── */}
-            <PlayoffCurrentHighs highs={playoffHighs} />
+            <PlayoffCurrentHighs highs={playoffHighs} compact />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {LEADER_META.map(({ key, correctKey, label, unit, cls, bar }) => {
