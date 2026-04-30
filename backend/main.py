@@ -5111,17 +5111,31 @@ community_top_threes_picks → how many users picked each player as the 3-pointe
 community_champion_picks / community_west_champ_picks / community_east_champ_picks → futures picks from all users
 community_finals_mvp_picks → Finals MVP picks across all users
 
-stat_leaders_blocks → current per-game blocks leaders in the playoffs (actual live stats)
-stat_leaders_scoring → current per-game scoring leaders
-stat_leaders_threes → current per-game 3-pointers leaders
-record_most_blocks_one_game → highest single-game block totals this postseason
-record_most_points_one_game → highest single-game scoring performances
+stat_leaders_blocks → PLAYOFF-ONLY per-game blocks leaders (games since playoff_start_date — no regular season)
+stat_leaders_scoring → PLAYOFF-ONLY per-game scoring leaders
+stat_leaders_rebounds → PLAYOFF-ONLY per-game rebounding leaders
+stat_leaders_assists → PLAYOFF-ONLY per-game assists leaders
+stat_leaders_steals → PLAYOFF-ONLY per-game steals leaders
+stat_leaders_threes → PLAYOFF-ONLY per-game 3-pointers leaders
+record_most_blocks_one_game → highest PLAYOFF single-game block totals (only games after playoff_start_date)
+record_most_points_one_game → highest PLAYOFF single-game scoring performances
+record_most_rebounds_one_game → highest PLAYOFF single-game rebounds
+record_most_assists_one_game → highest PLAYOFF single-game assists
+record_most_steals_one_game → highest PLAYOFF single-game steals
+record_most_threes_one_game → highest PLAYOFF single-game 3-pointers made
 community_series_picks → for each series, how the community voted (% for each team)
+
+== CRITICAL: ALL STATS ARE PLAYOFF-ONLY ==
+NEVER cite regular-season stats or games from before the playoff_start_date in the context.
+All stat_leaders_* and record_most_*_one_game entries come exclusively from playoff games.
+If a user asks about a player's stats or record, ONLY use data from the context (which is already filtered to playoff games).
+Do NOT make up or recall regular-season numbers — only what is in the context JSON counts.
 
 == IMPORTANT RULES FOR ANSWERING ==
 - "What is my [stat] bet?" or "Who did I bet on for [stat]?" → look in user_leaders_picks
-- "Who leads in [stat]?" → look in stat_leaders_[stat]
+- "Who leads in [stat]?" or "מי מוביל ב[סטט]" → look in stat_leaders_[stat]
 - "What is the record for most [stat] in one game?" → look in record_most_[stat]_one_game
+- "Compare my bet to the current record" → compare user_leaders_picks.[stat].guessed_max vs record_most_[stat]_one_game[0].value and the current playoff high
 - "What does the community think about [X]?" → look in community_* sections
 - "What are my futures picks?" → look in user_futures_picks
 - If user_leaders_picks is missing → the user is not logged in or hasn't made leaders picks yet
@@ -5340,7 +5354,12 @@ def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
     """
     import json as _json
     c = conn.cursor()
-    ctx = {"_debug_user_id": user_id, "_debug_season": season, "_errors": []}
+    # All game-stat queries must filter by this date so only PLAYOFF games are
+    # included — never regular-season games (which can have bigger single-game
+    # numbers but are not relevant to this app).
+    PLAYOFF_START = '2026-04-18'
+    ctx = {"_debug_user_id": user_id, "_debug_season": season,
+           "playoff_start_date": PLAYOFF_START, "_errors": []}
 
     def _run(label, fn):
         """Run a context-building section; on error log it but keep going."""
@@ -5463,39 +5482,58 @@ def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
 
     # ── 6. Playoff stat leaders ───────────────────────────────────────────────
     def _sec_stat_leaders():
-        for cat, col in [
-            ("stat_leaders_scoring","pts_per_game"), ("stat_leaders_blocks","blk_per_game"),
-            ("stat_leaders_rebounds","reb_per_game"), ("stat_leaders_assists","ast_per_game"),
-            ("stat_leaders_steals","stl_per_game"), ("stat_leaders_threes","fg3m_per_game"),
-        ]:
+        # Compute per-game averages from PLAYOFF GAMES ONLY (game_date >= PLAYOFF_START).
+        # player_stats has full-season (regular + playoff) averages — do NOT use it here.
+        col_map = {
+            "stat_leaders_scoring":  "points",
+            "stat_leaders_rebounds": "rebounds",
+            "stat_leaders_assists":  "assists",
+            "stat_leaders_blocks":   "blocks",
+            "stat_leaders_steals":   "steals",
+            "stat_leaders_threes":   "fg3m",
+        }
+        for cat, raw_col in col_map.items():
             c.execute(f"""
-                SELECT player_name, team_abbreviation, games_played,
-                       pts_per_game, ast_per_game, reb_per_game,
-                       stl_per_game, blk_per_game, fg3m_per_game, {col}
-                FROM player_stats WHERE season=%s AND {col}>0
-                ORDER BY {col} DESC NULLS LAST LIMIT 5
-            """, (season,))
+                SELECT
+                    player_name, team_abbr,
+                    COUNT(*)                              AS gp,
+                    ROUND(AVG(points)::numeric,   1)     AS ppg,
+                    ROUND(AVG(assists)::numeric,  1)     AS apg,
+                    ROUND(AVG(rebounds)::numeric, 1)     AS rpg,
+                    ROUND(AVG(steals)::numeric,   1)     AS spg,
+                    ROUND(AVG(blocks)::numeric,   1)     AS bpg,
+                    ROUND(AVG(fg3m)::numeric,     1)     AS three_pg,
+                    ROUND(AVG({raw_col})::numeric, 1)    AS stat_val
+                FROM player_game_stats
+                WHERE season = %s AND game_date >= %s AND {raw_col} IS NOT NULL
+                GROUP BY player_name, team_abbr
+                HAVING COUNT(*) >= 1
+                ORDER BY stat_val DESC NULLS LAST
+                LIMIT 5
+            """, (season, PLAYOFF_START))
             ctx[cat] = [
                 {"name": r[0], "team": r[1], "gp": r[2],
-                 "ppg": round(float(r[3] or 0),1), "apg": round(float(r[4] or 0),1),
-                 "rpg": round(float(r[5] or 0),1), "spg": round(float(r[6] or 0),1),
-                 "bpg": round(float(r[7] or 0),1), "3pg": round(float(r[8] or 0),1),
-                 "stat_value": round(float(r[9] or 0),1)}
+                 "ppg": float(r[3] or 0), "apg": float(r[4] or 0),
+                 "rpg": float(r[5] or 0), "spg": float(r[6] or 0),
+                 "bpg": float(r[7] or 0), "3pg": float(r[8] or 0),
+                 "stat_value": float(r[9] or 0),
+                 "note": f"playoff avg (games since {PLAYOFF_START})"}
                 for r in c.fetchall()]
     _run("stat_leaders", _sec_stat_leaders)
 
-    # ── 7. Single-game records ────────────────────────────────────────────────
+    # ── 7. Single-game records (PLAYOFF ONLY — game_date >= PLAYOFF_START) ──────
     def _sec_game_records():
         for stat_col, label in [
             ("blocks","record_most_blocks_one_game"), ("points","record_most_points_one_game"),
             ("rebounds","record_most_rebounds_one_game"), ("assists","record_most_assists_one_game"),
-            ("steals","record_most_steals_one_game"),
+            ("steals","record_most_steals_one_game"), ("fg3m","record_most_threes_one_game"),
         ]:
             c.execute(f"""
                 SELECT player_name, team_abbr, {stat_col}, game_date
-                FROM player_game_stats WHERE season=%s AND {stat_col}>0
+                FROM player_game_stats
+                WHERE season=%s AND game_date >= %s AND {stat_col}>0
                 ORDER BY {stat_col} DESC NULLS LAST LIMIT 5
-            """, (season,))
+            """, (season, PLAYOFF_START))
             ctx[label] = [
                 {"name": r[0], "team": r[1], "value": r[2], "date": str(r[3])}
                 for r in c.fetchall()]
