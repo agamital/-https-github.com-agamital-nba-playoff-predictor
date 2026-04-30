@@ -6255,12 +6255,12 @@ async def leaderboard(response: Response, season: str = "2026"):
                 'leaders_points': leaders_pts,
             })
 
-        # ── Provisional leaders points (while playoffs are ongoing) ────────────
-        # Compute based on current playoff record highs vs each user's prediction.
-        # Only shown for categories not yet officially scored (is_correct_* IS NULL).
+        # ── Provisional points (leaders + active series) ─────────────────────────
+        user_ids = [entry['user_id'] for entry in board]
+
+        # ── A. Provisional Leaders pts (Max Bets) ─────────────────────────────
         try:
             PLAYOFF_START_LB = '2026-04-18'
-            # Step A: current playoff highs (one query, one row)
             c.execute("""
                 SELECT
                     MAX(points)   FILTER (WHERE points   > 0),
@@ -6274,16 +6274,10 @@ async def leaderboard(response: Response, season: str = "2026"):
             """, (season, PLAYOFF_START_LB))
             highs_row = c.fetchone() or (None,)*6
             current_highs = {
-                'scorer':   highs_row[0],
-                'assists':  highs_row[1],
-                'rebounds': highs_row[2],
-                'threes':   highs_row[3],
-                'steals':   highs_row[4],
-                'blocks':   highs_row[5],
+                'scorer': highs_row[0], 'assists': highs_row[1],
+                'rebounds': highs_row[2], 'threes': highs_row[3],
+                'steals': highs_row[4], 'blocks': highs_row[5],
             }
-
-            # Step B: all users' leaders_predictions in one batch
-            user_ids = [entry['user_id'] for entry in board]
             lp_by_user = {}
             if user_ids:
                 c.execute("""
@@ -6298,7 +6292,6 @@ async def leaderboard(response: Response, season: str = "2026"):
                 for lp_row in c.fetchall():
                     lp_by_user[lp_row[0]] = lp_row
 
-            # Step C: compute provisional pts per user per category
             cat_cols = ['scorer', 'assists', 'rebounds', 'threes', 'steals', 'blocks']
             for entry in board:
                 lp = lp_by_user.get(entry['user_id'])
@@ -6306,16 +6299,12 @@ async def leaderboard(response: Response, season: str = "2026"):
                     entry['provisional_leaders_pts'] = 0
                     entry['provisional_breakdown'] = {}
                     continue
-
-                # lp indices: 1-6 = predictions, 7-12 = is_correct_*
-                preds       = {cat: lp[i+1] for i, cat in enumerate(cat_cols)}
-                is_correct  = {cat: lp[i+7] for i, cat in enumerate(cat_cols)}
-
+                preds      = {cat: lp[i+1] for i, cat in enumerate(cat_cols)}
+                is_correct = {cat: lp[i+7] for i, cat in enumerate(cat_cols)}
                 breakdown = {}
                 total_prov = 0
                 for cat, tiers in LEADERS_TIERS.items():
                     if is_correct[cat] is not None:
-                        # Already officially scored — no provisional needed
                         continue
                     high = current_highs.get(cat)
                     pred = preds.get(cat)
@@ -6333,15 +6322,110 @@ async def leaderboard(response: Response, season: str = "2026"):
                     if awarded > 0:
                         breakdown[cat] = {'pts': awarded, 'predicted': int(pred), 'record': int(high)}
                         total_prov += awarded
-
                 entry['provisional_leaders_pts'] = total_prov
                 entry['provisional_breakdown'] = breakdown
         except Exception as prov_err:
-            print(f"[Leaderboard] provisional pts error (non-critical): {prov_err}")
+            print(f"[Leaderboard] provisional leaders pts error: {prov_err}")
             for entry in board:
                 if 'provisional_leaders_pts' not in entry:
                     entry['provisional_leaders_pts'] = 0
                     entry['provisional_breakdown'] = {}
+
+        # ── B. Provisional Series pts (active series where user's pick is leading) ─
+        try:
+            c.execute("""
+                SELECT s.id, s.round, s.conference,
+                       s.home_team_id, s.away_team_id,
+                       s.home_wins, s.away_wins,
+                       s.home_seed, s.away_seed
+                FROM series s
+                WHERE s.season = %s AND s.status = 'active'
+            """, (season,))
+            active_series = {}
+            for row in c.fetchall():
+                sid, rnd, conf, hid, aid, hw, aw, hs, as_ = row
+                if (hw or 0) > (aw or 0):
+                    leading = hid
+                elif (aw or 0) > (hw or 0):
+                    leading = aid
+                else:
+                    leading = None  # tied — no provisional
+                active_series[sid] = {
+                    'leading': leading, 'round': rnd, 'conf': conf,
+                    'home_id': hid, 'away_id': aid,
+                    'home_seed': hs or 0, 'away_seed': as_ or 0,
+                    'home_wins': hw or 0, 'away_wins': aw or 0,
+                }
+
+            # Fetch all predictions for active series
+            series_preds_by_user = {}
+            if active_series and user_ids:
+                c.execute("""
+                    SELECT p.user_id, p.series_id, p.predicted_winner_id
+                    FROM predictions p
+                    WHERE p.series_id = ANY(%s) AND p.user_id = ANY(%s)
+                """, (list(active_series.keys()), user_ids))
+                for uid, sid, pred_winner in c.fetchall():
+                    series_preds_by_user.setdefault(uid, {})[sid] = pred_winner
+
+            for entry in board:
+                uid = entry['user_id']
+                user_preds = series_preds_by_user.get(uid, {})
+                series_prov_total = 0
+                series_prov_breakdown = {}
+
+                for sid, sinfo in active_series.items():
+                    leading = sinfo['leading']
+                    if not leading:
+                        continue
+                    pred = user_preds.get(sid)
+                    if pred != leading:
+                        continue
+
+                    # Calculate winner pts (no games bonus — series not done)
+                    rnd = sinfo['round']
+                    round_mult = ROUND_MULTIPLIERS.get(rnd, 1.0)
+                    underdog_mult = 1.0
+
+                    if rnd == 'First Round':
+                        hs, as_ = sinfo['home_seed'], sinfo['away_seed']
+                        seed_pair = frozenset({hs, as_})
+                        base_mult = R1_UNDERDOG_MULTIPLIERS.get(seed_pair, 1.0)
+                        # Is picked team the underdog (higher seed number)?
+                        picked_home = (pred == sinfo['home_id'])
+                        home_is_underdog = hs > as_
+                        if (picked_home and home_is_underdog) or (not picked_home and not home_is_underdog):
+                            underdog_mult = base_mult
+                    elif rnd in ('Conference Semifinals', 'Conference Finals', 'NBA Finals'):
+                        # Check if picked team is lower seed (underdog)
+                        picked_home = (pred == sinfo['home_id'])
+                        hs, as_ = sinfo['home_seed'], sinfo['away_seed']
+                        if (picked_home and hs > as_) or (not picked_home and as_ > hs):
+                            underdog_mult = LATE_ROUND_UNDERDOG_MULT
+
+                    pts = round(BASE_WINNER_PTS * round_mult * underdog_mult)
+                    series_prov_total += pts
+                    label = f"{rnd.replace('Conference ', 'Conf. ')} ({sinfo['conf'][:1]})"
+                    score_label = f"{sinfo['home_wins']}-{sinfo['away_wins']}" if leading == sinfo['home_id'] else f"{sinfo['away_wins']}-{sinfo['home_wins']}"
+                    series_prov_breakdown[f"series_{sid}"] = {
+                        'pts': pts, 'round': rnd, 'conf': sinfo['conf'],
+                        'label': label, 'score': score_label,
+                    }
+
+                entry['provisional_series_pts'] = series_prov_total
+                entry['provisional_series_breakdown'] = series_prov_breakdown
+                entry['provisional_total'] = entry.get('provisional_leaders_pts', 0) + series_prov_total
+        except Exception as series_prov_err:
+            print(f"[Leaderboard] provisional series pts error: {series_prov_err}")
+            for entry in board:
+                entry.setdefault('provisional_series_pts', 0)
+                entry.setdefault('provisional_series_breakdown', {})
+                entry.setdefault('provisional_total', entry.get('provisional_leaders_pts', 0))
+
+        # ── Re-sort by combined score (real pts + provisional) and re-assign ranks ──
+        board.sort(key=lambda e: (e['points'] + e.get('provisional_total', 0), e.get('bullseyes_count', 0)), reverse=True)
+        for new_rank, entry in enumerate(board, 1):
+            entry['rank'] = new_rank
 
         response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=60"
         return board

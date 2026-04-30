@@ -2202,14 +2202,20 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
             </p>
           </div>
           <div className="text-right shrink-0">
-            <div className="text-2xl font-black text-orange-400">{myRank.points}</div>
-            <div className="text-[10px] text-slate-500 font-bold uppercase">pts</div>
-            {(myRank.provisional_leaders_pts ?? 0) > 0 && (
-              <div className="mt-1 flex items-center gap-1 justify-end bg-amber-400/20 border border-amber-400/50 rounded-full px-2 py-0.5 animate-pulse">
-                <span className="text-xs font-black text-amber-300">+{myRank.provisional_leaders_pts}</span>
-                <span className="text-[10px] text-amber-400">⚡</span>
-              </div>
-            )}
+            {(() => {
+              const myProv = myRank.provisional_total ?? ((myRank.provisional_leaders_pts ?? 0) + (myRank.provisional_series_pts ?? 0));
+              return (
+                <>
+                  <div className="text-2xl font-black text-orange-400">{myRank.points + myProv}</div>
+                  <div className="text-[10px] text-slate-500 font-bold uppercase">pts</div>
+                  {myProv > 0 && (
+                    <div className="mt-1 flex items-center gap-1 justify-end bg-amber-400/20 border border-amber-400/50 rounded-full px-2 py-0.5 animate-pulse">
+                      <span className="text-xs font-black text-amber-300">{myRank.points}+{myProv}⚡</span>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -2249,9 +2255,12 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
             const playinPts    = user.playin_points;
             const futuresPts   = user.futures_points;
             const leadersPts   = user.leaders_points;
-            const provPts      = user.provisional_leaders_pts ?? 0;
-            const provBreakdown = user.provisional_breakdown ?? {};
-            const hasProvBreakdown = provPts > 0 && Object.keys(provBreakdown).length > 0;
+            const provLeadersPts   = user.provisional_leaders_pts ?? 0;
+            const provSeriesPts    = user.provisional_series_pts ?? 0;
+            const provPts          = user.provisional_total ?? (provLeadersPts + provSeriesPts);
+            const provBreakdown    = user.provisional_breakdown ?? {};
+            const provSeriesBD     = user.provisional_series_breakdown ?? {};
+            const hasProvBreakdown = provPts > 0;
             // Support both old (int) and new (object) breakdown format
             const provBreakdownNorm = Object.fromEntries(
               Object.entries(provBreakdown).map(([k, v]) =>
@@ -2339,16 +2348,15 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                   {/* Points + provisional + chevron */}
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="text-right">
-                      <div className="text-xl font-black text-orange-400">{user.points}</div>
+                      <div className="text-xl font-black text-orange-400">{user.points + provPts}</div>
                       <div className="text-[10px] text-slate-500 font-bold">pts</div>
                       {provPts > 0 && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setProvPopover(provPopover === user.user_id ? null : user.user_id); }}
                           className="mt-1 flex items-center gap-0.5 bg-amber-400/20 hover:bg-amber-400/35 active:bg-amber-400/50 border border-amber-400/50 rounded-full px-2 py-0.5 transition-all cursor-pointer animate-pulse hover:animate-none"
-                          title="Provisional leaders pts — tap to see breakdown"
+                          title="Real pts + provisional — tap to see breakdown"
                         >
-                          <span className="text-[11px] font-black text-amber-300">+{provPts}</span>
-                          <span className="text-[9px] text-amber-400">⚡</span>
+                          <span className="text-[11px] font-black text-amber-300">{user.points}+{provPts}⚡</span>
                         </button>
                       )}
                     </div>
@@ -2364,41 +2372,71 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                       <div className="flex items-center gap-2">
                         <span className="text-amber-400 text-base">⚡</span>
                         <span className="text-sm font-black text-amber-300">Provisional Pts</span>
-                        <span className="text-[10px] text-slate-500 font-normal">from Max Bets</span>
+                        <span className="text-[10px] text-slate-500 font-normal">temporary · finalizes when series end</span>
                       </div>
                       <span className="text-lg font-black text-amber-400">+{provPts}</span>
                     </div>
-                    {/* Category tiles */}
-                    <div className="grid grid-cols-2 gap-2 p-3">
-                      {Object.entries(provBreakdownNorm).map(([cat, info]) => {
-                        const { pts: catPts, predicted, record } = typeof info === 'object' ? info : { pts: info, predicted: null, record: null };
-                        const catLabel = { scorer: '🏀 Points', assists: '🎯 Assists', rebounds: '💪 Rebounds', threes: '3️⃣ Threes', steals: '🤚 Steals', blocks: '🚫 Blocks' }[cat] || cat;
-                        const exact = predicted === record;
-                        return (
-                          <div key={cat} className="bg-amber-500/10 border border-amber-400/25 rounded-xl p-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-[11px] font-black text-slate-300">{catLabel}</span>
-                              <span className="text-sm font-black text-amber-300">+{catPts}</span>
-                            </div>
-                            {predicted != null && record != null && (
-                              <div className="space-y-1">
-                                <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2.5 py-1.5">
-                                  <span className="text-[10px] text-slate-500 font-bold">Your bet</span>
-                                  <span className="text-[13px] font-black text-white">{predicted}</span>
-                                </div>
-                                <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2.5 py-1.5">
-                                  <span className="text-[10px] text-slate-500 font-bold">Record</span>
-                                  <span className={`text-[13px] font-black ${exact ? 'text-green-400' : 'text-cyan-400'}`}>{record} {exact ? '✓' : ''}</span>
-                                </div>
+
+                    {/* Series provisional section */}
+                    {Object.keys(provSeriesBD).length > 0 && (
+                      <div className="px-3 pt-3">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">🏆 Active Series Picks (leading)</p>
+                        <div className="space-y-1.5">
+                          {Object.entries(provSeriesBD).map(([key, info]) => (
+                            <div key={key} className="flex items-center justify-between bg-slate-800/50 border border-slate-700/50 rounded-xl px-3 py-2">
+                              <div>
+                                <p className="text-[11px] font-black text-white">{info.label}</p>
+                                <p className="text-[9px] text-slate-500 mt-0.5">Your pick leads {info.score} ✓</p>
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {/* Footer note */}
-                    <div className="px-4 pb-3 flex items-center gap-1.5">
-                      <span className="text-[10px] text-slate-500">⏳ Based on current records — points finalize when playoffs end</span>
+                              <span className="text-sm font-black text-amber-300">+{info.pts}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Leaders provisional section */}
+                    {Object.keys(provBreakdownNorm).length > 0 && (
+                      <div className="px-3 pt-3">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">📊 Max-Stat Bets (proximity)</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {Object.entries(provBreakdownNorm).map(([cat, info]) => {
+                            const { pts: catPts, predicted, record } = typeof info === 'object' ? info : { pts: info, predicted: null, record: null };
+                            const catLabel = { scorer: '🏀 Points', assists: '🎯 Assists', rebounds: '💪 Rebounds', threes: '3️⃣ Threes', steals: '🤚 Steals', blocks: '🚫 Blocks' }[cat] || cat;
+                            const exact = predicted === record;
+                            return (
+                              <div key={cat} className="bg-amber-500/10 border border-amber-400/25 rounded-xl p-2.5">
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <span className="text-[10px] font-black text-slate-300">{catLabel}</span>
+                                  <span className="text-sm font-black text-amber-300">+{catPts}</span>
+                                </div>
+                                {predicted != null && record != null && (
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2 py-1">
+                                      <span className="text-[9px] text-slate-500 font-bold">Bet</span>
+                                      <span className="text-xs font-black text-white">{predicted}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2 py-1">
+                                      <span className="text-[9px] text-slate-500 font-bold">Record</span>
+                                      <span className={`text-xs font-black ${exact ? 'text-green-400' : 'text-cyan-400'}`}>{record}{exact ? ' ✓' : ''}</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Summary + footer */}
+                    <div className="px-4 pt-3 pb-3 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-500">⏳ Temporary — finalizes when series &amp; playoffs end</span>
+                      {provPts > 0 && (
+                        <span className="text-[11px] font-black text-amber-400">
+                          {user.points} real + {provPts}⚡ = {user.points + provPts}
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}
