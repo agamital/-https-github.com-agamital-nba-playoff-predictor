@@ -314,13 +314,17 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
   const hasHiddenFutures = predictions?.has_hidden_futures ?? false;
   const hasHiddenLeaders = predictions?.has_hidden_leaders ?? false;
 
-  // Only count series/play-in that have been scored for accuracy (not future rounds)
-  const scoredPlayoff = playoff.filter(p => p.series_finished);
-  const scoredPlayin  = playin.filter(p => p.game_finished);
-  const scoredCount   = scoredPlayoff.length + scoredPlayin.filter(p => p.is_correct !== null && p.is_correct !== undefined).length;
-  const correctCount  = playoff.filter(p => p.is_correct === 1).length
-                      + playin.filter(p => p.is_correct === 1).length;
-  const scoredDenom   = scoredPlayoff.length;  // for series-only accuracy card
+  // Use global totals from profile API so denominator is the same for every user
+  // (missing bets count as 0/1, not excluded from the denominator)
+  const globalTotal        = profile?.global_total        ?? 0;
+  const globalSeriesTotal  = profile?.global_series_total ?? 0;
+  const globalPlayinTotal  = profile?.global_playin_total ?? 0;
+  const correctCount       = profile?.correct_total       ?? (
+    playoff.filter(p => p.is_correct === 1).length + playin.filter(p => p.is_correct === 1).length
+  );
+  const correctSeriesCount = profile?.correct_series ?? playoff.filter(p => p.is_correct === 1).length;
+  // scoredDenom: global completed series (same for everyone)
+  const scoredDenom        = globalSeriesTotal > 0 ? globalSeriesTotal : playoff.filter(p => p.series_finished).length;
   const pointsFromPicks = playoff.reduce((s, p) => s + (p.points_earned || 0), 0)
     + playin.reduce((s, p) => s + (p.points_earned || 0), 0);
 
@@ -376,10 +380,10 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
                 <span className="text-orange-400 font-black text-lg">{profile.points}</span>
                 <span className="text-slate-500 text-sm">points</span>
               </div>
-              {playoff.length > 0 && (
+              {globalTotal > 0 && (
                 <div className="flex items-center gap-1.5">
                   <CheckCircle className="w-4 h-4 text-green-400" />
-                  <span className="text-green-400 font-black text-lg">{correctCount}/{playoff.length}</span>
+                  <span className="text-green-400 font-black text-lg">{correctCount}/{globalTotal}</span>
                   <span className="text-slate-500 text-sm">correct</span>
                 </div>
               )}
@@ -410,16 +414,16 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
             {scoredDenom > 0 && (
               <Card className="p-4 text-center">
                 <p className="text-3xl font-black text-green-400">
-                  {Math.round((playoff.filter(p => p.is_correct === 1).length / scoredDenom) * 100)}%
+                  {Math.round((correctSeriesCount / scoredDenom) * 100)}%
                 </p>
                 <p className="text-xs text-slate-500 font-bold uppercase mt-1">Accuracy</p>
-                <p className="text-[9px] text-slate-600 mt-0.5">{scoredDenom} scored</p>
+                <p className="text-[9px] text-slate-600 mt-0.5">{scoredDenom} series total</p>
               </Card>
             )}
             {scoredDenom > 0 && (
               <Card className="p-4 text-center">
                 <p className="text-3xl font-black text-blue-400">
-                  {playoff.filter(p => p.is_correct === 1).length}/{scoredDenom}
+                  {correctSeriesCount}/{scoredDenom}
                 </p>
                 <p className="text-xs text-slate-500 font-bold uppercase mt-1">Correct Picks</p>
               </Card>
@@ -560,7 +564,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
             Playoff Predictions
             {correctCount > 0 && (
               <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
-                {playoff.filter(p => p.is_correct === 1).length}/{scoredDenom} correct
+                {correctSeriesCount}/{scoredDenom} correct
               </span>
             )}
           </h2>

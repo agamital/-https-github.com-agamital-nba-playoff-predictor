@@ -9855,14 +9855,35 @@ async def get_user_profile(username: str):
                COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions  pp WHERE pp.user_id = u.id), 0) +
                COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u.id), 0) +
                COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u.id), 0)
-               AS computed_points
+               AS computed_points,
+               -- correct series predictions
+               COALESCE((SELECT COUNT(*) FROM predictions p2 WHERE p2.user_id = u.id AND p2.is_correct = 1), 0) AS correct_series,
+               -- correct play-in predictions
+               COALESCE((SELECT COUNT(*) FROM playin_predictions pp3 WHERE pp3.user_id = u.id AND pp3.is_correct = 1), 0) AS correct_playin
         FROM users u WHERE u.username = %s
     """, (username,))
     row = c.fetchone()
     if not row:
         conn.close()
         raise HTTPException(404, "User not found")
-    computed_pts = row[3] or 0
+    computed_pts   = row[3] or 0
+    correct_series = row[4] or 0
+    correct_playin = row[5] or 0
+
+    # Global denominator — same logic as leaderboard
+    c.execute("""
+        SELECT
+            (SELECT COUNT(*) FROM series WHERE season = '2026' AND status = 'completed') AS total_series,
+            (SELECT COUNT(DISTINCT game_id) FROM playin_predictions WHERE is_correct IS NOT NULL) AS total_playin
+    """)
+    _gt = c.fetchone()
+    global_series_total = _gt[0] or 0
+    global_playin_total = _gt[1] or 0
+    global_total = global_series_total + global_playin_total
+
+    correct_total = correct_series + correct_playin
+    accuracy = round((correct_total / global_total * 100) if global_total > 0 else 0, 1)
+
     # Rank = number of users with higher computed points + 1
     c.execute("""
         SELECT COUNT(*) + 1 FROM users u2
@@ -9875,7 +9896,16 @@ async def get_user_profile(username: str):
     """, (computed_pts,))
     rank = c.fetchone()[0]
     conn.close()
-    return {"user_id": row[0], "username": row[1], "points": computed_pts, "avatar_url": row[2] or "", "rank": rank}
+    return {
+        "user_id": row[0], "username": row[1], "points": computed_pts,
+        "avatar_url": row[2] or "", "rank": rank,
+        "correct_series": correct_series, "correct_playin": correct_playin,
+        "correct_total": correct_total,
+        "global_series_total": global_series_total,
+        "global_playin_total": global_playin_total,
+        "global_total": global_total,
+        "accuracy": accuracy,
+    }
 
 
 @app.get("/api/account")
