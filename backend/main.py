@@ -6238,16 +6238,35 @@ async def leaderboard(response: Response, season: str = "2026"):
             ) DESC, bullseyes_count DESC
             LIMIT 100
         ''')
+        raw_rows = c.fetchall()
+
+        # ── Global denominator: total scoreable bets (same for every user) ─────
+        # Series: every completed series in this season
+        # Play-in: every play-in game that has been scored
+        # Missed bets count as 0/1 — everyone gets the same denominator.
+        c.execute("""
+            SELECT
+                (SELECT COUNT(*) FROM series
+                 WHERE season = %s AND status = 'completed')      AS total_series,
+                (SELECT COUNT(DISTINCT game_id)
+                 FROM playin_predictions WHERE is_correct IS NOT NULL) AS total_playin
+        """, (season,))
+        _gt = c.fetchone()
+        global_series_total = _gt[0] or 0
+        global_playin_total = _gt[1] or 0
+        global_total = global_series_total + global_playin_total
+
         board = []
-        for idx, row in enumerate(c.fetchall(), 1):
-            total_series, correct_series, bullseyes = row[3] or 0, row[4] or 0, row[5] or 0
+        for idx, row in enumerate(raw_rows, 1):
+            _total_series, correct_series, bullseyes = row[3] or 0, row[4] or 0, row[5] or 0
             series_pts  = int(row[7])  if row[7]  else None
             playin_pts  = int(row[8])  if row[8]  else None
             futures_pts = int(row[9])  if row[9]  else None
             leaders_pts = int(row[10]) if row[10] else None
-            playin_total   = int(row[11]) if row[11] else 0
             playin_correct = int(row[12]) if row[12] else 0
-            total_all   = total_series + playin_total
+            # Use global totals so all users have the same denominator;
+            # missing bets are treated as 0 correct.
+            total_all   = global_total if global_total > 0 else max(_total_series + (int(row[11]) if row[11] else 0), 1)
             correct_all = correct_series + playin_correct
             # Always compute points from breakdown subqueries — never use u.points directly,
             # which can be stale if _recalculate_all_points wasn't called after a scoring change.
