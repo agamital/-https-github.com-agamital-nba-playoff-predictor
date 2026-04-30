@@ -6230,7 +6230,12 @@ async def leaderboard(response: Response, season: str = "2026"):
                 COALESCE((SELECT COUNT(*) FROM playin_predictions pp2 WHERE pp2.user_id = u.id AND pp2.is_correct = 1), 0)        AS playin_correct
             FROM users u LEFT JOIN predictions p ON u.id = p.user_id
             GROUP BY u.id
-            ORDER BY u.points DESC, bullseyes_count DESC
+            ORDER BY (
+                COALESCE((SELECT SUM(p3.points_earned) FROM predictions p3 WHERE p3.user_id = u.id), 0) +
+                COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions pp WHERE pp.user_id = u.id), 0) +
+                COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u.id), 0) +
+                COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u.id), 0)
+            ) DESC, bullseyes_count DESC
             LIMIT 100
         ''')
         board = []
@@ -6244,8 +6249,11 @@ async def leaderboard(response: Response, season: str = "2026"):
             playin_correct = int(row[12]) if row[12] else 0
             total_all   = total_series + playin_total
             correct_all = correct_series + playin_correct
+            # Always compute points from breakdown subqueries — never use u.points directly,
+            # which can be stale if _recalculate_all_points wasn't called after a scoring change.
+            computed_pts = (series_pts or 0) + (playin_pts or 0) + (futures_pts or 0) + (leaders_pts or 0)
             board.append({
-                'rank': idx, 'user_id': row[0], 'username': row[1], 'points': row[2],
+                'rank': idx, 'user_id': row[0], 'username': row[1], 'points': computed_pts,
                 'total_predictions': total_all, 'correct_predictions': correct_all,
                 'accuracy': round((correct_all / total_all * 100) if total_all > 0 else 0, 1),
                 'bullseyes_count': bullseyes, 'avatar_url': row[6] or '',
@@ -9822,15 +9830,33 @@ async def get_user_profile(username: str):
     """Public profile: username, points, rank, avatar."""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT id, username, points, avatar_url FROM users WHERE username = %s", (username,))
+    c.execute("""
+        SELECT u.id, u.username, u.avatar_url,
+               COALESCE((SELECT SUM(p.points_earned)  FROM predictions         p  WHERE p.user_id  = u.id), 0) +
+               COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions  pp WHERE pp.user_id = u.id), 0) +
+               COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u.id), 0) +
+               COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u.id), 0)
+               AS computed_points
+        FROM users u WHERE u.username = %s
+    """, (username,))
     row = c.fetchone()
     if not row:
         conn.close()
         raise HTTPException(404, "User not found")
-    c.execute("SELECT COUNT(*) + 1 FROM users WHERE points > %s", (row[2],))
+    computed_pts = row[3] or 0
+    # Rank = number of users with higher computed points + 1
+    c.execute("""
+        SELECT COUNT(*) + 1 FROM users u2
+        WHERE (
+            COALESCE((SELECT SUM(p.points_earned)  FROM predictions         p  WHERE p.user_id  = u2.id), 0) +
+            COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions  pp WHERE pp.user_id = u2.id), 0) +
+            COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u2.id), 0) +
+            COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u2.id), 0)
+        ) > %s
+    """, (computed_pts,))
     rank = c.fetchone()[0]
     conn.close()
-    return {"user_id": row[0], "username": row[1], "points": row[2], "avatar_url": row[3] or "", "rank": rank}
+    return {"user_id": row[0], "username": row[1], "points": computed_pts, "avatar_url": row[2] or "", "rank": rank}
 
 
 @app.get("/api/account")
@@ -9838,12 +9864,29 @@ async def get_account(user_id: int, response: Response):
     """Private account info for the logged-in user."""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT id, username, email, role, points, avatar_url, created_at, password FROM users WHERE id = %s", (user_id,))
+    c.execute("""
+        SELECT u.id, u.username, u.email, u.role, u.avatar_url, u.created_at, u.password,
+               COALESCE((SELECT SUM(p.points_earned)  FROM predictions         p  WHERE p.user_id  = u.id), 0) +
+               COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions  pp WHERE pp.user_id = u.id), 0) +
+               COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u.id), 0) +
+               COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u.id), 0)
+               AS computed_points
+        FROM users u WHERE u.id = %s
+    """, (user_id,))
     row = c.fetchone()
     if not row:
         conn.close()
         raise HTTPException(404, "User not found")
-    c.execute("SELECT COUNT(*) + 1 FROM users WHERE points > %s", (row[4],))
+    computed_pts = row[7] or 0
+    c.execute("""
+        SELECT COUNT(*) + 1 FROM users u2
+        WHERE (
+            COALESCE((SELECT SUM(p.points_earned)  FROM predictions         p  WHERE p.user_id  = u2.id), 0) +
+            COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions  pp WHERE pp.user_id = u2.id), 0) +
+            COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u2.id), 0) +
+            COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u2.id), 0)
+        ) > %s
+    """, (computed_pts,))
     rank = c.fetchone()[0]
     conn.close()
     response.headers["Cache-Control"] = "private, max-age=60"
@@ -9852,11 +9895,11 @@ async def get_account(user_id: int, response: Response):
         "username": row[1],
         "email": row[2],
         "role": row[3],
-        "points": row[4],
-        "avatar_url": row[5] or "",
-        "member_since": row[6].isoformat() if row[6] else None,
+        "points": computed_pts,
+        "avatar_url": row[4] or "",
+        "member_since": row[5].isoformat() if row[5] else None,
         "rank": rank,
-        "login_method": "google" if not row[7] else "password",
+        "login_method": "google" if not row[6] else "password",
     }
 
 
