@@ -2341,12 +2341,12 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     {user.rank <= 3 ? medals[user.rank - 1] : user.rank}
                   </div>
 
-                  {/* Player — avatar hidden on mobile to free space for name */}
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="relative shrink-0 hidden sm:block">
+                  {/* Player — small avatar on mobile, full size on desktop */}
+                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                    <div className="relative shrink-0">
                       {user.avatar_url ? (
                         <img src={user.avatar_url} alt={user.username}
-                          className={`w-8 h-8 rounded-full object-cover border-2 ${
+                          className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full object-cover border-2 ${
                             isMe ? 'border-orange-500/60' :
                             user.rank === 1 ? 'border-amber-500/60' :
                             user.rank === 2 ? 'border-slate-400/60' :
@@ -2354,7 +2354,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                           }`}
                           onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
                       ) : null}
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs ${user.avatar_url ? 'hidden' : ''} ${
+                      <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-black text-[10px] sm:text-xs ${user.avatar_url ? 'hidden' : ''} ${
                         isMe ? 'bg-orange-500/20 text-orange-400 border border-orange-500/40' :
                         user.rank === 1 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' :
                         user.rank === 2 ? 'bg-slate-400/20 text-slate-300 border border-slate-400/40' :
@@ -2398,16 +2398,16 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     <button
                       onClick={() => setExpanded(isExpanded ? null : user.rank)}
                       title="Tap to see score breakdown"
-                      className={`flex flex-col items-center rounded-xl px-1.5 sm:px-2.5 py-1.5 border min-w-[2.5rem] sm:min-w-[3rem] transition-all ${
+                      className={`flex flex-col items-center rounded-lg sm:rounded-xl px-1 sm:px-2.5 py-1 sm:py-1.5 border min-w-[2.2rem] sm:min-w-[3rem] transition-all ${
                         isExpanded
                           ? 'bg-orange-500/25 border-orange-500/60'
                           : 'bg-slate-800/80 border-slate-700 hover:bg-slate-700 hover:border-slate-600'
                       }`}
                     >
-                      <span className="text-base sm:text-lg font-black text-orange-300 leading-none">{user.points}</span>
+                      <span className="text-sm sm:text-lg font-black text-orange-300 leading-none">{user.points}</span>
                       <div className="flex items-center gap-0.5 mt-0.5">
-                        <span className="text-[9px] text-slate-400 font-bold">pts</span>
-                        <ChevronDown className={`w-2.5 h-2.5 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                        <span className="text-[8px] sm:text-[9px] text-slate-400 font-bold">pts</span>
+                        <ChevronDown className={`w-2 h-2 sm:w-2.5 sm:h-2.5 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                       </div>
                     </button>
 
@@ -2415,7 +2415,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     <button
                       onClick={() => provPts > 0 && setProvPopover(provPopover === user.user_id ? null : user.user_id)}
                       title={provPts > 0 ? 'Tap to see provisional pts' : 'No provisional pts yet'}
-                      className={`flex flex-col items-center rounded-xl px-1.5 sm:px-2.5 py-1.5 border min-w-[2.5rem] sm:min-w-[3rem] transition-all ${
+                      className={`flex flex-col items-center rounded-lg sm:rounded-xl px-1 sm:px-2.5 py-1 sm:py-1.5 border min-w-[2.2rem] sm:min-w-[3rem] transition-all ${
                         provPts === 0
                           ? 'border-slate-800/50 bg-transparent cursor-default opacity-40'
                           : provPopover === user.user_id
@@ -2423,17 +2423,17 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                           : 'bg-amber-400/10 border-amber-400/35 hover:bg-amber-400/20 animate-pulse hover:animate-none'
                       }`}
                     >
-                      <span className={`text-base sm:text-lg font-black leading-none ${provPts > 0 ? 'text-amber-300' : 'text-slate-600'}`}>{provPts}</span>
+                      <span className={`text-sm sm:text-lg font-black leading-none ${provPts > 0 ? 'text-amber-300' : 'text-slate-600'}`}>{provPts}</span>
                       <div className="flex items-center gap-0.5 mt-0.5">
-                        <span className={`text-[9px] font-bold ${provPts > 0 ? 'text-amber-400' : 'text-slate-600'}`}>⚡</span>
-                        {provPts > 0 && <ChevronDown className={`w-2.5 h-2.5 text-amber-500 transition-transform ${provPopover === user.user_id ? 'rotate-180' : ''}`} />}
+                        <span className={`text-[8px] sm:text-[9px] font-bold ${provPts > 0 ? 'text-amber-400' : 'text-slate-600'}`}>⚡</span>
+                        {provPts > 0 && <ChevronDown className={`w-2 h-2 sm:w-2.5 sm:h-2.5 text-amber-500 transition-transform ${provPopover === user.user_id ? 'rotate-180' : ''}`} />}
                       </div>
                     </button>
 
                     {/* Total */}
-                    <div className="flex flex-col items-center rounded-xl px-1.5 sm:px-2.5 py-1.5 border border-orange-500/30 bg-orange-500/10 min-w-[2.5rem] sm:min-w-[3rem]">
-                      <span className="text-base sm:text-xl font-black text-orange-400 leading-none">{user.points + provPts}</span>
-                      <span className="text-[9px] text-orange-500/70 font-bold mt-0.5">total</span>
+                    <div className="flex flex-col items-center rounded-lg sm:rounded-xl px-1 sm:px-2.5 py-1 sm:py-1.5 border border-orange-500/30 bg-orange-500/10 min-w-[2.2rem] sm:min-w-[3rem]">
+                      <span className="text-sm sm:text-xl font-black text-orange-400 leading-none">{user.points + provPts}</span>
+                      <span className="text-[8px] sm:text-[9px] text-orange-500/70 font-bold mt-0.5">total</span>
                     </div>
                   </div>
                 </div>
