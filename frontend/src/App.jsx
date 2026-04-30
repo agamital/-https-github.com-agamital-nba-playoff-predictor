@@ -2283,11 +2283,8 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
 
             return (
               <div key={user.rank} className={`bg-slate-900/50 border rounded-xl transition-all overflow-hidden ${rankBorder} ${isMe ? 'bg-orange-500/5' : ''}`}>
-                <div
-                  className="p-3 sm:p-4 flex items-center gap-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
-                  onClick={() => setExpanded(isExpanded ? null : user.rank)}
-                >
-                  {/* Rank number (mobile: small) */}
+                <div className="p-3 sm:p-4 flex items-center gap-3">
+                  {/* Rank number */}
                   <div className="text-xs font-black text-slate-600 w-5 text-center shrink-0 hidden sm:block">
                     {user.rank <= 3 ? medals[user.rank - 1] : `${user.rank}`}
                   </div>
@@ -2322,7 +2319,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <button className={`font-black text-sm hover:text-orange-400 transition-colors text-left truncate ${isMe ? 'text-orange-300' : 'text-white'}`}
-                        onClick={(e) => { e.stopPropagation(); onUserClick(user); }}>
+                        onClick={() => onUserClick(user)}>
                         {user.username}
                         {isMe && <span className="ml-1 text-[9px] text-orange-400 font-black align-middle">(you)</span>}
                       </button>
@@ -2345,22 +2342,46 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     </div>
                   </div>
 
-                  {/* Points + provisional + chevron */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="text-right">
-                      <div className="text-xl font-black text-orange-400">{user.points + provPts}</div>
-                      <div className="text-[10px] text-slate-500 font-bold">pts</div>
+                  {/* Score area — combined total + two clickable pills */}
+                  <div className="shrink-0 flex flex-col items-end gap-1">
+                    {/* Big combined total */}
+                    <div className="text-xl font-black text-orange-400 leading-none">{user.points + provPts}</div>
+                    <div className="text-[9px] text-slate-500 font-bold uppercase tracking-wide">total pts</div>
+
+                    {/* Two pills */}
+                    <div className="flex items-center gap-1 mt-0.5">
+                      {/* Real pts pill → expands score breakdown */}
+                      <button
+                        onClick={() => setExpanded(isExpanded ? null : user.rank)}
+                        title="Tap to see score breakdown"
+                        className={`flex items-center gap-1 rounded-lg px-2 py-1 border transition-all ${
+                          isExpanded
+                            ? 'bg-orange-500/20 border-orange-500/50'
+                            : 'bg-slate-800/80 border-slate-700 hover:bg-slate-700/80 hover:border-slate-600'
+                        }`}
+                      >
+                        <span className="text-[11px] font-black text-orange-300">{user.points}</span>
+                        <span className="text-[9px] text-slate-400 font-bold">pts</span>
+                        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {/* Provisional pill → expands provisional breakdown */}
                       {provPts > 0 && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); setProvPopover(provPopover === user.user_id ? null : user.user_id); }}
-                          className="mt-1 flex items-center gap-0.5 bg-amber-400/20 hover:bg-amber-400/35 active:bg-amber-400/50 border border-amber-400/50 rounded-full px-2 py-0.5 transition-all cursor-pointer animate-pulse hover:animate-none"
-                          title="Real pts + provisional — tap to see breakdown"
+                          onClick={() => setProvPopover(provPopover === user.user_id ? null : user.user_id)}
+                          title="Tap to see provisional pts"
+                          className={`flex items-center gap-1 rounded-lg px-2 py-1 border transition-all ${
+                            provPopover === user.user_id
+                              ? 'bg-amber-400/30 border-amber-400/60'
+                              : 'bg-amber-400/15 border-amber-400/40 hover:bg-amber-400/25 animate-pulse hover:animate-none'
+                          }`}
                         >
-                          <span className="text-[11px] font-black text-amber-300">{user.points}+{provPts}⚡</span>
+                          <span className="text-[11px] font-black text-amber-300">{provPts}</span>
+                          <span className="text-[9px] text-amber-400">⚡</span>
+                          <ChevronDown className={`w-3 h-3 text-amber-500 transition-transform ${provPopover === user.user_id ? 'rotate-180' : ''}`} />
                         </button>
                       )}
                     </div>
-                    <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                   </div>
                 </div>
 
@@ -2372,9 +2393,11 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                       <div className="flex items-center gap-2">
                         <span className="text-amber-400 text-base">⚡</span>
                         <span className="text-sm font-black text-amber-300">Provisional Pts</span>
-                        <span className="text-[10px] text-slate-500 font-normal">temporary · finalizes when series end</span>
                       </div>
-                      <span className="text-lg font-black text-amber-400">+{provPts}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-500">temporary · finalizes when series end</span>
+                        <span className="text-base font-black text-amber-400">+{provPts}</span>
+                      </div>
                     </div>
 
                     {/* Series provisional section */}
