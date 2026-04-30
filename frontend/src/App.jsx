@@ -2281,13 +2281,13 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
         return (
         <div className="rounded-2xl border border-slate-800 overflow-hidden">
           {/* Table header */}
-          <div className="grid grid-cols-[2rem_1fr_auto] sm:grid-cols-[2.5rem_1fr_5rem_auto] items-center gap-x-3 px-3 py-2 bg-slate-900/80 border-b border-slate-800">
+          <div className="grid grid-cols-[1.25rem_1fr_auto] sm:grid-cols-[2.5rem_1fr_5rem_auto] items-center gap-x-2 sm:gap-x-3 px-3 py-2 bg-slate-900/80 border-b border-slate-800">
             <span className="text-[10px] font-black text-slate-600 uppercase">#</span>
             <span className="text-[10px] font-black text-slate-600 uppercase">Player</span>
             <SortHdr col="accuracy" label="Acc%" cls="hidden sm:flex justify-center" />
-            <div className="flex items-center gap-2 justify-end">
+            <div className="flex items-center gap-1.5 sm:gap-2 justify-end">
               <SortHdr col="real"  label="Real" />
-              <SortHdr col="prov"  label="⚡Prov" />
+              <SortHdr col="prov"  label="⚡" />
               <SortHdr col="total" label="Total" />
             </div>
           </div>
@@ -2330,20 +2330,20 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
             return (
               <div key={user.rank} className={`transition-colors ${rowBg} ${leftBar}`}>
                 {/* Main table row */}
-                <div className="grid grid-cols-[2rem_1fr_auto] sm:grid-cols-[2.5rem_1fr_5rem_auto] items-center gap-x-3 px-3 py-2.5">
+                <div className="grid grid-cols-[1.25rem_1fr_auto] sm:grid-cols-[2.5rem_1fr_5rem_auto] items-center gap-x-2 sm:gap-x-3 px-3 py-2.5">
 
-                  {/* Rank */}
-                  <div className={`text-sm font-black text-center ${
+                  {/* Rank — tight on mobile */}
+                  <div className={`text-xs sm:text-sm font-black text-center leading-none ${
                     user.rank === 1 ? 'text-amber-400' :
                     user.rank === 2 ? 'text-slate-300' :
-                    user.rank === 3 ? 'text-orange-500' : 'text-slate-600'
+                    user.rank === 3 ? 'text-orange-500' : 'text-slate-500'
                   }`}>
                     {user.rank <= 3 ? medals[user.rank - 1] : user.rank}
                   </div>
 
-                  {/* Player — avatar + name + sub-info */}
+                  {/* Player — avatar hidden on mobile to free space for name */}
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="relative shrink-0">
+                    <div className="relative shrink-0 hidden sm:block">
                       {user.avatar_url ? (
                         <img src={user.avatar_url} alt={user.username}
                           className={`w-8 h-8 rounded-full object-cover border-2 ${
@@ -2364,9 +2364,9 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                         {(user.username || '?')[0].toUpperCase()}
                       </div>
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <button className={`font-black text-sm hover:text-orange-400 transition-colors text-left truncate ${isMe ? 'text-orange-300' : 'text-white'}`}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <button className={`font-black text-sm hover:text-orange-400 transition-colors text-left min-w-0 max-w-full break-words ${isMe ? 'text-orange-300' : 'text-white'}`}
                           onClick={() => onUserClick(user)}>
                           {user.username}
                           {isMe && <span className="ml-1 text-[9px] text-orange-400 font-black">(you)</span>}
@@ -2392,19 +2392,19 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     <span className="text-[9px] text-slate-600 font-bold uppercase">acc</span>
                   </div>
 
-                  {/* Score columns — Total / Real / Prov */}
+                  {/* Score columns — Real / Prov / Total */}
                   <div className="flex items-center gap-1 shrink-0">
                     {/* Real pts */}
                     <button
                       onClick={() => setExpanded(isExpanded ? null : user.rank)}
                       title="Tap to see score breakdown"
-                      className={`flex flex-col items-center rounded-xl px-2.5 py-1.5 border min-w-[3rem] transition-all ${
+                      className={`flex flex-col items-center rounded-xl px-1.5 sm:px-2.5 py-1.5 border min-w-[2.5rem] sm:min-w-[3rem] transition-all ${
                         isExpanded
                           ? 'bg-orange-500/25 border-orange-500/60'
                           : 'bg-slate-800/80 border-slate-700 hover:bg-slate-700 hover:border-slate-600'
                       }`}
                     >
-                      <span className="text-lg font-black text-orange-300 leading-none">{user.points}</span>
+                      <span className="text-base sm:text-lg font-black text-orange-300 leading-none">{user.points}</span>
                       <div className="flex items-center gap-0.5 mt-0.5">
                         <span className="text-[9px] text-slate-400 font-bold">pts</span>
                         <ChevronDown className={`w-2.5 h-2.5 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
@@ -2415,7 +2415,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     <button
                       onClick={() => provPts > 0 && setProvPopover(provPopover === user.user_id ? null : user.user_id)}
                       title={provPts > 0 ? 'Tap to see provisional pts' : 'No provisional pts yet'}
-                      className={`flex flex-col items-center rounded-xl px-2.5 py-1.5 border min-w-[3rem] transition-all ${
+                      className={`flex flex-col items-center rounded-xl px-1.5 sm:px-2.5 py-1.5 border min-w-[2.5rem] sm:min-w-[3rem] transition-all ${
                         provPts === 0
                           ? 'border-slate-800/50 bg-transparent cursor-default opacity-40'
                           : provPopover === user.user_id
@@ -2423,7 +2423,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                           : 'bg-amber-400/10 border-amber-400/35 hover:bg-amber-400/20 animate-pulse hover:animate-none'
                       }`}
                     >
-                      <span className={`text-lg font-black leading-none ${provPts > 0 ? 'text-amber-300' : 'text-slate-600'}`}>{provPts}</span>
+                      <span className={`text-base sm:text-lg font-black leading-none ${provPts > 0 ? 'text-amber-300' : 'text-slate-600'}`}>{provPts}</span>
                       <div className="flex items-center gap-0.5 mt-0.5">
                         <span className={`text-[9px] font-bold ${provPts > 0 ? 'text-amber-400' : 'text-slate-600'}`}>⚡</span>
                         {provPts > 0 && <ChevronDown className={`w-2.5 h-2.5 text-amber-500 transition-transform ${provPopover === user.user_id ? 'rotate-180' : ''}`} />}
@@ -2431,8 +2431,8 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     </button>
 
                     {/* Total */}
-                    <div className="flex flex-col items-center rounded-xl px-2.5 py-1.5 border border-orange-500/30 bg-orange-500/10 min-w-[3rem]">
-                      <span className="text-xl font-black text-orange-400 leading-none">{user.points + provPts}</span>
+                    <div className="flex flex-col items-center rounded-xl px-1.5 sm:px-2.5 py-1.5 border border-orange-500/30 bg-orange-500/10 min-w-[2.5rem] sm:min-w-[3rem]">
+                      <span className="text-base sm:text-xl font-black text-orange-400 leading-none">{user.points + provPts}</span>
                       <span className="text-[9px] text-orange-500/70 font-bold mt-0.5">total</span>
                     </div>
                   </div>
