@@ -2342,43 +2342,47 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     </div>
                   </div>
 
-                  {/* Score area — combined total + two clickable pills */}
-                  <div className="shrink-0 flex flex-col items-end gap-1">
-                    {/* Big combined total */}
-                    <div className="text-xl font-black text-orange-400 leading-none">{user.points + provPts}</div>
-                    <div className="text-[9px] text-slate-500 font-bold uppercase tracking-wide">total pts</div>
+                  {/* Score area */}
+                  <div className="shrink-0 flex flex-col items-center gap-0.5 min-w-[6rem]">
+                    {/* Combined total — biggest number */}
+                    <div className="text-2xl font-black text-orange-400 leading-none">{user.points + provPts}</div>
+                    <div className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">total pts</div>
 
-                    {/* Two pills */}
-                    <div className="flex items-center gap-1 mt-0.5">
-                      {/* Real pts pill → expands score breakdown */}
+                    {/* Two equal columns — real pts + provisional */}
+                    <div className={`grid gap-1 w-full mt-1 ${provPts > 0 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                      {/* Real pts → expands score breakdown */}
                       <button
                         onClick={() => setExpanded(isExpanded ? null : user.rank)}
                         title="Tap to see score breakdown"
-                        className={`flex items-center gap-1 rounded-lg px-2 py-1 border transition-all ${
+                        className={`flex flex-col items-center rounded-xl px-2 py-1.5 border transition-all ${
                           isExpanded
-                            ? 'bg-orange-500/20 border-orange-500/50'
-                            : 'bg-slate-800/80 border-slate-700 hover:bg-slate-700/80 hover:border-slate-600'
+                            ? 'bg-orange-500/25 border-orange-500/60'
+                            : 'bg-slate-800 border-slate-700 hover:bg-slate-700 hover:border-slate-600'
                         }`}
                       >
-                        <span className="text-[11px] font-black text-orange-300">{user.points}</span>
-                        <span className="text-[9px] text-slate-400 font-bold">pts</span>
-                        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                        <span className="text-lg font-black text-orange-300 leading-none">{user.points}</span>
+                        <div className="flex items-center gap-0.5 mt-0.5">
+                          <span className="text-[9px] text-slate-400 font-bold">pts</span>
+                          <ChevronDown className={`w-2.5 h-2.5 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                        </div>
                       </button>
 
-                      {/* Provisional pill → expands provisional breakdown */}
+                      {/* Provisional → expands provisional breakdown */}
                       {provPts > 0 && (
                         <button
                           onClick={() => setProvPopover(provPopover === user.user_id ? null : user.user_id)}
                           title="Tap to see provisional pts"
-                          className={`flex items-center gap-1 rounded-lg px-2 py-1 border transition-all ${
+                          className={`flex flex-col items-center rounded-xl px-2 py-1.5 border transition-all ${
                             provPopover === user.user_id
                               ? 'bg-amber-400/30 border-amber-400/60'
-                              : 'bg-amber-400/15 border-amber-400/40 hover:bg-amber-400/25 animate-pulse hover:animate-none'
+                              : 'bg-amber-400/10 border-amber-400/35 hover:bg-amber-400/20 animate-pulse hover:animate-none'
                           }`}
                         >
-                          <span className="text-[11px] font-black text-amber-300">{provPts}</span>
-                          <span className="text-[9px] text-amber-400">⚡</span>
-                          <ChevronDown className={`w-3 h-3 text-amber-500 transition-transform ${provPopover === user.user_id ? 'rotate-180' : ''}`} />
+                          <span className="text-lg font-black text-amber-300 leading-none">{provPts}</span>
+                          <div className="flex items-center gap-0.5 mt-0.5">
+                            <span className="text-[9px] text-amber-400 font-bold">⚡</span>
+                            <ChevronDown className={`w-2.5 h-2.5 text-amber-500 transition-transform ${provPopover === user.user_id ? 'rotate-180' : ''}`} />
+                          </div>
                         </button>
                       )}
                     </div>
