@@ -1030,7 +1030,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
               <p className="font-black text-white text-sm leading-tight truncate">
                 {s.home_team.name || s.home_team.abbreviation}
               </p>
-              <p className="text-[10px] text-slate-500 font-bold">Seed #{s.home_team.seed}</p>
+              {s.home_team.seed != null && <p className="text-[10px] text-slate-500 font-bold">Seed #{s.home_team.seed}</p>}
             </div>
           </div>
 
@@ -1042,7 +1042,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
               <p className="font-black text-white text-sm leading-tight truncate">
                 {s.away_team.name || s.away_team.abbreviation}
               </p>
-              <p className="text-[10px] text-slate-500 font-bold">Seed #{s.away_team.seed}</p>
+              {s.away_team.seed != null && <p className="text-[10px] text-slate-500 font-bold">Seed #{s.away_team.seed}</p>}
             </div>
             <img
               src={s.away_team.logo_url} alt={s.away_team.abbreviation}

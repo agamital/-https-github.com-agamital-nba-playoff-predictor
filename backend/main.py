@@ -4122,6 +4122,57 @@ async def startup():
         except Exception as e:
             print(f"[Startup] Backfill series ERROR: {e}")
 
+        # Backfill null seeds on Conf Semis / later series by looking up the
+        # team's seed from their most recent Round 1 (or earlier) appearance.
+        try:
+            conn_sd = get_db_conn()
+            c_sd = conn_sd.cursor()
+            # Find any active/completed later-round series missing seeds
+            c_sd.execute("""
+                SELECT id, home_team_id, away_team_id, home_seed, away_seed
+                FROM series
+                WHERE season = '2026'
+                  AND round != 'First Round'
+                  AND (home_seed IS NULL OR away_seed IS NULL)
+            """)
+            to_fix = c_sd.fetchall()
+            fixed_count = 0
+            for sid, home_id, away_id, h_seed, a_seed in to_fix:
+                updates = {}
+                for team_id, cur_seed, col in [
+                    (home_id, h_seed, 'home_seed'),
+                    (away_id, a_seed, 'away_seed'),
+                ]:
+                    if cur_seed is not None:
+                        continue  # already set
+                    # Find seed from any series where this team appeared
+                    c_sd.execute("""
+                        SELECT home_seed FROM series
+                        WHERE season='2026' AND home_team_id=%s AND home_seed IS NOT NULL
+                        LIMIT 1
+                    """, (team_id,))
+                    row = c_sd.fetchone()
+                    if not row:
+                        c_sd.execute("""
+                            SELECT away_seed FROM series
+                            WHERE season='2026' AND away_team_id=%s AND away_seed IS NOT NULL
+                            LIMIT 1
+                        """, (team_id,))
+                        row = c_sd.fetchone()
+                    if row:
+                        updates[col] = row[0]
+                if updates:
+                    set_clause = ', '.join(f"{k}=%s" for k in updates)
+                    c_sd.execute(f"UPDATE series SET {set_clause} WHERE id=%s",
+                                 (*updates.values(), sid))
+                    fixed_count += 1
+            if fixed_count:
+                conn_sd.commit()
+                print(f"[Startup] Seed backfill: fixed {fixed_count} later-round series with null seeds")
+            conn_sd.close()
+        except Exception as e:
+            print(f"[Startup] Seed backfill ERROR: {e}")
+
         # Patch leader-bonus points that were missed due to diacritic mismatch
         # (e.g. user bet "Jokić" but admin stored "Jokic" — _norm_name now matches them).
         # SAFE: only adds missing bonus points; never subtracts or zeroes anything.

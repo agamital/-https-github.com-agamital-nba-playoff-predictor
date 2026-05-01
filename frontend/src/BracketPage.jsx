@@ -1209,7 +1209,7 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
         <img src={team.logo_url} alt="" className="w-10 h-10 shrink-0" onError={e => e.target.style.display = 'none'} />
         <div className="text-left flex-1 min-w-0">
           <p className={`font-black text-base leading-tight truncate ${isWon ? 'text-green-400' : isPicked && !isCompleted && confirmed ? 'text-yellow-300 drop-shadow-sm' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>{team.name}</p>
-          <p className="text-xs text-slate-500">{isWon && series.actual_games ? `Won in ${series.actual_games}` : isTeamUnderdog && !isCompleted ? '🔥 Underdog — higher reward' : `Seed #${team.seed}`}</p>
+          <p className="text-xs text-slate-500">{isWon && series.actual_games ? `Won in ${series.actual_games}` : isTeamUnderdog && !isCompleted ? '🔥 Underdog — higher reward' : team.seed != null ? `Seed #${team.seed}` : ''}</p>
         </div>
         {!isCompleted && !isLocked && !isPicked && !confirmed && (() => {
           const previewPts = team.id === h.id ? hMaxPts : aMaxPts;
