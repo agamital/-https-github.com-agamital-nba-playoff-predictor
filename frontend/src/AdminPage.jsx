@@ -71,7 +71,7 @@ const SeriesStatusBadge = ({ series }) => {
   return <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-xs font-bold">Finished</span>;
 };
 
-const SeriesCard = ({ series, onSave, onToggleLock, onReset }) => {
+const SeriesCard = ({ series, onSave, onToggleLock, onReset, addToast }) => {
   const [winnerId, setWinnerId] = useState(series.winner_team_id || null);
   const [games, setGames] = useState(series.actual_games || null);
   const [scorer, setScorer] = useState(series.leading_scorer || '');
@@ -81,6 +81,7 @@ const SeriesCard = ({ series, onSave, onToggleLock, onReset }) => {
   const [saved, setSaved] = useState(false);
   const [locking, setLocking] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [rescoring, setRescoring] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
@@ -127,6 +128,35 @@ const SeriesCard = ({ series, onSave, onToggleLock, onReset }) => {
       await onToggleLock(series.id, !isLocked);
     } finally {
       setLocking(false);
+    }
+  };
+
+  // Re-score only this series using current leader names already in DB.
+  // Safe: re-enters the exact same result, which triggers the scoring engine
+  // to re-calculate with diacritic-safe name matching (_norm_name).
+  const handleRescore = async () => {
+    if (!series.winner_team_id || !series.actual_games) {
+      addToast('Series has no result set — cannot rescore', 'error');
+      return;
+    }
+    setRescoring(true);
+    try {
+      await onSave(
+        series.id,
+        series.winner_team_id,
+        series.actual_games,
+        true, // manual_override=true so it doesn't reset to false
+        {
+          scorer:    series.leading_scorer    || undefined,
+          rebounder: series.leading_rebounder || undefined,
+          assister:  series.leading_assister  || undefined,
+        }
+      );
+      addToast(`✓ ${series.home_team.abbreviation} vs ${series.away_team.abbreviation} re-scored with diacritic-safe matching`, 'success');
+    } catch (e) {
+      addToast('Rescore failed: ' + (e.response?.data?.detail || e.message), 'error');
+    } finally {
+      setRescoring(false);
     }
   };
 
@@ -212,11 +242,18 @@ const SeriesCard = ({ series, onSave, onToggleLock, onReset }) => {
           {saved ? 'Saved!' : saving ? 'Saving...' : isCompleted ? 'Force Update' : 'Set Result'}
         </button>
         {isCompleted ? (
-          <button onClick={() => setConfirmReset(true)} disabled={resetting}
-            className="px-3 py-2 rounded-lg font-bold text-sm transition-all disabled:opacity-50 bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30"
-            title="Reset result — reverts user scores">
-            {resetting ? '…' : <RotateCcw className="w-4 h-4" />}
-          </button>
+          <>
+            <button onClick={handleRescore} disabled={rescoring}
+              className="px-3 py-2 rounded-lg font-bold text-sm transition-all disabled:opacity-50 bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/30"
+              title="Re-score this series only — fixes name-matching issues (e.g. Jokić vs Jokic) without deleting any bets">
+              {rescoring ? '…' : <RefreshCw className="w-4 h-4" />}
+            </button>
+            <button onClick={() => setConfirmReset(true)} disabled={resetting}
+              className="px-3 py-2 rounded-lg font-bold text-sm transition-all disabled:opacity-50 bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30"
+              title="Reset result — reverts user scores">
+              {resetting ? '…' : <RotateCcw className="w-4 h-4" />}
+            </button>
+          </>
         ) : (
           <button onClick={handleToggleLock} disabled={locking}
             className={`px-3 py-2 rounded-lg font-bold text-sm transition-all disabled:opacity-50 ${
@@ -2255,7 +2292,7 @@ const AdminPage = ({ currentUser }) => {
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {roundSeries.map(s => (
-                    <SeriesCard key={s.id} series={s} onSave={handleSeriesResult} onToggleLock={handleToggleLock} onReset={handleResetSeriesResult} />
+                    <SeriesCard key={s.id} series={s} onSave={handleSeriesResult} onToggleLock={handleToggleLock} onReset={handleResetSeriesResult} addToast={addToast} />
                   ))}
                 </div>
               </div>
