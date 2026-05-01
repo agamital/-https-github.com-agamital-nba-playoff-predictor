@@ -27,9 +27,17 @@ const lastName = (name) => {
   return parts[parts.length - 1];
 };
 
+/** Normalize a name for comparison: strip diacritics, lowercase, trim.
+ *  Ensures Jokić == Jokic, Dončić == Doncic, etc. */
+const normName = (s) => {
+  if (!s) return '';
+  // NFD splits base char + diacritic codepoints; ASCII-encode drops the diacritics
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+};
+
 const leaderCorrect = (picked, actual) => {
   if (!picked || !actual) return null;
-  return picked.trim().toLowerCase() === actual.trim().toLowerCase();
+  return normName(picked) === normName(actual);
 };
 
 const CommunityInsights = ({
