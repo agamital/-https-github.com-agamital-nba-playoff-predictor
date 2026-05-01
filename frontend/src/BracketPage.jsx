@@ -1503,7 +1503,11 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
 
 // ── Community Picks Browser ───────────────────────────────────────────────────
 
-const _normRound = r => (r || '').toLowerCase().replace(/[\s-]/g, '_');
+const _normRound = r => {
+  const base = (r || '').toLowerCase().replace(/[\s-]/g, '_');
+  // DB stores 'Conference Semifinals'; ROUND_META uses 'second_round' as key
+  return base === 'conference_semifinals' ? 'second_round' : base;
+};
 
 const ROUND_META = [
   { key: 'play_in',            label: 'Play-In Tournament',     color: 'text-purple-400',  border: 'border-purple-500/20', div: 'bg-purple-500/20' },
@@ -1932,8 +1936,9 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     const east = series.filter(s => s.conference === 'Eastern');
     const westR1 = west.filter(s => normRound(s) === 'first_round');
     const eastR1 = east.filter(s => normRound(s) === 'first_round');
-    const westR2 = west.filter(s => normRound(s) === 'second_round');
-    const eastR2 = east.filter(s => normRound(s) === 'second_round');
+    const isR2 = s => normRound(s) === 'second_round' || normRound(s) === 'conference_semifinals';
+    const westR2 = west.filter(isR2);
+    const eastR2 = east.filter(isR2);
 
     const order = [1, 4, 3, 2];
     const wSlots = order.map(seed => westR1.find(s => minSeed(s) === seed) || null);
