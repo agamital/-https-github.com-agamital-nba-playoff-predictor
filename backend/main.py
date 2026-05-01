@@ -4122,6 +4122,57 @@ async def startup():
         except Exception as e:
             print(f"[Startup] Backfill series ERROR: {e}")
 
+        # Patch leader-bonus points that were missed due to diacritic mismatch
+        # (e.g. user bet "Jokić" but admin stored "Jokic" — _norm_name now matches them).
+        # SAFE: only adds missing bonus points; never subtracts or zeroes anything.
+        try:
+            conn_lb = get_db_conn()
+            c_lb = conn_lb.cursor()
+            c_lb.execute("""
+                SELECT s.id, s.actual_leading_scorer,
+                       s.actual_leading_rebounder, s.actual_leading_assister
+                FROM series s
+                WHERE s.season = '2026' AND s.status = 'completed'
+                  AND (s.actual_leading_scorer IS NOT NULL
+                    OR s.actual_leading_rebounder IS NOT NULL
+                    OR s.actual_leading_assister IS NOT NULL)
+            """)
+            patched_preds = 0
+            for sid, actual_scorer, actual_rebounder, actual_assister in c_lb.fetchall():
+                c_lb.execute('''SELECT id, leading_scorer, leading_rebounder, leading_assister,
+                                       points_earned
+                                FROM predictions WHERE series_id = %s''', (sid,))
+                for pred_id, pred_scorer, pred_rebounder, pred_assister, pts_earned in c_lb.fetchall():
+                    # Calculate what the leader bonus should be with diacritic-safe comparison
+                    bonus = calculate_series_leader_points(
+                        {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
+                        {"scorer": actual_scorer, "rebounder": actual_rebounder, "assister": actual_assister},
+                    )
+                    # Also calculate what the old (broken) comparison would have given
+                    old_bonus = 0
+                    for cat, pred_val, actual_val in [
+                        ("scorer",    pred_scorer,    actual_scorer),
+                        ("rebounder", pred_rebounder, actual_rebounder),
+                        ("assister",  pred_assister,  actual_assister),
+                    ]:
+                        if pred_val and actual_val:
+                            if str(pred_val).strip().lower() == str(actual_val).strip().lower():
+                                old_bonus += 10  # was already counted correctly
+                    # Add the difference (newly matched names due to diacritic fix)
+                    extra = bonus - old_bonus
+                    if extra > 0:
+                        c_lb.execute('UPDATE predictions SET points_earned = points_earned + %s WHERE id = %s',
+                                     (extra, pred_id))
+                        patched_preds += 1
+            if patched_preds > 0:
+                _recalculate_all_points(c_lb)
+            conn_lb.commit()
+            conn_lb.close()
+            if patched_preds > 0:
+                print(f"[Startup] Diacritic leader-bonus patch: added missing pts to {patched_preds} predictions")
+        except Exception as e:
+            print(f"[Startup] Diacritic leader-bonus patch ERROR: {e}")
+
     threading.Thread(target=_background_init, daemon=True).start()
 
     # APScheduler cron jobs

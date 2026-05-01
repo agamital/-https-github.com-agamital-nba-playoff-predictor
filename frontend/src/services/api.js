@@ -591,4 +591,19 @@ export const getTodayGames = async (date = null) => {
   return response.data;
 };
 
+/** Re-score all completed series using current scoring logic (e.g. diacritic fix). */
+export const rescoreCompletedSeries = async (season = '2026') => {
+  const response = await adminApi.post('/api/admin/rescore-completed-series', null, { params: { season } });
+  return response.data;
+};
+
+/** Patch home_seed / away_seed on a specific series. */
+export const patchSeriesSeeds = async (seriesId, homeSeed, awaySeed) => {
+  const params = {};
+  if (homeSeed != null) params.home_seed = homeSeed;
+  if (awaySeed != null) params.away_seed = awaySeed;
+  const response = await adminApi.patch(`/api/admin/series/${seriesId}/seeds`, null, { params });
+  return response.data;
+};
+
 export default api;
