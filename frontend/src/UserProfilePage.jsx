@@ -44,9 +44,16 @@ const ResultBadge = ({ isCorrect, points }) => {
     </div>
   );
   if (isCorrect === 0) return (
-    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-black shrink-0">
-      <XCircle className="w-3.5 h-3.5" />
-      Wrong
+    <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-black">
+        <XCircle className="w-3.5 h-3.5" />
+        Wrong
+      </div>
+      {points > 0 && (
+        <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-black">
+          +{points} pts
+        </div>
+      )}
     </div>
   );
   return null;
@@ -78,12 +85,24 @@ const FuturesPick = ({ label, color, team, mvp, isCorrect }) => {
   );
 };
 
+// Strip diacritics + last-name fallback for leader comparisons
+const _normN = (s) => {
+  if (!s) return '';
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+};
+const _namesMatch = (a, b) => {
+  if (!a || !b) return false;
+  const na = _normN(a), nb = _normN(b);
+  if (na === nb) return true;
+  const aL = na.split(/\s+/).pop() || '';
+  const bL = nb.split(/\s+/).pop() || '';
+  return !!(aL && bL && aL === bL);
+};
+
 // ── Small correctness pill for a single leader pick ──────────────────────────
 const LeaderPickRow = ({ emoji, label, picked, actual, isFinished }) => {
   if (!picked) return null;
-  const correct  = isFinished && actual != null
-    ? picked.trim().toLowerCase() === actual.trim().toLowerCase()
-    : null;
+  const correct = isFinished && actual != null ? _namesMatch(picked, actual) : null;
   const border =
     correct === true  ? 'border-green-500/30 bg-green-500/5'
     : correct === false ? 'border-red-500/30 bg-red-500/5'
