@@ -108,6 +108,25 @@ def _norm_name(s: str) -> str:
     return ascii_bytes.decode('ascii').strip().lower()
 
 
+def _names_match(a: str, b: str) -> bool:
+    """Compare two player name strings, tolerating:
+    - diacritics ('Jokić' == 'Jokic')
+    - first-name omission ('Nikola Jokić' == 'Jokić', 'Jamal Murray' == 'Murray')
+
+    Tries exact normalized match first; falls back to last-word comparison.
+    """
+    if not a or not b:
+        return False
+    na = _norm_name(a)
+    nb = _norm_name(b)
+    if na == nb:
+        return True
+    # Last-name fallback
+    a_last = na.split()[-1] if na else ''
+    b_last = nb.split()[-1] if nb else ''
+    return bool(a_last and b_last and a_last == b_last)
+
+
 # -- Play-In --------------------------------------------------------------------
 PLAYIN_CORRECT_PTS: int    = 5
 PLAYIN_UNDERDOG_BONUS: int = 3   # underdog total = 5+3 = 8 pts
@@ -273,7 +292,7 @@ def calculate_series_leader_points(
         actual_val = actual.get(cat)
         if not actual_val or not pred_val:
             continue
-        if _norm_name(pred_val) == _norm_name(actual_val):
+        if _names_match(pred_val, actual_val):
             pts += SERIES_LEADER_BONUS
     return pts
 
@@ -308,7 +327,7 @@ def calculate_futures_points(
         if isinstance(actual, int):
             is_c = 1 if (pred is not None and int(pred) == actual) else 0
         else:
-            is_c = 1 if (pred and _norm_name(pred) == _norm_name(actual)) else 0
+            is_c = 1 if (pred and _names_match(pred, actual)) else 0
 
         correct[cat] = is_c
         if is_c:

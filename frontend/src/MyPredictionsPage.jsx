@@ -14,6 +14,15 @@ const normName = (s) => {
   if (!s) return '';
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 };
+// Compare last names as fallback so "Nikola Jokić" matches "Jokić", etc.
+const namesMatch = (a, b) => {
+  if (!a || !b) return false;
+  const na = normName(a), nb = normName(b);
+  if (na === nb) return true;
+  const aLast = na.split(/\s+/).pop() || '';
+  const bLast = nb.split(/\s+/).pop() || '';
+  return !!(aLast && bLast && aLast === bLast);
+};
 const lastName = (name) => {
   if (!name) return '';
   const parts = name.trim().split(' ');
@@ -451,7 +460,7 @@ const MyPredictionsPage = ({ currentUser }) => {
                           ['🎯', pred.leading_assister,  pred.actual_leading_assister,  'AST'],
                         ].map(([icon, picked, actual, cat]) => {
                           if (!picked) return null;
-                          const ok = actual != null ? normName(picked) === normName(actual) : null;
+                          const ok = actual != null ? namesMatch(picked, actual) : null;
                           return (
                             <span key={cat} className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded ${
                               ok === true  ? 'text-green-400 bg-green-500/10 border border-green-500/20' :

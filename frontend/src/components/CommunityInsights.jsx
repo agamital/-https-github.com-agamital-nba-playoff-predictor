@@ -37,7 +37,13 @@ const normName = (s) => {
 
 const leaderCorrect = (picked, actual) => {
   if (!picked || !actual) return null;
-  return normName(picked) === normName(actual);
+  const a = normName(picked);
+  const b = normName(actual);
+  if (a === b) return true;
+  // Fallback: compare last names so "Nikola Jokić" matches "Jokić", "Jamal Murray" matches "Murray", etc.
+  const aLast = a.split(/\s+/).pop() || '';
+  const bLast = b.split(/\s+/).pop() || '';
+  return !!(aLast && bLast && aLast === bLast);
 };
 
 const CommunityInsights = ({
