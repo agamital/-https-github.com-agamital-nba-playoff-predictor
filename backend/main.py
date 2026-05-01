@@ -7439,8 +7439,8 @@ async def admin_get_series(season: str = "2026"):
         conn = get_db_conn()
         c = conn.cursor()
         c.execute('''SELECT s.id, s.round, s.conference, s.status, s.winner_team_id, s.actual_games,
-                     ht.id, ht.name, ht.abbreviation, ht.logo_url,
-                     at.id, at.name, at.abbreviation, at.logo_url,
+                     ht.id, ht.name, ht.abbreviation, ht.logo_url, s.home_seed,
+                     at.id, at.name, at.abbreviation, at.logo_url, s.away_seed,
                      wt.name, wt.abbreviation,
                      COUNT(p.id),
                      COALESCE(s.manual_override, FALSE),
@@ -7458,7 +7458,8 @@ async def admin_get_series(season: str = "2026"):
                                 AND ns.round = 'NBA Finals')
                        ELSE FALSE
                      END,
-                     s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister
+                     s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister,
+                     s.bracket_group
                      FROM series s
                      JOIN teams ht ON s.home_team_id = ht.id
                      JOIN teams at ON s.away_team_id = at.id
@@ -7471,15 +7472,17 @@ async def admin_get_series(season: str = "2026"):
             result.append({
                 'id': row[0], 'round': row[1], 'conference': row[2],
                 'status': row[3], 'winner_team_id': row[4], 'actual_games': row[5],
-                'home_team': {'id': row[6], 'name': row[7], 'abbreviation': row[8], 'logo_url': row[9]},
-                'away_team': {'id': row[10], 'name': row[11], 'abbreviation': row[12], 'logo_url': row[13]},
-                'winner_name': row[14], 'winner_abbreviation': row[15],
-                'prediction_count': row[16],
-                'manual_override': row[17],
-                'is_advanced': row[18],
-                'leading_scorer':    row[19],
-                'leading_rebounder': row[20],
-                'leading_assister':  row[21],
+                'home_team': {'id': row[6], 'name': row[7], 'abbreviation': row[8], 'logo_url': row[9], 'seed': row[10]},
+                'away_team': {'id': row[11], 'name': row[12], 'abbreviation': row[13], 'logo_url': row[14], 'seed': row[15]},
+                'home_seed': row[10], 'away_seed': row[15],
+                'winner_name': row[16], 'winner_abbreviation': row[17],
+                'prediction_count': row[18],
+                'manual_override': row[19],
+                'is_advanced': row[20],
+                'leading_scorer':    row[21],
+                'leading_rebounder': row[22],
+                'leading_assister':  row[23],
+                'bracket_group': row[24],
             })
         return result
     except Exception as e:
@@ -7782,11 +7785,18 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
                      AND conference = %s AND bracket_group = %s''',
                   (season, next_round, conf, bracket_group))
         if not c.fetchone():
+            # Always put the lower (better) seed as home_team so seeds display correctly
+            if (winner_seed or 99) <= (partner_seed or 99):
+                new_home_id, new_home_seed = winner_team_id, winner_seed
+                new_away_id, new_away_seed = partner_winner_id, partner_seed
+            else:
+                new_home_id, new_home_seed = partner_winner_id, partner_seed
+                new_away_id, new_away_seed = winner_team_id, winner_seed
             c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
                          home_seed, away_seed, status, bracket_group)
                          VALUES (%s, %s, %s, %s, %s, %s, %s, 'active', %s)''',
-                      (season, next_round, conf, winner_team_id, partner_winner_id,
-                       winner_seed, partner_seed, bracket_group))
+                      (season, next_round, conf, new_home_id, new_away_id,
+                       new_home_seed, new_away_seed, bracket_group))
 
 
 @app.post("/api/admin/series/{series_id}/result")
@@ -7923,6 +7933,136 @@ async def reset_series_result(series_id: int):
             try: conn.rollback()
             except Exception: pass
         raise HTTPException(status_code=500, detail=f"Failed to reset series: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+@app.post("/api/admin/rescore-completed-series")
+async def rescore_completed_series(season: str = "2026"):
+    """Re-score ALL completed series predictions using the current scoring logic.
+
+    Use this whenever the scoring function changes (e.g. diacritic normalization
+    for player names like Jokić vs Jokic) to retroactively fix points.
+    """
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+
+        c.execute("""
+            SELECT s.id, s.round, s.conference,
+                   s.home_team_id, s.away_team_id,
+                   s.home_seed, s.away_seed,
+                   s.winner_team_id, s.actual_games,
+                   s.actual_leading_scorer,
+                   s.actual_leading_rebounder,
+                   s.actual_leading_assister
+            FROM series s
+            WHERE s.season = %s AND s.status = 'completed'
+            ORDER BY s.id
+        """, (season,))
+        completed = c.fetchall()
+
+        total_updated = 0
+        series_touched = 0
+
+        for (sid, round_name, conf,
+             home_team_id, away_team_id,
+             home_seed, away_seed,
+             winner_team_id, actual_games,
+             actual_scorer, actual_rebounder, actual_assister) in completed:
+
+            # Zero old scores for this series
+            c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (sid,))
+
+            # Fetch all predictions for this series
+            c.execute('''SELECT id, predicted_winner_id, predicted_games,
+                                leading_scorer, leading_rebounder, leading_assister
+                         FROM predictions WHERE series_id = %s''', (sid,))
+            preds = c.fetchall()
+
+            for pred_id, pred_winner_id, pred_games, pred_scorer, pred_rebounder, pred_assister in preds:
+                winner_correct = (pred_winner_id == winner_team_id)
+                games_correct  = (pred_games == actual_games)
+                games_diff     = abs(pred_games - actual_games) if pred_games is not None else None
+
+                pred_seed = home_seed if pred_winner_id == home_team_id else (away_seed if pred_winner_id == away_team_id else None)
+
+                pts = calculate_series_points(
+                    round_name, home_seed, away_seed, pred_seed,
+                    winner_correct=winner_correct, games_correct=games_correct,
+                    games_diff=games_diff,
+                )
+                pts += calculate_series_leader_points(
+                    {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
+                    {"scorer": actual_scorer, "rebounder": actual_rebounder, "assister": actual_assister},
+                )
+                is_correct = 1 if winner_correct else 0
+                c.execute('UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s',
+                          (is_correct, pts, pred_id))
+                total_updated += 1
+
+            series_touched += 1
+
+        _recalculate_all_points(c)
+        conn.commit()
+        return {
+            "ok": True,
+            "series_rescored": series_touched,
+            "predictions_updated": total_updated,
+            "message": f"Re-scored {series_touched} completed series ({total_updated} predictions). Diacritics and all scoring fixes applied.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        print(f"rescore_completed_series error: {e}")
+        raise HTTPException(status_code=500, detail=f"Rescore failed: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+@app.patch("/api/admin/series/{series_id}/seeds")
+async def patch_series_seeds(
+    series_id: int,
+    home_seed: Optional[int] = None,
+    away_seed: Optional[int] = None,
+):
+    """Patch home_seed and/or away_seed on any series.
+
+    Use this to correct wrong seeds that were auto-created (e.g. MIN showed
+    as the wrong seed after bracket advancement).
+    At least one of home_seed or away_seed must be provided.
+    """
+    if home_seed is None and away_seed is None:
+        raise HTTPException(status_code=400, detail="Provide at least one of home_seed or away_seed")
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT id, home_seed, away_seed FROM series WHERE id = %s", (series_id,))
+        row = c.fetchone()
+        if not row:
+            raise HTTPException(404, "Series not found")
+        new_home = home_seed if home_seed is not None else row[1]
+        new_away = away_seed if away_seed is not None else row[2]
+        c.execute("UPDATE series SET home_seed = %s, away_seed = %s WHERE id = %s",
+                  (new_home, new_away, series_id))
+        conn.commit()
+        return {"ok": True, "series_id": series_id, "home_seed": new_home, "away_seed": new_away}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        raise HTTPException(status_code=500, detail=f"Failed to patch seeds: {e}")
     finally:
         if conn:
             try: conn.close()

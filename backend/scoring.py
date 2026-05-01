@@ -94,6 +94,19 @@ SCORING RULES SUMMARY
 """
 
 from __future__ import annotations
+import unicodedata
+
+
+def _norm_name(s: str) -> str:
+    """Normalize a player name for fuzzy comparison.
+
+    Strips diacritical marks (é→e, ć→c, ö→o …), lowercases, and trims
+    whitespace so that 'Jokić' == 'Jokic', 'Dončić' == 'Doncic', etc.
+    """
+    nfkd = unicodedata.normalize('NFD', str(s))
+    ascii_bytes = nfkd.encode('ascii', 'ignore')
+    return ascii_bytes.decode('ascii').strip().lower()
+
 
 # -- Play-In --------------------------------------------------------------------
 PLAYIN_CORRECT_PTS: int    = 5
@@ -260,7 +273,7 @@ def calculate_series_leader_points(
         actual_val = actual.get(cat)
         if not actual_val or not pred_val:
             continue
-        if str(pred_val).strip().lower() == str(actual_val).strip().lower():
+        if _norm_name(pred_val) == _norm_name(actual_val):
             pts += SERIES_LEADER_BONUS
     return pts
 
@@ -295,7 +308,7 @@ def calculate_futures_points(
         if isinstance(actual, int):
             is_c = 1 if (pred is not None and int(pred) == actual) else 0
         else:
-            is_c = 1 if (pred and str(pred).strip().lower() == str(actual).strip().lower()) else 0
+            is_c = 1 if (pred and _norm_name(pred) == _norm_name(actual)) else 0
 
         correct[cat] = is_c
         if is_c:
