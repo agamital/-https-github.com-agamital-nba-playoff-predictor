@@ -4173,56 +4173,141 @@ async def startup():
         except Exception as e:
             print(f"[Startup] Seed backfill ERROR: {e}")
 
-        # Patch leader-bonus points that were missed due to diacritic mismatch
-        # (e.g. user bet "Jokić" but admin stored "Jokic" — _norm_name now matches them).
-        # SAFE: only adds missing bonus points; never subtracts or zeroes anything.
+        # IDEMPOTENT rescore of all completed series.
+        # Replaces the old additive patch (which was NOT idempotent and added extra pts
+        # every redeploy when predictions contained diacritics like Jokić vs Jokic).
+        # Also backfills null actual_leading_rebounder / actual_leading_assister from
+        # boxscore data so community-picks ✓/✗ display works for all three categories.
         try:
             conn_lb = get_db_conn()
             c_lb = conn_lb.cursor()
+
+            # ── Step 1: backfill null actual leaders from boxscore ──────────────
             c_lb.execute("""
-                SELECT s.id, s.actual_leading_scorer,
-                       s.actual_leading_rebounder, s.actual_leading_assister
+                SELECT s.id,
+                       ht.abbreviation AS home_abbr, at.abbreviation AS away_abbr,
+                       s.game1_start_time,
+                       s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister
+                FROM series s
+                JOIN teams ht ON s.home_team_id = ht.id
+                JOIN teams at ON s.away_team_id = at.id
+                WHERE s.season = '2026' AND s.status = 'completed'
+                  AND (s.actual_leading_rebounder IS NULL OR s.actual_leading_assister IS NULL)
+            """)
+            null_series = c_lb.fetchall()
+            for (sid, home_abbr, away_abbr, g1_start,
+                 cur_scorer, cur_rebounder, cur_assister) in null_series:
+                series_date = str(g1_start.date()) if g1_start and hasattr(g1_start, 'date') else '2026-04-18'
+                # Upper-bound: first game1_start of any later series that includes either team
+                c_lb.execute("""
+                    SELECT MIN(s2.game1_start_time)
+                    FROM series s2
+                    WHERE s2.season = '2026'
+                      AND s2.id != %s
+                      AND s2.game1_start_time > %s
+                      AND (s2.home_team_id IN
+                               (SELECT home_team_id FROM series WHERE id = %s)
+                           OR s2.away_team_id IN
+                               (SELECT home_team_id FROM series WHERE id = %s)
+                           OR s2.home_team_id IN
+                               (SELECT away_team_id FROM series WHERE id = %s)
+                           OR s2.away_team_id IN
+                               (SELECT away_team_id FROM series WHERE id = %s))
+                """, (sid, series_date, sid, sid, sid, sid))
+                next_row = c_lb.fetchone()
+                cutoff = str(next_row[0].date()) if next_row and next_row[0] else None
+
+                if cutoff:
+                    c_lb.execute("""
+                        SELECT player_name,
+                               SUM(points) AS pts, SUM(rebounds) AS reb, SUM(assists) AS ast
+                        FROM player_game_stats
+                        WHERE season='2026' AND game_date >= %s AND game_date < %s
+                          AND team_abbr IN (%s, %s)
+                        GROUP BY player_name ORDER BY pts DESC
+                    """, (series_date, cutoff, home_abbr, away_abbr))
+                else:
+                    c_lb.execute("""
+                        SELECT player_name,
+                               SUM(points) AS pts, SUM(rebounds) AS reb, SUM(assists) AS ast
+                        FROM player_game_stats
+                        WHERE season='2026' AND game_date >= %s
+                          AND team_abbr IN (%s, %s)
+                        GROUP BY player_name ORDER BY pts DESC
+                    """, (series_date, home_abbr, away_abbr))
+
+                bs_rows = c_lb.fetchall()
+                if bs_rows:
+                    new_scorer    = cur_scorer    or max(bs_rows, key=lambda r: r[1] or 0)[0]
+                    new_rebounder = cur_rebounder or max(bs_rows, key=lambda r: r[2] or 0)[0]
+                    new_assister  = cur_assister  or max(bs_rows, key=lambda r: r[3] or 0)[0]
+                    c_lb.execute("""
+                        UPDATE series SET
+                            actual_leading_scorer    = %s,
+                            actual_leading_rebounder = %s,
+                            actual_leading_assister  = %s
+                        WHERE id = %s
+                    """, (new_scorer, new_rebounder, new_assister, sid))
+                    print(f"[Startup] Backfilled leaders for series {sid}: "
+                          f"PTS={new_scorer}, REB={new_rebounder}, AST={new_assister}")
+
+            # ── Step 2: full idempotent rescore of all completed series ─────────
+            c_lb.execute("""
+                SELECT s.id, s.round, s.home_team_id, s.away_team_id,
+                       s.home_seed, s.away_seed, s.winner_team_id, s.actual_games,
+                       s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister
                 FROM series s
                 WHERE s.season = '2026' AND s.status = 'completed'
-                  AND (s.actual_leading_scorer IS NOT NULL
-                    OR s.actual_leading_rebounder IS NOT NULL
-                    OR s.actual_leading_assister IS NOT NULL)
+                  AND s.winner_team_id IS NOT NULL AND s.actual_games IS NOT NULL
             """)
-            patched_preds = 0
-            for sid, actual_scorer, actual_rebounder, actual_assister in c_lb.fetchall():
-                c_lb.execute('''SELECT id, leading_scorer, leading_rebounder, leading_assister,
-                                       points_earned
-                                FROM predictions WHERE series_id = %s''', (sid,))
-                for pred_id, pred_scorer, pred_rebounder, pred_assister, pts_earned in c_lb.fetchall():
-                    # Calculate what the leader bonus should be with diacritic-safe comparison
-                    bonus = calculate_series_leader_points(
+            rescored_series = 0
+            for (sid, round_name, home_id, away_id, home_seed, away_seed,
+                 winner_id, actual_games, actual_scorer, actual_rebounder, actual_assister) in c_lb.fetchall():
+
+                c_lb.execute("""
+                    SELECT id, predicted_winner_id, predicted_games,
+                           leading_scorer, leading_rebounder, leading_assister
+                    FROM predictions WHERE series_id = %s
+                """, (sid,))
+                preds = c_lb.fetchall()
+                if not preds:
+                    continue
+
+                for (pred_id, pred_winner_id, pred_games,
+                     pred_scorer, pred_rebounder, pred_assister) in preds:
+                    winner_correct = (pred_winner_id == winner_id)
+                    games_correct  = (pred_games == actual_games)
+                    games_diff     = abs(pred_games - actual_games) if pred_games is not None else None
+                    pred_seed = (home_seed if pred_winner_id == home_id
+                                 else away_seed if pred_winner_id == away_id
+                                 else None)
+
+                    pts = calculate_series_points(
+                        round_name, home_seed, away_seed, pred_seed,
+                        winner_correct=winner_correct,
+                        games_correct=games_correct,
+                        games_diff=games_diff,
+                    )
+                    pts += calculate_series_leader_points(
                         {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
                         {"scorer": actual_scorer, "rebounder": actual_rebounder, "assister": actual_assister},
                     )
-                    # Also calculate what the old (broken) comparison would have given
-                    old_bonus = 0
-                    for cat, pred_val, actual_val in [
-                        ("scorer",    pred_scorer,    actual_scorer),
-                        ("rebounder", pred_rebounder, actual_rebounder),
-                        ("assister",  pred_assister,  actual_assister),
-                    ]:
-                        if pred_val and actual_val:
-                            if str(pred_val).strip().lower() == str(actual_val).strip().lower():
-                                old_bonus += 10  # was already counted correctly
-                    # Add the difference (newly matched names due to diacritic fix)
-                    extra = bonus - old_bonus
-                    if extra > 0:
-                        c_lb.execute('UPDATE predictions SET points_earned = points_earned + %s WHERE id = %s',
-                                     (extra, pred_id))
-                        patched_preds += 1
-            if patched_preds > 0:
+                    is_correct = 1 if winner_correct else 0
+                    c_lb.execute(
+                        'UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s',
+                        (is_correct, pts, pred_id),
+                    )
+                rescored_series += 1
+
+            if rescored_series > 0:
                 _recalculate_all_points(c_lb)
             conn_lb.commit()
             conn_lb.close()
-            if patched_preds > 0:
-                print(f"[Startup] Diacritic leader-bonus patch: added missing pts to {patched_preds} predictions")
+            print(f"[Startup] Idempotent rescore complete — "
+                  f"backfilled leaders for {len(null_series)} series, "
+                  f"rescored {rescored_series} completed series")
         except Exception as e:
-            print(f"[Startup] Diacritic leader-bonus patch ERROR: {e}")
+            print(f"[Startup] Rescore ERROR: {type(e).__name__}: {e}")
 
     threading.Thread(target=_background_init, daemon=True).start()
 

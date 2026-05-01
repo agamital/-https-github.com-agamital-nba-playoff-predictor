@@ -31,7 +31,7 @@ const lastName = (name) => {
  *  Ensures Jokić == Jokic, Dončić == Doncic, etc. */
 const normName = (s) => {
   if (!s) return '';
-  // NFD splits base char + diacritic codepoints; ASCII-encode drops the diacritics
+  // NFD splits base char + diacritic codepoints; regex strips U+0300–U+036F range.
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 };
 

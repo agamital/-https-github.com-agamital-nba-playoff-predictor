@@ -9,6 +9,17 @@ const Card = ({ children, className }) => (
   </div>
 );
 
+// Strip diacritics for leader name comparison (Jokić == Jokic, etc.)
+const normName = (s) => {
+  if (!s) return '';
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+};
+const lastName = (name) => {
+  if (!name) return '';
+  const parts = name.trim().split(' ');
+  return parts[parts.length - 1];
+};
+
 // ── Futures section ────────────────────────────────────────────────────────────
 
 const FuturesPick = ({ label, color, team, mvp, isCorrect }) => {
@@ -431,6 +442,30 @@ const MyPredictionsPage = ({ currentUser }) => {
                         </div>
                       )}
                     </div>
+                    {/* Leader picks breakdown — only shown for completed series */}
+                    {pred.series_finished && (pred.leading_scorer || pred.leading_rebounder || pred.leading_assister) && (
+                      <div className="mt-2 pt-2 border-t border-slate-800/60 flex flex-wrap gap-1.5">
+                        {[
+                          ['🏀', pred.leading_scorer,    pred.actual_leading_scorer,    'PTS'],
+                          ['💪', pred.leading_rebounder, pred.actual_leading_rebounder, 'REB'],
+                          ['🎯', pred.leading_assister,  pred.actual_leading_assister,  'AST'],
+                        ].map(([icon, picked, actual, cat]) => {
+                          if (!picked) return null;
+                          const ok = actual != null ? normName(picked) === normName(actual) : null;
+                          return (
+                            <span key={cat} className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded ${
+                              ok === true  ? 'text-green-400 bg-green-500/10 border border-green-500/20' :
+                              ok === false ? 'text-red-400 bg-red-500/10 border border-red-500/20' :
+                              'text-slate-500 bg-slate-800/50 border border-slate-700/30'
+                            }`}>
+                              {icon} {lastName(picked)}
+                              {ok === true  && ' ✓'}
+                              {ok === false && ' ✗'}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                     <p className="text-xs text-slate-500 mt-2">
                       {new Date(pred.predicted_at).toLocaleDateString()}
                     </p>
