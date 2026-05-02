@@ -24,6 +24,11 @@ from scoring import (
     LEADERS_POINTS,
     LEADERS_TIERS,
     SERIES_LEADER_BONUS,
+    ROUND_MULTIPLIERS,
+    R1_UNDERDOG_MULTIPLIERS,
+    LATE_ROUND_UNDERDOG_MULT,
+    BASE_WINNER_PTS,
+    BASE_GAMES_PTS,
 )
 
 # ── Anthropic SDK (optional — chatbot feature) ────────────────────────────────
@@ -5275,6 +5280,35 @@ PLAYOFF LEADERS BETS (single-game max predictions):
 == HOW TO READ THE LIVE CONTEXT JSON ==
 The context contains several sections — here is what each key means:
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LEADERBOARD — THREE COLUMNS (very important to understand)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The leaderboard page shows THREE columns of points for each user:
+
+① REAL (confirmed) pts — orange column labeled "Real"
+  • user_points / leaderboard[].confirmed_pts
+  • Points already LOCKED IN from completed series, play-in games, futures, leader bets.
+  • Never taken back — these are permanent.
+  • Hebrew: נקודות מאושרות / נקודות אמיתיות / נקודות סגורות
+
+② ⚡ PROVISIONAL (temporary) pts — amber/yellow flashing column labeled "⚡"
+  • user_provisional_series_pts / leaderboard[].provisional_pts
+  • TEMPORARY points from active, ongoing series where this user's pick is currently WINNING.
+  • Example: User picked OKC to win. OKC is leading 2-1 in an active series → they get provisional winner pts right now.
+  • These are NOT locked in. If OKC loses the series, these pts disappear entirely.
+  • They lock in permanently (move to Real column) ONLY when the series finishes.
+  • Hebrew: נקודות זמניות / נקודות ביניים / נקודות לא סגורות / נקודות שעדיין לא בטוחות
+
+③ TOTAL pts — larger orange column labeled "Total"
+  • user_total_pts / leaderboard[].total_pts = confirmed_pts + provisional_pts
+  • This is what the app uses for ranking. The sort order is by Total.
+  • Hebrew: סה"כ נקודות / סך הכל / סה"כ
+
+IMPORTANT RULE: When a user asks "כמה נקודות יש לי" or "what's my score" — they almost always mean total_pts (confirmed + provisional), because that's what the leaderboard shows as the big number. Always mention both: "X נקודות מאושרות + Y זמניות = Z סה"כ".
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 user_series_picks → the user's picks for each playoff series (who they picked to win, in how many games, whether correct, points earned)
 user_futures_picks → season-long futures bets:
   • champion = team picked to win the NBA title
@@ -5404,6 +5438,40 @@ east_finals_mvp:
   הליגה | טבלת ניקוד | דירוג | מי מוביל | מי בראש | הטבלה
   מי מנצח | מי ראשון | הכי הרבה נקודות בין המשתתפים | כמה נקודות צברתי
 
+  → When answering about a user's score, ALWAYS show: confirmed + provisional = total
+  → "יש לי X נקודות מאושרות + Y זמניות = Z סה"כ"
+
+── PROVISIONAL / TEMPORARY POINTS (נקודות זמניות) ────────────────────────────
+  These are the ⚡ amber/yellow flashing numbers in the leaderboard.
+  A user earns provisional pts when their series pick is currently winning (series still active).
+  They DISAPPEAR if their picked team loses. They LOCK IN when the series ends.
+
+  Hebrew phrases that map to provisional_pts / user_provisional_series_pts:
+  נקודות זמניות | נקודות ביניים | נקודות שעדיין לא בטוחות | נקודות לא סגורות
+  נקודות ברגע זה | נקודות עכשוויות | נקודות שעוד לא נסגרו | נקודות פרוביז'נל
+  הנקודות הצהובות | הנקודות המהבהבות | הנקודות עם הברק | ⚡ נקודות
+  כמה זמניות יש לי | כמה נקודות אני עומד לקבל | נקודות בדרך
+  כמה נקודות יש לי כרגע | הניקוד הכולל שלי | כמה אני צובר עכשיו
+  כמה נקודות אני מחכה להן | נקודות שתלויות | נקודות ממתינות
+  נקודות שמחכות לאישור | נקודות תלויות בסדרה | נקודות מהסדרות הפעילות
+
+  Hebrew phrases that map to confirmed/real pts (user_points / confirmed_pts):
+  נקודות מאושרות | נקודות אמיתיות | נקודות סגורות | נקודות קבועות
+  הנקודות האמיתיות שלי | הנקודות שכבר יש לי | נקודות שנסגרו
+  נקודות מוחלטות | נקודות שכבר נרשמו | כמה צברתי בסגור
+
+  Hebrew phrases that map to total_pts (confirmed + provisional):
+  סה"כ נקודות | סך הכל | סה"כ | הכולל | הניקוד הכולל שלי
+  כמה נקודות יש לי בסה"כ | כמה נקודות יש לי סה"כ | כמה אני בסה"כ
+  כמה יש לי עכשיו בסה"כ | מה הסך הכולל שלי
+
+  Example answers in Hebrew:
+  Q: "כמה נקודות יש לי?"
+  A: "יש לך 240 נקודות מאושרות + 75 זמניות = 315 סה"כ. הנקודות הזמניות מגיעות מהסדרות שהבחירות שלך מובילות כרגע — הן ייסגרו כשהסדרות יסתיימו."
+
+  Q: "מה הנקודות הזמניות?"
+  A: "נקודות זמניות (⚡) הן נקודות שמגיעות מסדרות שעדיין לא נגמרו — הקבוצה שבחרת מובילה כרגע, אז אתה מקבל את נקודות הניצחון באופן זמני. אם הסדרה תתהפך, הנקודות האלה ייעלמו. הן ייסגרו וייכנסו לעמודת 'Real' רק כשהסדרה תסתיים."
+
 ── SINGLE-GAME RECORDS ────────────────────────────────────────────────────────
   מקסימום בלוקים במשחק אחד → record_most_blocks_one_game
   הכי הרבה בלוקים במשחק | בלוק שיא | שיא בלוקים → record_most_blocks_one_game
@@ -5455,6 +5523,9 @@ east_finals_mvp:
   כמה יש ל | מה ההפרש בינינו | האם אני קרוב | עד כמה אני מאחור
   מי עוד בחר ב | כמה בחרו ב | הכי פופולרי | פחות פופולרי
 
+  → When comparing scores, use total_pts (confirmed + provisional) from leaderboard_top20
+  → Example: "כמה נקודות יש ל[שם]?" → check leaderboard_top20 for that username, show total_pts
+
 ── SPECIFIC TEAM QUESTIONS ────────────────────────────────────────────────────
   מה הסיכוי של | כמה אחוז בחרו ב | מה עם | מה הצ'אנס של | האם [קבוצה] תנצח
   מה חושבים על | מה הקהילה חשבה על | כמה בחרו ב | האם כדאי לבחור ב
@@ -5489,13 +5560,16 @@ FULL EXAMPLE MAPPINGS:
   "מי ה-MVP שלי לגמר" → user_futures_picks.finals_mvp
   "מה האלוף שלי" → user_futures_picks.champion
   "מי בחרתי מהמערב" → user_futures_picks.west_champ
-  "כמה נקודות יש לי" → user_points + user_rank
+  "כמה נקודות יש לי" → user_total_pts (= user_points + user_provisional_series_pts). Always show breakdown.
+  "כמה נקודות מאושרות יש לי" → user_points (confirmed only)
+  "כמה נקודות זמניות יש לי" → user_provisional_series_pts
+  "מה הדירוג שלי" → user_rank + user_total_pts
   "מה הקהילה חושבת על OKC" → community_series_picks for OKC matchup
   "מי מוביל בבלוקים עכשיו" → stat_leaders_blocks
   "מי עשה הכי הרבה בלוקים במשחק אחד" → record_most_blocks_one_game
   "כמה אחוז בחרו ב-Boston" → community_series_picks or community_champion_picks
   "כמה ניחושים שלי נכונים" → count entries in user_series_picks where correct=1
-  "איפה אני בטבלה" → user_rank + user_points
+  "איפה אני בטבלה" → user_rank + user_total_pts (confirmed + provisional)
   "כמה נקודות אני יכול עוד לקבל" → sum unresolved picks × their potential points
   "מה עם ה-BOS לעומת ה-NYK" → community_series_picks for that matchup + series status
   "האם כדאי לבחור ב-OKC" → community % + seed + series status + strategy tips
@@ -5503,14 +5577,21 @@ FULL EXAMPLE MAPPINGS:
   "כמה ניחשתי נכון בפלי אין" → user_playin_picks where correct=1
   "מה ניחשתי על הגמר" → user_series_picks where round=4
   "כמה בלוקים עשה [שחקן] מקסימום" → record_most_blocks_one_game
+  "מה ההפרש ביני לבין [שם]" → compare user_total_pts vs their leaderboard[].total_pts
+  "כמה נקודות יש ל[שם]" → leaderboard[].total_pts for that user (confirmed + provisional)
+  "מי ראשון בטבלה" → leaderboard_top20[0] by total_pts
+  "מה ההבדל בין נקודות אמיתיות לזמניות" → explain the 3 columns (Real / ⚡ / Total)
 
 == STRATEGY TIPS (share proactively when relevant) ==
 - Picking an 8-seed upset over a 1-seed = up to 160pts vs 80pts — huge upside
-- Later rounds multiply everything: Conf Finals x2.0, NBA Finals x2.5 — pick carefully
-- Exact game count prediction doubles your series payout — use it when you're confident
+- Later rounds multiply everything: Conf Semis x1.5, Conf Finals x2.0, NBA Finals x2.5 — pick carefully
+- Underdog picks in Conf Semis+: 1.5× bonus on top of the round multiplier (e.g. 75+45=120 for fav, 112+68=180 for underdog)
+- Exact game count prediction adds +games pts — use it when you're confident of a sweep or 7-gamer
 - Community % shows consensus; fading it on upsets = big points when you're right
-- Stat leader bets (blocks/threes/scoring etc.) are pure bonus — 30-50pts if correct
+- Stat leader bets (blocks/threes/scoring etc.) are pure bonus — 10-25pts per category per round
+- Series leader picks (scorer/rebounder/assister) also scale by round: R1=10 each, Semis=15, CF=20, Finals=25
 - If a user's futures pick is still pending, calculate how many points they could still win
+- Provisional pts (⚡) show who is "winning right now" even before series end — useful for predicting rank changes
 
 == TONE & PERSONALITY ==
 - Sound like a passionate NBA fan who also happens to know the data cold
@@ -5659,13 +5740,87 @@ def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
 
     # ── 5. Leaderboard top 20 ─────────────────────────────────────────────────
     def _sec_leaderboard():
+        # Real points: sum from all prediction tables (more accurate than cached users.points).
+        # provisional_pts: winner pts from active series where the user's pick is currently leading.
+        # total_pts: confirmed + provisional — this is what the app displays as the primary score.
         c.execute("""
-            SELECT username, points, RANK() OVER (ORDER BY points DESC)
-            FROM users ORDER BY points DESC LIMIT 20
-        """)
-        ctx["leaderboard_top20"] = [
-            {"rank": int(r[2]), "username": r[0], "points": r[1] or 0}
-            for r in c.fetchall()]
+            SELECT u.id, u.username,
+                   COALESCE((SELECT SUM(p.points_earned)  FROM predictions p  WHERE p.user_id = u.id), 0) +
+                   COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions pp WHERE pp.user_id = u.id), 0) +
+                   COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u.id AND fp.season = %s), 0) +
+                   COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u.id AND lp.season = %s), 0)
+                   AS real_pts
+            FROM users u
+            ORDER BY real_pts DESC
+            LIMIT 20
+        """, (season, season))
+        lb_rows = c.fetchall()
+        user_ids_lb = [r[0] for r in lb_rows]
+
+        # Fetch active series and compute which team is leading
+        c.execute("""
+            SELECT s.id, s.round, s.home_team_id, s.away_team_id,
+                   s.home_wins, s.away_wins, s.home_seed, s.away_seed
+            FROM series s WHERE s.season = %s AND s.status = 'active'
+        """, (season,))
+        active_lb = {}
+        for row in c.fetchall():
+            sid, rnd, hid, aid, hw, aw, hs, as_ = row
+            if (hw or 0) > (aw or 0): leading = hid
+            elif (aw or 0) > (hw or 0): leading = aid
+            else: leading = None
+            active_lb[sid] = {'round': rnd, 'leading': leading,
+                               'home_id': hid, 'away_id': aid,
+                               'home_seed': hs or 0, 'away_seed': as_ or 0}
+
+        # Fetch predictions for active series for top-20 users
+        prov_by_user = {}
+        if active_lb and user_ids_lb:
+            c.execute("""
+                SELECT p.user_id, p.series_id, p.predicted_winner_id
+                FROM predictions p
+                WHERE p.series_id = ANY(%s) AND p.user_id = ANY(%s)
+            """, (list(active_lb.keys()), user_ids_lb))
+            for uid, sid, pred_winner in c.fetchall():
+                si = active_lb.get(sid)
+                if not si or not si['leading'] or pred_winner != si['leading']:
+                    continue
+                rnd = si['round']
+                round_mult = ROUND_MULTIPLIERS.get(rnd, 1.0)
+                underdog_mult = 1.0
+                hs, as_ = si['home_seed'], si['away_seed']
+                if rnd == 'First Round' and hs and as_:
+                    sp = frozenset({hs, as_})
+                    base_m = R1_UNDERDOG_MULTIPLIERS.get(sp, 1.0)
+                    picked_home = (pred_winner == si['home_id'])
+                    if (picked_home and hs > as_) or (not picked_home and as_ > hs):
+                        underdog_mult = base_m
+                elif rnd in ('Conference Semifinals', 'Conference Finals', 'NBA Finals') and hs and as_:
+                    picked_home = (pred_winner == si['home_id'])
+                    if (picked_home and hs > as_) or (not picked_home and as_ > hs):
+                        underdog_mult = LATE_ROUND_UNDERDOG_MULT
+                prov_by_user[uid] = prov_by_user.get(uid, 0) + round(BASE_WINNER_PTS * round_mult * underdog_mult)
+
+        lb = []
+        for rank, (uid, username, real_pts) in enumerate(lb_rows, 1):
+            real_pts = int(real_pts or 0)
+            prov_pts = prov_by_user.get(uid, 0)
+            lb.append({
+                "rank": rank, "username": username,
+                "confirmed_pts": real_pts,
+                "provisional_pts": prov_pts,
+                "total_pts": real_pts + prov_pts,
+            })
+        ctx["leaderboard_top20"] = lb
+        ctx["leaderboard_columns_note"] = (
+            "confirmed_pts = permanently scored points from all completed series, play-in, futures, "
+            "and leader bets. This is the 'Real' column in the app. "
+            "provisional_pts = TEMPORARY points from active ongoing series where this user's pick is "
+            "currently winning — NOT locked in yet; resets to 0 if the leading team loses. "
+            "total_pts = confirmed_pts + provisional_pts — this is the 'Total' column the app shows "
+            "and how leaderboard rank is determined. "
+            "Hebrew: confirmed=נקודות מאושרות/אמיתיות, provisional=נקודות זמניות/ביניים, total=סה\"כ"
+        )
     _run("leaderboard", _sec_leaderboard)
 
     # ── 6. Playoff stat leaders ───────────────────────────────────────────────
@@ -5730,16 +5885,81 @@ def _build_chat_context(conn, user_id: Optional[int], season: str) -> str:
     # ── 8. User-specific data ─────────────────────────────────────────────────
     if user_id:
         def _sec_user_info():
+            # Real points from prediction tables (more accurate than cached users.points)
             c.execute("""
-                SELECT username, points,
-                       (SELECT COUNT(*)+1 FROM users u2 WHERE u2.points > u.points)
-                FROM users u WHERE id = %s
-            """, (user_id,))
+                SELECT u.username,
+                       COALESCE((SELECT SUM(p.points_earned)  FROM predictions p  WHERE p.user_id = u.id), 0) +
+                       COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions pp WHERE pp.user_id = u.id), 0) +
+                       COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u.id AND fp.season = %s), 0) +
+                       COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u.id AND lp.season = %s), 0)
+                       AS real_pts
+                FROM users u WHERE u.id = %s
+            """, (season, season, user_id))
             urow = c.fetchone()
             if urow:
+                real_pts = int(urow[1] or 0)
                 ctx["user_username"] = urow[0]
-                ctx["user_points"] = urow[1] or 0
-                ctx["user_rank"] = int(urow[2])
+                ctx["user_points"] = real_pts  # confirmed/real pts (leaderboard 'Real' column)
+
+                # Rank by total (confirmed + provisional) — mirrors app sorting
+                c.execute("""
+                    SELECT COUNT(*)+1 FROM users u2
+                    WHERE (
+                        COALESCE((SELECT SUM(p.points_earned) FROM predictions p WHERE p.user_id = u2.id), 0) +
+                        COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions pp WHERE pp.user_id = u2.id), 0) +
+                        COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id = u2.id AND fp.season = %s), 0) +
+                        COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id = u2.id AND lp.season = %s), 0)
+                    ) > %s
+                """, (season, season, real_pts))
+                rank_row = c.fetchone()
+                ctx["user_rank"] = int(rank_row[0]) if rank_row else 1
+
+                # Provisional series pts (active series where their pick is leading)
+                c.execute("""
+                    SELECT s.id, s.round, s.home_team_id, s.away_team_id,
+                           s.home_wins, s.away_wins, s.home_seed, s.away_seed,
+                           p.predicted_winner_id
+                    FROM series s
+                    JOIN predictions p ON p.series_id = s.id AND p.user_id = %s
+                    WHERE s.season = %s AND s.status = 'active'
+                """, (user_id, season))
+                prov_series_pts = 0
+                prov_series_detail = []
+                for row in c.fetchall():
+                    sid, rnd, hid, aid, hw, aw, hs, as_, pred_winner = row
+                    hw, aw = hw or 0, aw or 0
+                    leading = hid if hw > aw else (aid if aw > hw else None)
+                    if not leading or pred_winner != leading:
+                        continue
+                    round_mult = ROUND_MULTIPLIERS.get(rnd, 1.0)
+                    underdog_mult = 1.0
+                    hs, as_ = hs or 0, as_ or 0
+                    if rnd == 'First Round' and hs and as_:
+                        sp = frozenset({hs, as_})
+                        base_m = R1_UNDERDOG_MULTIPLIERS.get(sp, 1.0)
+                        picked_home = (pred_winner == hid)
+                        if (picked_home and hs > as_) or (not picked_home and as_ > hs):
+                            underdog_mult = base_m
+                    elif rnd in ('Conference Semifinals', 'Conference Finals', 'NBA Finals') and hs and as_:
+                        picked_home = (pred_winner == hid)
+                        if (picked_home and hs > as_) or (not picked_home and as_ > hs):
+                            underdog_mult = LATE_ROUND_UNDERDOG_MULT
+                    pts = round(BASE_WINNER_PTS * round_mult * underdog_mult)
+                    prov_series_pts += pts
+                    score = f"{hw}-{aw}" if leading == hid else f"{aw}-{hw}"
+                    prov_series_detail.append({"round": rnd, "pts": pts, "score": score})
+
+                ctx["user_provisional_series_pts"] = prov_series_pts
+                ctx["user_provisional_series_detail"] = prov_series_detail
+                ctx["user_total_pts"] = real_pts + prov_series_pts  # includes provisional
+                ctx["user_points_note"] = (
+                    "user_points = confirmed/real pts (orange 'Real' column in app). "
+                    "user_provisional_series_pts = temporary winner pts from active series "
+                    "where this user's pick is currently leading (yellow ⚡ column). "
+                    "user_total_pts = real + provisional (the big 'Total' column). "
+                    "Rank is by total. Provisional pts are NOT locked in — they vanish if the "
+                    "leading team loses. They lock in permanently when the series ends."
+                )
         _run("user_info", _sec_user_info)
 
         def _sec_user_series():
