@@ -6599,8 +6599,14 @@ async def api_series(response: Response, season: str = "2026", background_tasks:
             bracket_group = row[24] if len(row) > 24 else 'A'
             # A series is picks_locked when game1_start_time has passed OR status != active
             if g1_start:
-                g1_dt = datetime.fromisoformat(g1_start.replace('Z', '+00:00'))
-                picks_locked = _now_utc >= g1_dt or row[11] != 'active'
+                try:
+                    # Normalise: strip Z/timezone, parse as naive, then attach UTC.
+                    # Handles both '2026-05-04 23:30:00' (space) and ISO '...T...Z' formats.
+                    _g1_clean = g1_start.strip().rstrip('Z').replace('T', ' ').split('+')[0]
+                    g1_dt = datetime.strptime(_g1_clean, "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz.utc)
+                    picks_locked = _now_utc >= g1_dt or row[11] != 'active'
+                except Exception:
+                    picks_locked = row[11] != 'active'
             else:
                 picks_locked = row[11] != 'active'
             series.append({

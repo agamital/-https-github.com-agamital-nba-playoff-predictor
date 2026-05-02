@@ -79,7 +79,12 @@ const _FR_SCHEDULE_DATA = [
 _FR_SCHEDULE_DATA.forEach(([k, v]) => { _FR_SCHEDULE[k] = v; });
 
 function getSeriesGame1Z(series) {
-  if (series.game1_start_time) return series.game1_start_time;
+  if (series.game1_start_time) {
+    // Normalise to ISO 8601 UTC: 'YYYY-MM-DD HH:MM:SS' → 'YYYY-MM-DDTHH:MM:SSZ'
+    // Required for Safari which rejects space-separated datetime strings.
+    const t = series.game1_start_time.trim().replace(' ', 'T');
+    return t.endsWith('Z') ? t : t + 'Z';
+  }
   if (series.round !== 'First Round') return null;
   // Try every combination of conf+seeds — backend may COALESCE NULL seeds to 0
   const conf = series.conference; // 'Eastern' | 'Western'
@@ -111,12 +116,11 @@ function DesktopSeriesTimer({ game1StartZ, picksLocked }) {
   }, [game1StartZ]);
 
   if (!game1StartZ) return null;
-  const d = new Date(game1StartZ);
-  const idt = new Date(d.getTime() + 3 * 60 * 60 * 1000);
-  const hh = String(idt.getUTCHours()).padStart(2, '0');
-  const mm = String(idt.getUTCMinutes()).padStart(2, '0');
-  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const tipLabel = `${days[idt.getUTCDay()]} ${hh}:${mm}`;
+  // Use Intl for correct Asia/Jerusalem time (handles IDT/IST DST automatically)
+  const tipLabel = new Date(game1StartZ).toLocaleString('en-IL', {
+    timeZone: 'Asia/Jerusalem', weekday: 'short',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
 
   if (secs === null || secs <= 0 || picksLocked) {
     return (
@@ -158,14 +162,11 @@ function SeriesGame1Countdown({ game1StartZ, picksLocked }) {
   const secs = useSeriesCountdown(game1StartZ);
   if (!game1StartZ) return null;
 
-  // Format tip-off time in Jerusalem (IDT = UTC+3)
-  const d = new Date(game1StartZ);
-  const idt = new Date(d.getTime() + 3 * 60 * 60 * 1000);
-  const days   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const hh = String(idt.getUTCHours()).padStart(2, '0');
-  const mm = String(idt.getUTCMinutes()).padStart(2, '0');
-  const tipLabel = `${days[idt.getUTCDay()]} ${months[idt.getUTCMonth()]} ${idt.getUTCDate()} · ${hh}:${mm} IDT`;
+  // Format tip-off in Asia/Jerusalem — correct for IDT (UTC+3) and IST (UTC+2) DST
+  const tipLabel = new Date(game1StartZ).toLocaleString('en-IL', {
+    timeZone: 'Asia/Jerusalem', weekday: 'short', month: 'short',
+    day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  }) + ' IL';
 
   if (secs === null || secs <= 0 || picksLocked) {
     return (
