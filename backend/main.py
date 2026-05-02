@@ -1975,6 +1975,149 @@ def _send_series_bet_reminder(conference: str, home_seed: int, away_seed: int, h
             except Exception: pass
 
 
+def _send_series_reminder_by_id(series_id: int, hours_before: int) -> None:
+    """
+    Fire a targeted push + email before any playoff series Game 1 (any round).
+    Works identically to _send_series_bet_reminder but looks up by series_id
+    instead of conference/seed/round — so it works for R2, CF, Finals too.
+    Targets users who have NOT placed a prediction for this series.
+    """
+    label_map = {12: "12 hours", 6: "6 hours", 2: "2 hours", 3: "3 hours", 1: "1 hour"}
+    time_label = label_map.get(hours_before, f"{hours_before} hours")
+
+    conn = None
+    try:
+        conn = get_db_conn()
+        c    = conn.cursor()
+
+        c.execute("""
+            SELECT s.id, s.round, s.conference,
+                   t1.abbreviation, t2.abbreviation,
+                   s.home_seed, s.away_seed
+            FROM series s
+            LEFT JOIN teams t1 ON t1.id = s.home_team_id
+            LEFT JOIN teams t2 ON t2.id = s.away_team_id
+            WHERE s.id = %s
+        """, (series_id,))
+        row = c.fetchone()
+
+        if not row:
+            print(f"[SeriesReminder {hours_before}h] series_id={series_id} — not found, skip")
+            conn.close(); return
+
+        sid, round_name, conference, home_abbr, away_abbr, home_seed, away_seed = row
+        seed_label = f"#{home_seed or '?'} vs #{away_seed or '?'}"
+        matchup = (f"{home_abbr or seed_label.split(' vs ')[0]} "
+                   f"vs {away_abbr or seed_label.split(' vs ')[1]}")
+
+        # Users who haven't bet on this series (with valid email)
+        c.execute("""
+            SELECT DISTINCT u.id::text, u.email
+            FROM users u
+            WHERE NOT EXISTS (
+                SELECT 1 FROM predictions p
+                WHERE p.user_id = u.id AND p.series_id = %s
+            )
+        """, (sid,))
+        rows = c.fetchall()
+        conn.close(); conn = None
+
+        user_ids = [r[0] for r in rows]
+        if not user_ids:
+            print(f"[SeriesReminder {hours_before}h] {matchup} ({round_name}) — all users have bet, skip")
+            return
+
+        push_title = f"⏰ {matchup} bets close in {time_label}!"
+        push_body  = (f"{conference} {round_name} — {matchup} Game 1 tips off in {time_label}. "
+                      "Lock in your series prediction before bets close!")
+
+        # ── Push ──────────────────────────────────────────────────────────────
+        if _ONESIGNAL_API_KEY:
+            import urllib.request, json as _json
+            def _os_post(bd):
+                payload = _json.dumps(bd).encode("utf-8")
+                req = urllib.request.Request(
+                    "https://onesignal.com/api/v1/notifications", data=payload,
+                    headers={"Content-Type": "application/json; charset=utf-8",
+                             "Authorization": f"Key {_ONESIGNAL_API_KEY}"}, method="POST")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    return _json.loads(resp.read())
+            try:
+                res = _os_post({"app_id": _ONESIGNAL_APP_ID,
+                    "include_aliases": {"external_id": user_ids}, "target_channel": "push",
+                    "headings": {"en": push_title}, "contents": {"en": push_body},
+                    "url": "https://nba-playoffs-2026.vercel.app"})
+                print(f"[SeriesReminder {hours_before}h] {matchup} push targeted — {res.get('recipients','?')}")
+            except Exception as e:
+                print(f"[SeriesReminder {hours_before}h] Push targeted error: {e}")
+            try:
+                res2 = _os_post({"app_id": _ONESIGNAL_APP_ID, "included_segments": ["All"],
+                    "headings": {"en": push_title}, "contents": {"en": push_body},
+                    "url": "https://nba-playoffs-2026.vercel.app"})
+                print(f"[SeriesReminder {hours_before}h] {matchup} push broadcast — {res2.get('recipients','?')}")
+            except Exception as e:
+                print(f"[SeriesReminder {hours_before}h] Push broadcast error: {e}")
+
+        # ── Email ──────────────────────────────────────────────────────────────
+        email_label = f"{matchup} — {conference} {round_name} Game 1 (tips off in {time_label})"
+        email_labels = [(r[1], [email_label]) for r in rows if r[1]]
+        if email_labels:
+            threading.Thread(
+                target=_send_bulk_email_reminder,
+                args=(matchup, hours_before, email_labels),
+                daemon=True,
+            ).start()
+
+        print(f"[SeriesReminder {hours_before}h] {matchup} ({round_name}) — "
+              f"push+email sent to {len(user_ids)} users without picks")
+
+    except Exception as e:
+        print(f"[SeriesReminder {hours_before}h] Error (series_id={series_id}): "
+              f"{type(e).__name__}: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _schedule_series_reminders(series_id: int, game1_start_utc_str: str) -> int:
+    """
+    Schedule 12h / 6h / 2h push+email reminders for a series Game 1.
+    Uses _send_series_reminder_by_id (works for any round).
+    game1_start_utc_str: ISO or 'YYYY-MM-DD HH:MM:SS' string in UTC.
+    Returns number of jobs actually scheduled (skips past times).
+    """
+    _SERIES_REMIND_HOURS = [12, 6, 2]
+    try:
+        # Normalise to datetime
+        clean = game1_start_utc_str.rstrip('Z').replace('T', ' ')
+        start_dt = datetime.strptime(clean, "%Y-%m-%d %H:%M:%S")
+    except Exception as e:
+        print(f"[ScheduleReminders] bad game1_start_utc_str {game1_start_utc_str!r}: {e}")
+        return 0
+
+    now_utc = datetime.utcnow()
+    scheduled = 0
+    for hrs in _SERIES_REMIND_HOURS:
+        fire_at = start_dt - timedelta(hours=hrs)
+        if fire_at <= now_utc:
+            print(f"[ScheduleReminders] series_id={series_id} -{hrs}h already past — skip")
+            continue
+        job_id = f"series_remind_id{series_id}_{hrs}h"
+        _scheduler.add_job(
+            _send_series_reminder_by_id,
+            DateTrigger(run_date=fire_at, timezone='UTC'),
+            args=[series_id, hrs],
+            id=job_id,
+            replace_existing=True,
+            misfire_grace_time=1800,
+        )
+        print(f"[ScheduleReminders] series_id={series_id} -{hrs}h @ "
+              f"{fire_at.strftime('%Y-%m-%d %H:%M')} UTC scheduled")
+        scheduled += 1
+    return scheduled
+
+
 def _send_bulk_email_reminder(context_label: str, hours_before: int,
                               email_labels: list) -> int:
     """
@@ -4614,6 +4757,34 @@ async def startup():
             )
             print(f"[Scheduler] Series reminder scheduled: {_sr_conf} {_sr_hs}v{_sr_as} -{_sr_hrs}h "
                   f"@ {_sr_remind.strftime('%Y-%m-%d %H:%M')} UTC")
+
+    # ── 7b) Later-round series reminders — scan DB for R2+ series with game1_start_time ─
+    # R2+ series are created dynamically so they're not in _GAME1_SCHEDULE_UTC.
+    # Any series (Conf Semis / CF / Finals) that already has game1_start_time set
+    # in the future will have 12h/6h/2h reminder jobs scheduled now.
+    try:
+        _lr_conn = get_db_conn()
+        _lr_c    = _lr_conn.cursor()
+        _lr_c.execute("""
+            SELECT id, round, game1_start_time
+            FROM series
+            WHERE season = '2026'
+              AND round <> 'First Round'
+              AND status = 'active'
+              AND game1_start_time IS NOT NULL
+        """)
+        _lr_rows = _lr_c.fetchall()
+        _lr_conn.close()
+        _lr_total = 0
+        for _lr_sid, _lr_round, _lr_start in _lr_rows:
+            n = _schedule_series_reminders(_lr_sid, _lr_start)
+            _lr_total += n
+            if n:
+                print(f"[Scheduler] {_lr_round} series_id={_lr_sid} — {n} reminders scheduled")
+        print(f"[Scheduler] Later-round reminders: {len(_lr_rows)} series scanned, "
+              f"{_lr_total} reminder jobs added")
+    except Exception as _lr_err:
+        print(f"[Scheduler] Later-round reminder scan error: {_lr_err}")
 
     # ── 8) Post-game syncs — fire 3h after each game tipoff to capture results ───
     # One-shot DateTrigger per game so results are picked up promptly even if
@@ -8474,6 +8645,64 @@ async def patch_series_seeds(
             try: conn.rollback()
             except Exception: pass
         raise HTTPException(status_code=500, detail=f"Failed to patch seeds: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+@app.post("/api/admin/series/{series_id}/start-time")
+async def set_series_start_time(series_id: int, start_time: str | None = None):
+    """Set or clear the game1_start_time for any series (R1, R2, CF, Finals).
+
+    Format: 'YYYY-MM-DD HH:MM:SS' (UTC) or ISO 'YYYY-MM-DDTHH:MM:SSZ'.
+    When start_time is provided for an active series, 12h/6h/2h reminder jobs
+    are automatically scheduled.  Pass null/empty to clear the time only.
+
+    Example:
+        POST /api/admin/series/42/start-time?start_time=2026-05-06+19:30:00
+    """
+    conn = None
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT id, round, status FROM series WHERE id = %s", (series_id,))
+        row = c.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Series not found")
+        _, round_name, status = row
+
+        # Normalise: allow both 'T' separator and space, strip trailing Z
+        normalised = None
+        if start_time:
+            normalised = start_time.strip().rstrip('Z').replace('T', ' ')
+
+        c.execute("UPDATE series SET game1_start_time = %s, manual_override = %s WHERE id = %s",
+                  (normalised, bool(normalised), series_id))
+        conn.commit()
+        conn.close(); conn = None
+
+        jobs_scheduled = 0
+        if normalised and status == 'active':
+            try:
+                jobs_scheduled = _schedule_series_reminders(series_id, normalised)
+            except Exception as sched_err:
+                print(f"[set_series_start_time] scheduling error: {sched_err}")
+
+        return {
+            "ok": True,
+            "series_id": series_id,
+            "round": round_name,
+            "game1_start_time": normalised,
+            "reminder_jobs_scheduled": jobs_scheduled,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        raise HTTPException(status_code=500, detail=f"Failed to set start time: {e}")
     finally:
         if conn:
             try: conn.close()
