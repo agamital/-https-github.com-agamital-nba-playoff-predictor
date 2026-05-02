@@ -261,11 +261,11 @@ def calculate_series_points(
 
     # Finals winner uses the champion multiplier; games use the standard one.
     if round_name == "NBA Finals":
-        winner_pts = int(BASE_WINNER_PTS * NBA_FINALS_CHAMPION_MULT * underdog_mult)
+        winner_pts = round(BASE_WINNER_PTS * NBA_FINALS_CHAMPION_MULT * underdog_mult)
     else:
-        winner_pts = int(BASE_WINNER_PTS * round_mult * underdog_mult)
+        winner_pts = round(BASE_WINNER_PTS * round_mult * underdog_mult)
 
-    games_pts = int(BASE_GAMES_PTS * round_mult * underdog_mult) if games_correct else 0
+    games_pts = round(BASE_GAMES_PTS * round_mult * underdog_mult) if games_correct else 0
 
     return winner_pts + games_pts
 
@@ -273,19 +273,29 @@ def calculate_series_points(
 def calculate_series_leader_points(
     predicted: dict,
     actual: dict,
+    round_name: str = "First Round",
 ) -> int:
     """
     Score the three series-leader predictions (scorer, rebounder, assister).
-    Each correct name match earns SERIES_LEADER_BONUS (10 pts).
-    Comparison is case-insensitive; strips whitespace.
+
+    Each correct name match earns SERIES_LEADER_BONUS × round_multiplier:
+      First Round           10 × 1.0 = 10 pts
+      Conference Semifinals 10 × 1.5 = 15 pts
+      Conference Finals     10 × 2.0 = 20 pts
+      NBA Finals            10 × 2.5 = 25 pts
+
+    Note: no underdog multiplier — round mult only.
 
     Args:
         predicted  {'scorer': str|None, 'rebounder': str|None, 'assister': str|None}
         actual     {'scorer': str|None, 'rebounder': str|None, 'assister': str|None}
                    falsy value = result not yet set ->skip category.
+        round_name Series round name (default 'First Round').
 
-    Returns total pts (0–30).
+    Returns total pts (0 – 3 × bonus).
     """
+    round_mult = get_round_multiplier(round_name)
+    bonus = round(SERIES_LEADER_BONUS * round_mult)
     pts = 0
     for cat in ('scorer', 'rebounder', 'assister'):
         pred_val   = predicted.get(cat)
@@ -293,7 +303,7 @@ def calculate_series_leader_points(
         if not actual_val or not pred_val:
             continue
         if _names_match(pred_val, actual_val):
-            pts += SERIES_LEADER_BONUS
+            pts += bonus
     return pts
 
 
@@ -428,8 +438,8 @@ if __name__ == "__main__":
     print("\n-- Series: Conference Semifinals (x1.5) -------------")
     # Semis fav + games ->50×1.5×1 + 30×1.5×1 = 75+45 = 120
     check("Semis fav+games",         calculate_series_points("Conference Semifinals", 3, 6, 3, True, True),  120)
-    # Semis underdog+games ->int(50×1.5×1.5)+int(30×1.5×1.5) = 112+67 = 179
-    check("Semis underdog+games",    calculate_series_points("Conference Semifinals", 3, 6, 6, True, True),  179)
+    # Semis underdog+games ->round(50×1.5×1.5)+round(30×1.5×1.5) = 112+68 = 180
+    check("Semis underdog+games",    calculate_series_points("Conference Semifinals", 3, 6, 6, True, True),  180)
 
     print("\n-- Series: Conference Finals (x2.0) -----------------")
     # CF fav+games ->50×2.0 + 30×2.0 = 100+60 = 160
@@ -442,20 +452,40 @@ if __name__ == "__main__":
     check("Finals fav+games",        calculate_series_points("NBA Finals", 2, 5, 2, True, True),  200)
     # Finals fav only   ->125
     check("Finals fav only",         calculate_series_points("NBA Finals", 2, 5, 2, True, False), 125)
-    # Finals underdog+games ->int(50×2.5×1.5)+int(30×2.5×1.5) = 187+112 = 299
-    check("Finals underdog+games",   calculate_series_points("NBA Finals", 2, 5, 5, True, True),  299)
+    # Finals underdog+games ->round(50×2.5×1.5)+round(30×2.5×1.5) = 188+112 = 300
+    check("Finals underdog+games",   calculate_series_points("NBA Finals", 2, 5, 5, True, True),  300)
 
     print("\n-- Series Leaders ------------------------------------")
-    check("all 3 correct -> 30 pts",
+    check("R1 all 3 correct -> 30 pts",
           calculate_series_leader_points(
               {"scorer": "LeBron James", "rebounder": "Anthony Davis", "assister": "Draymond Green"},
-              {"scorer": "lebron james", "rebounder": "Anthony Davis", "assister": "draymond green"}
+              {"scorer": "lebron james", "rebounder": "Anthony Davis", "assister": "draymond green"},
+              round_name="First Round",
           ), 30)
-    check("1 of 3 correct -> 10 pts",
+    check("R1 1 of 3 correct -> 10 pts",
           calculate_series_leader_points(
               {"scorer": "LeBron James", "rebounder": "Wrong Guy", "assister": None},
-              {"scorer": "LeBron James", "rebounder": "Anthony Davis", "assister": None}
+              {"scorer": "LeBron James", "rebounder": "Anthony Davis", "assister": None},
+              round_name="First Round",
           ), 10)
+    check("Semis all 3 correct -> 45 pts",
+          calculate_series_leader_points(
+              {"scorer": "LeBron James", "rebounder": "Anthony Davis", "assister": "Draymond Green"},
+              {"scorer": "lebron james", "rebounder": "Anthony Davis", "assister": "draymond green"},
+              round_name="Conference Semifinals",
+          ), 45)
+    check("CF all 3 correct -> 60 pts",
+          calculate_series_leader_points(
+              {"scorer": "LeBron James", "rebounder": "Anthony Davis", "assister": "Draymond Green"},
+              {"scorer": "lebron james", "rebounder": "Anthony Davis", "assister": "draymond green"},
+              round_name="Conference Finals",
+          ), 60)
+    check("Finals all 3 correct -> 75 pts",
+          calculate_series_leader_points(
+              {"scorer": "LeBron James", "rebounder": "Anthony Davis", "assister": "Draymond Green"},
+              {"scorer": "lebron james", "rebounder": "Anthony Davis", "assister": "draymond green"},
+              round_name="NBA Finals",
+          ), 75)
     check("result not set -> 0 pts",
           calculate_series_leader_points({"scorer": "LeBron"}, {"scorer": None}), 0)
 

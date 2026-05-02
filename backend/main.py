@@ -4291,6 +4291,7 @@ async def startup():
                     pts += calculate_series_leader_points(
                         {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
                         {"scorer": actual_scorer, "rebounder": actual_rebounder, "assister": actual_assister},
+                        round_name=round_name,
                     )
                     is_correct = 1 if winner_correct else 0
                     c_lb.execute(
@@ -7892,6 +7893,7 @@ def _backfill_series_scores(season: str = "2026") -> dict:
                                "rebounder": pred_rebounder,
                                "assister":  pred_assister},
                     actual=actual_leaders,
+                    round_name=round_name,
                 )
 
                 c.execute(
@@ -8063,6 +8065,7 @@ async def set_series_result(
             pts += calculate_series_leader_points(
                 {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
                 {"scorer": eff_scorer, "rebounder": eff_rebounder, "assister": eff_assister},
+                round_name=round_name,
             )
             is_correct = 1 if winner_correct else 0
             c.execute('UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s',
@@ -8185,6 +8188,7 @@ async def rescore_completed_series(season: str = "2026"):
                 pts += calculate_series_leader_points(
                     {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
                     {"scorer": actual_scorer, "rebounder": actual_rebounder, "assister": actual_assister},
+                    round_name=round_name,
                 )
                 is_correct = 1 if winner_correct else 0
                 c.execute('UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s',

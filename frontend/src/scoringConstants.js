@@ -29,7 +29,12 @@ export const FINALS_CHAMPION_MULT = 2.5;  // applied to winner pts in NBA Finals
 const R1_UNDERDOG = { '1-8': 2.0, '2-7': 1.5, '3-6': 1.2, '4-5': 1.0 };
 
 // ── Series statistical leader bonus ───────────────────────────────────────
-export const SERIES_LEADER_BONUS = 10;  // pts per correct series leader (max 30)
+export const SERIES_LEADER_BONUS = 10;  // base pts per correct leader (First Round)
+// Scales with round multiplier — no underdog mult:
+//   First Round           10 × 1.0 = 10 pts
+//   Conference Semifinals 10 × 1.5 = 15 pts
+//   Conference Finals     10 × 2.0 = 20 pts
+//   NBA Finals            10 × 2.5 = 25 pts
 
 // ── Futures / Global predictions ──────────────────────────────────────────
 export const FUTURES_BASE_POINTS = {
@@ -63,6 +68,12 @@ export function getRoundMult(roundName) {
   return ROUND_MULTIPLIERS[roundName] ?? 1;
 }
 
+/** Returns the series-leader bonus for one correct category, scaled by round.
+ *  No underdog multiplier — round mult only. */
+export function getLeaderBonus(roundName) {
+  return Math.round(SERIES_LEADER_BONUS * getRoundMult(roundName));
+}
+
 export function getUnderdogMult(roundName, homeSeed, awaySeed, pickedSeed) {
   if (homeSeed == null || awaySeed == null || pickedSeed == null) return 1.0;
   const underdogSeed = Math.max(homeSeed, awaySeed);
@@ -75,12 +86,19 @@ export function getUnderdogMult(roundName, homeSeed, awaySeed, pickedSeed) {
 }
 
 /** Returns { winnerPts, gamesPts, totalPts } for a correct winner prediction.
- *  NBA Finals winner uses the champion multiplier (2.5×); games use 2.0×. */
+ *  NBA Finals winner uses the champion multiplier (2.5×); games use 2.5×.
+ *
+ *  Rounding: compute raw total first, then round — so the displayed total
+ *  always matches the backend (e.g. Conf Semis underdog = 180, not 179). */
 export function calcSeriesPts(roundName, homeSeed, awaySeed, pickedSeed) {
   const rm  = getRoundMult(roundName);
   const um  = getUnderdogMult(roundName, homeSeed, awaySeed, pickedSeed);
   const wm  = roundName === 'NBA Finals' ? FINALS_CHAMPION_MULT : rm;
-  const winnerPts = Math.floor(BASE_WINNER_PTS * wm * um);
-  const gamesPts  = Math.floor(BASE_GAMES_PTS  * rm * um);
-  return { winnerPts, gamesPts, totalPts: winnerPts + gamesPts };
+  // Round the sum first to avoid half-integer split errors
+  const rawWinner = BASE_WINNER_PTS * wm * um;
+  const rawGames  = BASE_GAMES_PTS  * rm * um;
+  const totalPts  = Math.round(rawWinner + rawGames);
+  const winnerPts = Math.round(rawWinner);
+  const gamesPts  = totalPts - winnerPts;   // ensures winner + games === total
+  return { winnerPts, gamesPts, totalPts };
 }
