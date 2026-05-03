@@ -86,8 +86,11 @@ _ONESIGNAL_APP_ID  = os.getenv("ONESIGNAL_APP_ID",  "c69b4c3e-79d1-48a4-8815-3ce
 _ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY",  "")
 
 # Gmail API (OAuth2) credentials — set these in Railway env vars.
-# Generate GMAIL_REFRESH_TOKEN once with the companion script
-# tools/generate_gmail_token.py, then store the printed value here.
+# Gmail credentials — two methods, App Password preferred (never expires).
+# Method A (preferred): GMAIL_APP_PASSWORD — 16-char App Password from
+#   myaccount.google.com/apppasswords. Uses SMTP+TLS, never expires.
+# Method B (fallback): OAuth2 refresh token — expires if token is revoked.
+_GMAIL_APP_PASSWORD  = os.getenv("GMAIL_APP_PASSWORD",  "")   # preferred
 _GMAIL_CLIENT_ID     = os.getenv("GMAIL_CLIENT_ID",     "")
 _GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET", "")
 _GMAIL_REFRESH_TOKEN = os.getenv("GMAIL_REFRESH_TOKEN", "")
@@ -1557,7 +1560,7 @@ def _send_missing_picks_alert() -> None:
         return
 
     has_push  = bool(_ONESIGNAL_API_KEY)
-    has_email = bool(_GMAIL_CLIENT_ID and _GMAIL_CLIENT_SECRET and _GMAIL_REFRESH_TOKEN)
+    has_email = bool(_GMAIL_APP_PASSWORD or (_GMAIL_CLIENT_ID and _GMAIL_CLIENT_SECRET and _GMAIL_REFRESH_TOKEN))
     if not has_push and not has_email:
         print("[Alert] Neither ONESIGNAL_API_KEY nor Gmail API credentials set — skipping alert")
         return
@@ -2125,7 +2128,7 @@ def _send_bulk_email_reminder(context_label: str, hours_before: int,
     email_labels = [(email_address, [label_str, ...]), ...]
     Skips entries with empty label lists.  Returns count of emails sent.  Never raises.
     """
-    if not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN:
+    if not _GMAIL_APP_PASSWORD and (not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN):
         print(f"[BulkEmail {hours_before}h] Gmail credentials not set — skipping")
         return 0
     if not email_labels:
@@ -2201,46 +2204,62 @@ def _build_reminder_html(missing_labels: list[str]) -> str:
 
 def _gmail_send_email(to: str, subject: str, html: str) -> None:
     """
-    Send a single transactional email via the Gmail REST API using OAuth2.
-    This bypasses SMTP entirely — the request goes over HTTPS (port 443)
-    which Railway never blocks.
+    Send a transactional email via Gmail.
 
-    Auth flow (service-account-free, no interactive browser needed):
-      1. Build a google.oauth2.credentials.Credentials object from the stored
-         client_id / client_secret / refresh_token.
-      2. The google-auth library auto-exchanges the refresh_token for a short-
-         lived access_token on the first API call.
-      3. Build the Gmail API service and call users.messages.send().
+    Method A (preferred) — SMTP + App Password (GMAIL_APP_PASSWORD env var):
+      Static 16-char password from myaccount.google.com/apppasswords.
+      Never expires. Uses port 587 (STARTTLS) which Railway allows.
 
-    Required Railway env vars:
-      GMAIL_CLIENT_ID      — OAuth2 client ID from Google Cloud Console
-      GMAIL_CLIENT_SECRET  — OAuth2 client secret
-      GMAIL_REFRESH_TOKEN  — long-lived refresh token (generate once with
-                             tools/generate_gmail_token.py)
-      GMAIL_SENDER         — sending address (default: nbaplayoffpredictor2000@gmail.com)
+    Method B (fallback) — Gmail REST API + OAuth2 refresh token:
+      Used when GMAIL_APP_PASSWORD is not set. Token can be revoked; if that
+      happens regenerate with tools/get_gmail_token_manual.py.
     """
-    import base64
+    import base64, smtplib, ssl
     from email.mime.multipart import MIMEMultipart
     from email.mime.text      import MIMEText
+
+    # ── Build MIME message (shared by both methods) ───────────────────────────
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"NBA Playoff Predictor <{_GMAIL_SENDER}>"
+    msg["To"]      = to
+    msg.attach(MIMEText(html, "html", "utf-8"))
+
+    # ── Method A: SMTP + App Password ────────────────────────────────────────
+    if _GMAIL_APP_PASSWORD:
+        print(f"[Gmail-SMTP] Sending to={to!r} via App Password...")
+        try:
+            context = ssl.create_default_context()
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.login(_GMAIL_SENDER, _GMAIL_APP_PASSWORD)
+                server.sendmail(_GMAIL_SENDER, to, msg.as_string())
+            print(f"[Gmail-SMTP] ✓ delivered to={to!r}")
+            return
+        except Exception as exc:
+            raise RuntimeError(
+                f"[Gmail-SMTP] FAILED — {type(exc).__name__}: {exc}. "
+                f"Check GMAIL_APP_PASSWORD and that 2-Step Verification is enabled."
+            ) from exc
+
+    # ── Method B: OAuth2 REST API fallback ───────────────────────────────────
+    if not _GMAIL_APP_PASSWORD and (not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN):
+        raise RuntimeError(
+            "No Gmail credentials set — add GMAIL_APP_PASSWORD (preferred) or "
+            "GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN to Railway"
+        )
+
+    print(f"[Gmail-OAuth] Sending to={to!r} (App Password not set, using OAuth)...")
 
     from google.oauth2.credentials  import Credentials
     from googleapiclient.discovery  import build
     from googleapiclient.errors     import HttpError
+    from google.auth.exceptions     import RefreshError, TransportError
 
-    if not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN:
-        raise RuntimeError(
-            "Gmail API credentials not set — add GMAIL_CLIENT_ID, "
-            "GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN to Railway env vars"
-        )
-
-    print(f"[Gmail] Sending to={to!r} from={_GMAIL_SENDER!r} "
-          f"client_id_prefix={_GMAIL_CLIENT_ID[:12]}...")
-
-    # ── Stage 1: build credentials + service ────────────────────────────────
-    from google.auth.exceptions import RefreshError, TransportError
     try:
         creds = Credentials(
-            token=None,                               # fetched automatically via refresh
+            token=None,
             refresh_token=_GMAIL_REFRESH_TOKEN,
             client_id=_GMAIL_CLIENT_ID,
             client_secret=_GMAIL_CLIENT_SECRET,
@@ -2248,64 +2267,28 @@ def _gmail_send_email(to: str, subject: str, html: str) -> None:
             scopes=["https://www.googleapis.com/auth/gmail.send"],
         )
         service = build("gmail", "v1", credentials=creds)
-        print("[Gmail] Stage 1 OK — credentials + service built")
     except RefreshError as exc:
         raise RuntimeError(
-            f"[Gmail] Stage 1 FAILED — token refresh error. "
-            f"The refresh token may have been revoked; re-run "
-            f"tools/generate_gmail_token.py to generate a new one. "
+            f"[Gmail-OAuth] Token revoked — regenerate with "
+            f"tools/get_gmail_token_manual.py and update GMAIL_REFRESH_TOKEN "
+            f"in Railway. Better: set GMAIL_APP_PASSWORD to avoid this forever. "
             f"Detail: {exc}"
         ) from exc
     except Exception as exc:
-        raise RuntimeError(
-            f"[Gmail] Stage 1 FAILED — could not build Gmail service: "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
+        raise RuntimeError(f"[Gmail-OAuth] Build failed: {type(exc).__name__}: {exc}") from exc
 
-    # ── Stage 2: compose message ─────────────────────────────────────────────
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"NBA Playoff Predictor <{_GMAIL_SENDER}>"
-    msg["To"]      = to
-    msg.attach(MIMEText(html, "html", "utf-8"))
-
-    # Gmail API requires base64url encoding of the raw RFC-2822 bytes
     raw_b64 = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-    print("[Gmail] Stage 2 OK — message encoded")
-
-    # ── Stage 3: send via API ────────────────────────────────────────────────
     try:
-        result = (
-            service.users()
-                   .messages()
-                   .send(userId="me", body={"raw": raw_b64})
-                   .execute()
-        )
-        print(f"[Gmail] ✓ email delivered — message id={result.get('id')} to={to!r}")
+        result = (service.users().messages()
+                         .send(userId="me", body={"raw": raw_b64}).execute())
+        print(f"[Gmail-OAuth] ✓ delivered id={result.get('id')} to={to!r}")
     except HttpError as exc:
-        status = exc.resp.status
-        # 429 = quota exceeded; 401/403 = auth/scope problem
-        if status == 429:
-            raise RuntimeError(
-                f"[Gmail] Stage 3 FAILED — Gmail API quota exceeded (HTTP 429). "
-                f"Wait a few minutes and retry. Detail: {exc.error_details}"
-            ) from exc
-        if status in (401, 403):
-            raise RuntimeError(
-                f"[Gmail] Stage 3 FAILED — authorization error (HTTP {status}). "
-                f"Ensure the Gmail API is enabled in Google Cloud Console and "
-                f"the OAuth scope includes 'gmail.send'. Detail: {exc.error_details}"
-            ) from exc
         raise RuntimeError(
-            f"[Gmail] Stage 3 FAILED — Gmail API HTTP {status}: {exc.error_details}"
-        ) from exc
-    except TransportError as exc:
-        raise RuntimeError(
-            f"[Gmail] Stage 3 FAILED — network error reaching Gmail API: {exc}"
+            f"[Gmail-OAuth] HTTP {exc.resp.status}: {exc.error_details}"
         ) from exc
     except Exception as exc:
         raise RuntimeError(
-            f"[Gmail] Stage 3 FAILED — unexpected error: {type(exc).__name__}: {exc}"
+            f"[Gmail-OAuth] Unexpected error: {type(exc).__name__}: {exc}"
         ) from exc
 
 
@@ -2323,7 +2306,7 @@ def _send_daily_email_reminders() -> dict:
     if datetime.utcnow() >= _EMAIL_REMINDER_CUTOFF:
         return {"skipped": "past cutoff"}
 
-    if not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN:
+    if not _GMAIL_APP_PASSWORD and (not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN):
         print("[EmailReminder] Gmail API credentials not set — skipping")
         return {"skipped": "no gmail credentials"}
 
@@ -5261,7 +5244,7 @@ async def admin_send_test_email(request: Request, to: str):
 
     to = to.strip()   # defensive: remove any leading/trailing whitespace
 
-    if not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN:
+    if not _GMAIL_APP_PASSWORD and (not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN):
         raise HTTPException(
             status_code=503,
             detail="GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, or GMAIL_REFRESH_TOKEN not configured — add them to Railway env vars",
