@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal, BarChart2, Lock, Eye, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
 import * as api from './services/api';
@@ -120,6 +120,30 @@ const LeaderPickRow = ({ emoji, label, picked, actual, isFinished }) => {
   );
 };
 
+// ── Persistent open/close state (survives page refresh) ───────────────────────
+// Reads from localStorage on mount; writes back on every toggle.
+// storageKey: short unique string, e.g. 'round_First_Round' or 'section_futures'
+const LS_PREFIX = 'nba_pp_';
+const useSectionOpen = (storageKey, defaultOpen) => {
+  const lsKey = LS_PREFIX + storageKey;
+  const [open, setOpenState] = useState(() => {
+    try {
+      const stored = localStorage.getItem(lsKey);
+      return stored !== null ? stored === 'true' : defaultOpen;
+    } catch {
+      return defaultOpen;
+    }
+  });
+  const setOpen = useCallback((valOrFn) => {
+    setOpenState(prev => {
+      const next = typeof valOrFn === 'function' ? valOrFn(prev) : valOrFn;
+      try { localStorage.setItem(lsKey, String(next)); } catch {}
+      return next;
+    });
+  }, [lsKey]);
+  return [open, setOpen];
+};
+
 // ── Round config ──────────────────────────────────────────────────────────────
 const ROUNDS = [
   { key: 'playin',                label: 'Play-In Tournament',    color: 'text-purple-400', borderCls: 'border-purple-500/25', bgCls: 'bg-purple-500/8',  badgeCls: 'bg-purple-500/20 text-purple-300 border-purple-500/30', dot: '⬡' },
@@ -131,7 +155,7 @@ const ROUNDS = [
 
 // ── Collapsible round section ──────────────────────────────────────────────────
 const RoundSection = ({ roundCfg, children, count, correct, pts, allDone }) => {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useSectionOpen('round_' + roundCfg.key, true);
   return (
     <div className={`rounded-2xl border ${roundCfg.borderCls} overflow-hidden mb-4`}>
       <button
@@ -176,8 +200,8 @@ const RoundSection = ({ roundCfg, children, count, correct, pts, allDone }) => {
 };
 
 // ── Collapsible wrapper for non-round sections ─────────────────────────────────
-const CollapsibleSection = ({ icon: Icon, iconColor, title, rightBadge, defaultOpen = true, children }) => {
-  const [open, setOpen] = useState(defaultOpen);
+const CollapsibleSection = ({ storageKey, icon: Icon, iconColor, title, rightBadge, defaultOpen = true, children }) => {
+  const [open, setOpen] = useSectionOpen('section_' + storageKey, defaultOpen);
   return (
     <div className="rounded-2xl border border-slate-800 overflow-hidden mb-6">
       <button
@@ -598,6 +622,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
       {/* ── Futures Picks ── */}
       {(futures || hasHiddenFutures) && (
         <CollapsibleSection
+          storageKey="futures"
           icon={Star} iconColor="text-yellow-400" title="Futures Picks" defaultOpen={true}
           rightBadge={futures?.points_earned > 0
             ? <span className="text-[10px] font-black text-green-400 bg-green-500/15 border border-green-500/25 px-2 py-0.5 rounded-full">+{futures.points_earned} pts</span>
@@ -662,6 +687,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
       {/* ── Playoff Leaders Picks ── */}
       {(leaders || hasHiddenLeaders) && (
         <CollapsibleSection
+          storageKey="leaders"
           icon={BarChart2} iconColor="text-cyan-400" title="Playoff Leaders Picks" defaultOpen={true}
           rightBadge={leaders?.points_earned > 0
             ? <span className="text-[10px] font-black text-green-400 bg-green-500/15 border border-green-500/25 px-2 py-0.5 rounded-full">+{leaders.points_earned} pts</span>
