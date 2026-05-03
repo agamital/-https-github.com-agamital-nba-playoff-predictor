@@ -967,16 +967,45 @@ const inferSemisGroup = (s) => {
   return (ms === 1 || ms === 4 || ms === 5 || ms === 8) ? 'A' : 'B';
 };
 
-const SemisCol = ({ label, semisSlots = [], provisionalSlots = [], picks = {}, onTeamClick, myPredMap = {} }) => {
+const SemisCol = ({ label, semisSlots = [], provisionalSlots = [], picks = {}, onTeamClick, onGamesSelect, onLeaderSelect, onSave, saved = {}, confirmed = {}, onEdit, myPredMap = {} }) => {
   const pt = (BH + 28) / 8 - CH / 2;
 
   const renderSlot = (groupKey) => {
     // 1. Real R2 series for this bracket_group (use seed-based inference as fallback)
     const real = semisSlots.find(s => (s.bracket_group || inferSemisGroup(s)) === groupKey);
     if (real) {
-      const pick = picks[real.id];
-      const hasBet = !!(myPredMap && myPredMap[real.id]);
-      return <MatchCard key={real.id} series={real} pick={pick} onTeamClick={onTeamClick} hasBet={hasBet} />;
+      const dbPred = myPredMap?.[real.id];
+      const effectivePick = picks[real.id] || (dbPred ? {
+        teamId:    +dbPred.predicted_winner_id,
+        games:     dbPred.predicted_games,
+        scorer:    dbPred.leading_scorer    || '',
+        rebounder: dbPred.leading_rebounder || '',
+        assister:  dbPred.leading_assister  || '',
+      } : null);
+      const hasBet = !!confirmed[real.id];
+      return (
+        <div key={real.id} style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
+          <MatchCard series={real} pick={effectivePick} onTeamClick={onTeamClick} hasBet={hasBet} />
+          {effectivePick?.teamId && real.status === 'active' && (
+            <div style={{ position: 'absolute', top: CH + 6, left: '50%', transform: 'translateX(-50%)', zIndex: 30 }}>
+              {real.picks_locked ? (
+                <button disabled className="w-44 py-1.5 rounded-lg text-[10px] font-black bg-red-500/15 border border-red-500/25 text-red-400 cursor-not-allowed flex items-center justify-center gap-1.5 whitespace-nowrap">
+                  <Lock className="w-3 h-3 shrink-0" /> Bets Locked
+                </button>
+              ) : hasBet ? (
+                <button
+                  onClick={() => onEdit(real.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:border-orange-500/50 hover:text-orange-400 text-[10px] font-bold transition-all whitespace-nowrap"
+                >
+                  ✏ Edit pick
+                </button>
+              ) : (
+                <InlinePicker seriesId={real.id} series={real} pick={effectivePick} onGamesSelect={onGamesSelect} onLeaderSelect={onLeaderSelect} onSave={onSave} saved={saved[real.id]} />
+              )}
+            </div>
+          )}
+        </div>
+      );
     }
     // 2. Provisional (R1 winner(s) known, no R2 yet)
     const prov = provisionalSlots.find(p => p.bracket_group === groupKey);
@@ -2356,7 +2385,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
             {showFull && (
               <>
                 <ConnectorCol count={2} dir="right" />
-                <SemisCol label="Conf Semis" semisSlots={westSemisSlots} provisionalSlots={westProvisionalSemis} picks={picks} onTeamClick={handleTeamClick} myPredMap={myPredMap} />
+                <SemisCol label="Conf Semis" semisSlots={westSemisSlots} provisionalSlots={westProvisionalSemis} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} confirmed={confirmed} onEdit={handleEdit} myPredMap={myPredMap} />
                 <ConnectorCol count={1} dir="right" />
                 <CFCol label="Conf Finals" />
                 <HLine />
@@ -2364,7 +2393,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                 <HLine />
                 <CFCol label="Conf Finals" />
                 <ConnectorCol count={1} dir="left" />
-                <SemisCol label="Conf Semis" semisSlots={eastSemisSlots} provisionalSlots={eastProvisionalSemis} picks={picks} onTeamClick={handleTeamClick} myPredMap={myPredMap} />
+                <SemisCol label="Conf Semis" semisSlots={eastSemisSlots} provisionalSlots={eastProvisionalSemis} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} confirmed={confirmed} onEdit={handleEdit} myPredMap={myPredMap} />
                 <ConnectorCol count={2} dir="left" />
               </>
             )}

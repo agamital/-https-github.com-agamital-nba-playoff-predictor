@@ -6715,7 +6715,8 @@ async def make_pred(prediction: Prediction, user_id: int):
         game1_start = series_row[1]
         if game1_start:
             from datetime import timezone
-            start_dt = datetime.fromisoformat(game1_start.replace('Z', '+00:00'))
+            _g1_raw = str(game1_start).strip().rstrip('Z').replace('T', ' ').split('+')[0]
+            start_dt = datetime.strptime(_g1_raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
             if datetime.now(timezone.utc) >= start_dt:
                 raise HTTPException(status_code=400, detail="Game 1 has started — predictions are closed")
         c.execute('''INSERT INTO predictions
