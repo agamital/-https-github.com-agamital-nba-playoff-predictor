@@ -8367,6 +8367,26 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
         partner_winner_id = partner[1]
         # Determine partner winner's seed
         partner_seed = partner[4] if partner[2] == partner_winner_id else partner[5]
+
+        def _resolve_seed(team_id, known_seed):
+            """If known_seed is None, look it up from any R1 series appearance for this team."""
+            if known_seed is not None:
+                return known_seed
+            c.execute("""SELECT home_seed FROM series
+                         WHERE season=%s AND home_team_id=%s AND home_seed IS NOT NULL
+                         LIMIT 1""", (season, team_id))
+            row = c.fetchone()
+            if row:
+                return row[0]
+            c.execute("""SELECT away_seed FROM series
+                         WHERE season=%s AND away_team_id=%s AND away_seed IS NOT NULL
+                         LIMIT 1""", (season, team_id))
+            row = c.fetchone()
+            return row[0] if row else None
+
+        winner_seed  = _resolve_seed(winner_team_id,  winner_seed)
+        partner_seed = _resolve_seed(partner_winner_id, partner_seed)
+
         c.execute('''SELECT id FROM series WHERE season = %s AND round = %s
                      AND conference = %s AND bracket_group = %s''',
                   (season, next_round, conf, bracket_group))
