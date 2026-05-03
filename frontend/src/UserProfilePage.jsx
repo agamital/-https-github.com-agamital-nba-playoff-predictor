@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal, BarChart2, Lock, Eye, EyeOff } from 'lucide-react';
+import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal, BarChart2, Lock, Eye, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
 import * as api from './services/api';
 import { ADMIN_EMAIL } from './constants';
 
@@ -116,6 +116,84 @@ const LeaderPickRow = ({ emoji, label, picked, actual, isFinished }) => {
       </div>
       {correct === true  && <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />}
       {correct === false && <XCircle    className="w-3 h-3 text-red-400   shrink-0" />}
+    </div>
+  );
+};
+
+// ── Round config ──────────────────────────────────────────────────────────────
+const ROUNDS = [
+  { key: 'playin',                label: 'Play-In Tournament',    color: 'text-purple-400', borderCls: 'border-purple-500/25', bgCls: 'bg-purple-500/8',  badgeCls: 'bg-purple-500/20 text-purple-300 border-purple-500/30', dot: '⬡' },
+  { key: 'First Round',           label: 'First Round',           color: 'text-orange-400', borderCls: 'border-orange-500/25', bgCls: 'bg-orange-500/8',  badgeCls: 'bg-orange-500/20 text-orange-300 border-orange-500/30', dot: '①' },
+  { key: 'Conference Semifinals', label: 'Conference Semifinals', color: 'text-amber-400',  borderCls: 'border-amber-500/25',  bgCls: 'bg-amber-500/8',   badgeCls: 'bg-amber-500/20  text-amber-300  border-amber-500/30',  dot: '②' },
+  { key: 'Conference Finals',     label: 'Conference Finals',     color: 'text-red-400',    borderCls: 'border-red-500/25',    bgCls: 'bg-red-500/8',     badgeCls: 'bg-red-500/20    text-red-300    border-red-500/30',    dot: '③' },
+  { key: 'NBA Finals',            label: 'NBA Finals',            color: 'text-yellow-400', borderCls: 'border-yellow-500/25', bgCls: 'bg-yellow-500/8',  badgeCls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30', dot: '🏆' },
+];
+
+// ── Collapsible round section ──────────────────────────────────────────────────
+const RoundSection = ({ roundCfg, children, count, correct, pts, allDone }) => {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className={`rounded-2xl border ${roundCfg.borderCls} overflow-hidden mb-4`}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className={`w-full flex items-center justify-between px-4 py-3 ${roundCfg.bgCls} hover:opacity-90 transition-opacity`}
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="text-base leading-none">{roundCfg.dot}</span>
+          <span className={`text-sm font-black ${roundCfg.color}`}>{roundCfg.label}</span>
+          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${roundCfg.badgeCls}`}>
+            {count} pick{count !== 1 ? 's' : ''}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {allDone && count > 0 && (
+            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+              correct === count ? 'text-green-300 bg-green-500/20 border-green-500/30'
+              : correct > 0   ? 'text-amber-300 bg-amber-500/20 border-amber-500/30'
+              :                 'text-red-300   bg-red-500/20   border-red-500/30'
+            }`}>
+              {correct}/{count} ✓
+            </span>
+          )}
+          {pts > 0 && (
+            <span className="text-[10px] font-black text-green-400 bg-green-500/15 border border-green-500/25 px-2 py-0.5 rounded-full">
+              +{pts} pts
+            </span>
+          )}
+          {open
+            ? <ChevronUp   className="w-4 h-4 text-slate-400 shrink-0" />
+            : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+          }
+        </div>
+      </button>
+      {open && (
+        <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-2.5 bg-slate-950/30">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Collapsible wrapper for non-round sections ─────────────────────────────────
+const CollapsibleSection = ({ icon: Icon, iconColor, title, rightBadge, defaultOpen = true, children }) => {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-2xl border border-slate-800 overflow-hidden mb-6">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-slate-900/60 hover:bg-slate-800/40 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Icon className={`w-4 h-4 ${iconColor}`} />
+          <span className="text-sm font-black text-white">{title}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {rightBadge}
+          {open ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+        </div>
+      </button>
+      {open && <div className="p-4 border-t border-slate-800">{children}</div>}
     </div>
   );
 };
@@ -518,102 +596,86 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
       )}
 
       {/* ── Futures Picks ── */}
-      {futures ? (
-        <div className="mb-8">
-          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-            <Star className="w-5 h-5 text-yellow-400" />
-            Futures Picks
-            {futures.points_earned > 0 && (
-              <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
-                +{futures.points_earned} pts
-              </span>
-            )}
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="p-4 space-y-3">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Champions</p>
-              <FuturesPick label="NBA Champion"     color="text-yellow-400" team={futures.champion_team}   isCorrect={futures.is_correct_champion} />
-              <FuturesPick label="Western Champion" color="text-red-400"    team={futures.west_champ_team} isCorrect={futures.is_correct_west} />
-              <FuturesPick label="Eastern Champion" color="text-blue-400"   team={futures.east_champ_team} isCorrect={futures.is_correct_east} />
-            </Card>
-            <Card className="p-4 space-y-3">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">MVPs</p>
-              <FuturesPick label="Finals MVP"       color="text-yellow-400" mvp={futures.finals_mvp} />
-              <FuturesPick label="West Finals MVP"  color="text-red-400"    mvp={futures.west_finals_mvp} />
-              <FuturesPick label="East Finals MVP"  color="text-blue-400"   mvp={futures.east_finals_mvp} />
-            </Card>
-          </div>
-        </div>
-      ) : hasHiddenFutures && (
-        <div className="mb-8">
-          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-            <Star className="w-5 h-5 text-yellow-400" />
-            Futures Picks
-          </h2>
-          <Card className="p-6 flex items-center gap-3 text-slate-500">
-            <Lock className="w-5 h-5 shrink-0" />
-            <span className="text-sm">Hidden until this user locks their futures picks.</span>
-          </Card>
-        </div>
+      {(futures || hasHiddenFutures) && (
+        <CollapsibleSection
+          icon={Star} iconColor="text-yellow-400" title="Futures Picks" defaultOpen={true}
+          rightBadge={futures?.points_earned > 0
+            ? <span className="text-[10px] font-black text-green-400 bg-green-500/15 border border-green-500/25 px-2 py-0.5 rounded-full">+{futures.points_earned} pts</span>
+            : null}
+        >
+          {futures ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2.5">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">Champions</p>
+                <FuturesPick label="NBA Champion"     color="text-yellow-400" team={futures.champion_team}   isCorrect={futures.is_correct_champion} />
+                <FuturesPick label="Western Champion" color="text-red-400"    team={futures.west_champ_team} isCorrect={futures.is_correct_west} />
+                <FuturesPick label="Eastern Champion" color="text-blue-400"   team={futures.east_champ_team} isCorrect={futures.is_correct_east} />
+              </div>
+              <div className="space-y-2.5">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">MVPs</p>
+                <FuturesPick label="Finals MVP"       color="text-yellow-400" mvp={futures.finals_mvp} />
+                <FuturesPick label="West Finals MVP"  color="text-red-400"    mvp={futures.west_finals_mvp} />
+                <FuturesPick label="East Finals MVP"  color="text-blue-400"   mvp={futures.east_finals_mvp} />
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 text-slate-500 py-2">
+              <Lock className="w-5 h-5 shrink-0" />
+              <span className="text-sm">Hidden until this user locks their futures picks.</span>
+            </div>
+          )}
+        </CollapsibleSection>
       )}
 
-      {/* ── Play-In Predictions ── */}
-      {playin.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-purple-400" />
-            Play-In Predictions
-            {playin.filter(p => p.is_correct === 1).length > 0 && (
-              <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
-                {playin.filter(p => p.is_correct === 1).length}/{playin.length} correct
-              </span>
-            )}
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {playin.map(pred => <PlayinPredCard key={pred.id} pred={pred} />)}
-          </div>
-        </div>
-      )}
+      {/* ── Picks by round ── */}
+      {(() => {
+        const byRound = {};
+        playoff.forEach(p => { const r = p.round || 'Unknown'; (byRound[r] = byRound[r] || []).push(p); });
 
-      {/* ── Playoff Predictions ── */}
-      {playoff.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-orange-400" />
-            Playoff Predictions
-            {correctCount > 0 && (
-              <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
-                {correctSeriesCount}/{scoredDenom} correct
-              </span>
-            )}
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {playoff.map(pred => <PlayoffPredCard key={pred.id} pred={pred} />)}
+        const allRounds = [
+          ...(playin.length > 0 ? [{ cfg: ROUNDS[0], preds: playin, isPlayin: true }] : []),
+          ...ROUNDS.slice(1).map(cfg => ({ cfg, preds: byRound[cfg.key] || [], isPlayin: false }))
+            .filter(r => r.preds.length > 0),
+        ];
+
+        if (allRounds.length === 0) return null;
+
+        return (
+          <div className="mb-2">
+            {allRounds.map(({ cfg, preds, isPlayin }) => {
+              const correct  = preds.filter(p => p.is_correct === 1).length;
+              const pts      = preds.reduce((s, p) => s + (p.points_earned || 0), 0);
+              const allDone  = preds.every(p => p.is_correct !== null);
+              return (
+                <RoundSection key={cfg.key} roundCfg={cfg} count={preds.length} correct={correct} pts={pts} allDone={allDone}>
+                  {isPlayin
+                    ? preds.map(pred => <PlayinPredCard   key={pred.id} pred={pred} />)
+                    : preds.map(pred => <PlayoffPredCard  key={pred.id} pred={pred} />)
+                  }
+                </RoundSection>
+              );
+            })}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Playoff Leaders Picks ── */}
-      {leaders ? (
-        <div className="mb-8">
-          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-            <BarChart2 className="w-5 h-5 text-cyan-400" />
-            Playoff Leaders Picks
-            {leaders.points_earned > 0 && (
-              <span className="ml-auto px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-black">
-                +{leaders.points_earned} pts
-              </span>
-            )}
-          </h2>
-          <Card className="p-4">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      {(leaders || hasHiddenLeaders) && (
+        <CollapsibleSection
+          icon={BarChart2} iconColor="text-cyan-400" title="Playoff Leaders Picks" defaultOpen={true}
+          rightBadge={leaders?.points_earned > 0
+            ? <span className="text-[10px] font-black text-green-400 bg-green-500/15 border border-green-500/25 px-2 py-0.5 rounded-full">+{leaders.points_earned} pts</span>
+            : null}
+        >
+          {leaders ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
               {[
-                { key: 'top_scorer',   label: 'Top Scorer (PPG)',   correct: leaders.is_correct_scorer },
-                { key: 'top_assists',  label: 'Top Assists (APG)',  correct: leaders.is_correct_assists },
+                { key: 'top_scorer',   label: 'Top Scorer (PPG)',   correct: leaders.is_correct_scorer   },
+                { key: 'top_assists',  label: 'Top Assists (APG)',  correct: leaders.is_correct_assists  },
                 { key: 'top_rebounds', label: 'Top Rebounds (RPG)', correct: leaders.is_correct_rebounds },
-                { key: 'top_threes',   label: 'Top 3-Pointers',     correct: leaders.is_correct_threes },
-                { key: 'top_steals',   label: 'Top Steals (SPG)',   correct: leaders.is_correct_steals },
-                { key: 'top_blocks',   label: 'Top Blocks (BPG)',   correct: leaders.is_correct_blocks },
+                { key: 'top_threes',   label: 'Top 3-Pointers',     correct: leaders.is_correct_threes   },
+                { key: 'top_steals',   label: 'Top Steals (SPG)',   correct: leaders.is_correct_steals   },
+                { key: 'top_blocks',   label: 'Top Blocks (BPG)',   correct: leaders.is_correct_blocks   },
               ].map(({ key, label, correct }) => {
                 const val = leaders[key];
                 const border = correct === 1 ? 'border-green-500/40 bg-green-500/5'
@@ -627,25 +689,19 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
                         {val != null ? val : <span className="text-slate-600 text-sm italic">—</span>}
                       </span>
                       {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400" />}
-                      {correct === 0 && <XCircle    className="w-4 h-4 text-red-400" />}
+                      {correct === 0 && <XCircle    className="w-4 h-4 text-red-400"   />}
                     </div>
                   </div>
                 );
               })}
             </div>
-          </Card>
-        </div>
-      ) : hasHiddenLeaders && (
-        <div className="mb-8">
-          <h2 className="text-xl font-black text-white mb-4 flex items-center gap-2">
-            <BarChart2 className="w-5 h-5 text-cyan-400" />
-            Playoff Leaders Picks
-          </h2>
-          <Card className="p-6 flex items-center gap-3 text-slate-500">
-            <Lock className="w-5 h-5 shrink-0" />
-            <span className="text-sm">Hidden until this user locks their futures picks.</span>
-          </Card>
-        </div>
+          ) : (
+            <div className="flex items-center gap-3 text-slate-500 py-2">
+              <Lock className="w-5 h-5 shrink-0" />
+              <span className="text-sm">Hidden until this user locks their futures picks.</span>
+            </div>
+          )}
+        </CollapsibleSection>
       )}
 
       {predsLoading && (
