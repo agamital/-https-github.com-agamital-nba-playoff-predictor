@@ -3564,20 +3564,38 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
     # For each active playoff series, recompute leading scorer / rebounder /
     # assister by summing stats from player_game_stats for both teams, starting
     # from game1_start_time so earlier-round games aren't double-counted.
+    #
+    # IMPORTANT: fallback dates are round-specific. Using a global '2026-04-18'
+    # fallback would include First Round stats in later-round leader calculations
+    # (e.g. Shai's 4 games vs PHX would pollute the OKC vs LAL R2 leaders).
+    _ROUND_FALLBACK_DATE = {
+        'First Round':           '2026-04-18',
+        'Conference Semifinals': '2026-05-05',
+        'Conference Finals':     '2026-05-19',
+        'NBA Finals':            '2026-06-04',
+    }
     try:
         c.execute("""
-            SELECT s.id,
+            SELECT s.id, s.round,
                    ht.abbreviation AS home_abbr,
                    at.abbreviation AS away_abbr,
-                   COALESCE(DATE(s.game1_start_time), %s::date) AS series_start
+                   DATE(s.game1_start_time) AS series_start
             FROM series s
             JOIN teams ht ON ht.id = s.home_team_id
             JOIN teams at ON at.id = s.away_team_id
             WHERE s.season = %s AND s.status = 'active'
-        """, ('2026-04-18', season))
+        """, (season,))
         active_series = c.fetchall()
 
-        for sid, home_abbr, away_abbr, series_start in active_series:
+        for sid, round_name, home_abbr, away_abbr, series_start in active_series:
+            # Use game1_start_time date if set; otherwise fall back to the
+            # round-specific start date so we never bleed stats from prior rounds.
+            if series_start is None:
+                series_start = _ROUND_FALLBACK_DATE.get(round_name, '2026-04-18')
+                print(f"[Boxscore] series {sid} ({round_name}) has no game1_start_time "
+                      f"— using round fallback {series_start}")
+            else:
+                series_start = str(series_start)
             c.execute("""
                 SELECT player_name,
                        SUM(points)   AS total_pts,
