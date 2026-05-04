@@ -545,8 +545,15 @@ export const triggerReminderJob = async () => {
   return response.data;
 };
 
+// Synchronous run — waits for actual result; force=true bypasses 20h dedup
+export const runReminderNow = async (force = true) => {
+  const response = await adminApi.post(`/api/admin/run-reminder-now?force=${force}`);
+  return response.data;
+};
+
 export const sendTestEmail = async (to) => {
-  const response = await api.post('/api/admin/send-test-email', null, { params: { to } });
+  // adminApi gives 60s timeout — SMTP can be slow on cold Railway instances
+  const response = await adminApi.post('/api/admin/send-test-email', null, { params: { to } });
   return response.data;
 };
 

@@ -2292,16 +2292,17 @@ def _gmail_send_email(to: str, subject: str, html: str) -> None:
         ) from exc
 
 
-def _send_daily_email_reminders() -> dict:
+def _send_daily_email_reminders(force: bool = False) -> dict:
     """
     Daily cron job (and admin-triggered): send per-user Gmail API email reminders
     to users with incomplete predictions for matchups that haven't started yet.
 
-    • Only includes series with home_wins + away_wins = 0 (game not yet tipped off)
+    • Only includes series with status='active'
     • Only includes play-in games with winner_id IS NULL
     • Skips users alerted within the last 20 hours (reminder_last_sent_at dedup)
+      — unless force=True, which bypasses dedup for explicit admin runs
     • Updates reminder_last_sent_at per user after a successful send
-    Returns a summary dict.
+    Returns a summary dict with sent, skipped, reason, errors.
     """
     if datetime.utcnow() >= _EMAIL_REMINDER_CUTOFF:
         return {"skipped": "past cutoff"}
@@ -2357,13 +2358,21 @@ def _send_daily_email_reminders() -> dict:
 
         # ── 3. Eligible users: missing picks + 20-hour dedup ─────────────
         cutoff_20h = datetime.utcnow() - timedelta(hours=20)
-        c.execute("""
+        # force=True skips dedup — always emails everyone with missing picks
+        if force:
+            dedup_sql    = ""
+            query_params = (open_series_ids or [0], open_playin_ids or [0])
+        else:
+            dedup_sql    = "AND (u.reminder_last_sent_at IS NULL OR u.reminder_last_sent_at < %s)"
+            query_params = (cutoff_20h, open_series_ids or [0], open_playin_ids or [0])
+
+        c.execute(f"""
             SELECT DISTINCT u.id, u.email
             FROM users u
             WHERE u.email IS NOT NULL
               AND u.email != ''
               AND (u.reminder_opt_out IS NULL OR u.reminder_opt_out = FALSE)
-              AND (u.reminder_last_sent_at IS NULL OR u.reminder_last_sent_at < %s)
+              {dedup_sql}
               AND (
                 EXISTS (
                     SELECT 1 FROM series s
@@ -2382,7 +2391,7 @@ def _send_daily_email_reminders() -> dict:
                       )
                 )
               )
-        """, (cutoff_20h, open_series_ids or [0], open_playin_ids or [0]))
+        """, query_params)
         eligible_users = c.fetchall()
 
         if not eligible_users:
@@ -5272,14 +5281,14 @@ async def admin_send_test_email(request: Request, to: str):
 
 
 @app.post("/api/admin/run-reminder-now")
-async def admin_run_reminder_now():
+async def admin_run_reminder_now(force: bool = False):
     """
     Synchronously run _send_daily_email_reminders() and return its result.
-    Use this to diagnose why daily reminders aren't sending — the response
-    shows how many users were eligible, how many emails were sent, and any
-    errors, without waiting for the 10:00 UTC cron.
+    force=true bypasses the 20-hour per-user dedup so every eligible user
+    (missing picks, not opted out) gets an email regardless of when they
+    last received one.  Safe to use for manual admin-triggered sends.
     """
-    result = _send_daily_email_reminders()
+    result = _send_daily_email_reminders(force=force)
     return result
 
 

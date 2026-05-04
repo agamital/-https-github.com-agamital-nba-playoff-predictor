@@ -1484,13 +1484,19 @@ const ReminderCard = ({ addToast }) => {
     setRunning(true);
     setResult(null);
     try {
-      const res = await api.triggerReminderJob();
+      // force=true bypasses 20-hour dedup so every eligible user gets an email now
+      const res = await api.runReminderNow(true);
       setResult(res);
-      addToast('Reminder job queued ✓', 'success');
+      if (res?.skipped) {
+        addToast(`Reminder skipped: ${res.skipped}`, 'warning');
+      } else {
+        const sent = res?.sent ?? '?';
+        addToast(`Reminder done — sent to ${sent} user(s) ✓`, 'success');
+      }
     } catch (e) {
       const msg = e.response?.data?.detail || e.message;
       setResult({ error: msg });
-      addToast('Reminder job error: ' + msg, 'error');
+      addToast('Reminder error: ' + msg, 'error');
     } finally {
       setRunning(false);
     }
@@ -1523,8 +1529,9 @@ const ReminderCard = ({ addToast }) => {
         <div className="flex-1 min-w-0">
           <h3 className="text-white font-bold text-base">Daily Email Reminders</h3>
           <p className="text-slate-400 text-xs mt-0.5">
-            Sends Resend emails to users with missing picks for unstarted matchups.
-            20-hour dedup per user. Vercel Cron fires daily at 10:00 AM IDT (07:00 UTC).
+            Sends emails to users with missing picks for unstarted matchups.
+            "Run Now" bypasses the 20-hour dedup and waits for the real result.
+            Cron fires daily at 10:00 AM IDT (07:00 UTC).
           </p>
         </div>
         <button
@@ -1556,10 +1563,36 @@ const ReminderCard = ({ addToast }) => {
       </div>
 
       {result && (
-        <div className="mt-3 p-3 rounded-lg bg-slate-800 text-xs font-mono text-slate-300 break-all">
-          {result.error
-            ? <span className="text-red-400">{result.error}</span>
-            : <span className="text-green-400">{result.message || JSON.stringify(result)}</span>}
+        <div className="mt-3 p-3 rounded-lg bg-slate-800 text-xs font-mono text-slate-300 space-y-1">
+          {result.error ? (
+            <span className="text-red-400">✗ {result.error}</span>
+          ) : (
+            <>
+              {result.sent !== undefined && (
+                <div className={result.sent > 0 ? 'text-green-400 font-bold' : 'text-slate-400'}>
+                  {result.sent > 0 ? `✓ Sent to ${result.sent} user(s)` : '✓ 0 emails sent'}
+                </div>
+              )}
+              {result.skipped !== undefined && (
+                <div className="text-slate-400">Early exit: {result.skipped}</div>
+              )}
+              {result.reason && (
+                <div className="text-yellow-400">Reason: {result.reason}</div>
+              )}
+              {result.skipped_no_picks !== undefined && result.skipped_no_picks > 0 && (
+                <div className="text-slate-400">Skipped (all picks filled): {result.skipped_no_picks}</div>
+              )}
+              {result.errors && result.errors.length > 0 && (
+                <div className="text-red-400">
+                  {result.errors.length} error(s):{' '}
+                  {result.errors.slice(0, 3).join(' | ')}
+                </div>
+              )}
+              {result.message && (
+                <div className="text-slate-300">{result.message}</div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
