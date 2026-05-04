@@ -2210,26 +2210,60 @@ def _gmail_send_email(to: str, subject: str, html: str) -> None:
     """
     Send a transactional email.
 
-    Method 1 (preferred) — Resend HTTP API (RESEND_API_KEY env var):
-      Works on Railway. Simple HTTPS POST to api.resend.com. Never blocked.
-      RESEND_FROM must be a verified sender in your Resend dashboard.
+    Method 1 (primary) — Gmail OAuth2 REST API:
+      Uses HTTPS to Google's Gmail API — works fine on Railway (SMTP is blocked).
+      Requires GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN.
 
-    Method 2 (fallback) — Gmail OAuth2 REST API:
-      Used when RESEND_API_KEY is not set and OAuth2 credentials are present.
-      NOTE: Gmail SMTP is blocked on Railway (Errno 101). OAuth2 REST works.
+    Method 2 (fallback) — Resend HTTP API (RESEND_API_KEY env var):
+      Used when Gmail OAuth2 fails or credentials are missing.
+      Requires RESEND_FROM to be a verified sender domain for non-owner addresses.
     """
-    import base64, json
+    import base64
 
-    # ── Method 1: Resend HTTP API ─────────────────────────────────────────────
+    # ── Method 1: Gmail OAuth2 REST API ──────────────────────────────────────
+    if _GMAIL_CLIENT_ID and _GMAIL_CLIENT_SECRET and _GMAIL_REFRESH_TOKEN:
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text      import MIMEText
+        from google.oauth2.credentials  import Credentials
+        from googleapiclient.discovery  import build
+        from googleapiclient.errors     import HttpError
+        from google.auth.exceptions     import RefreshError
+
+        print(f"[Gmail-OAuth] Sending to={to!r}...")
+        mime_msg = MIMEMultipart("alternative")
+        mime_msg["Subject"] = subject
+        mime_msg["From"]    = f"NBA Playoff Predictor <{_GMAIL_SENDER}>"
+        mime_msg["To"]      = to
+        mime_msg.attach(MIMEText(html, "html", "utf-8"))
+
+        try:
+            creds = Credentials(
+                token=None,
+                refresh_token=_GMAIL_REFRESH_TOKEN,
+                client_id=_GMAIL_CLIENT_ID,
+                client_secret=_GMAIL_CLIENT_SECRET,
+                token_uri="https://oauth2.googleapis.com/token",
+                scopes=["https://www.googleapis.com/auth/gmail.send"],
+            )
+            service = build("gmail", "v1", credentials=creds)
+            raw_b64 = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode("utf-8")
+            result  = service.users().messages().send(
+                userId="me", body={"raw": raw_b64}
+            ).execute()
+            print(f"[Gmail-OAuth] ✓ delivered id={result.get('id')} to={to!r}")
+            return
+        except RefreshError as exc:
+            # Token revoked — fall through to Resend
+            print(f"[Gmail-OAuth] Token revoked, falling back to Resend: {exc}")
+        except HttpError as exc:
+            print(f"[Gmail-OAuth] HTTP {exc.resp.status}: {exc.error_details} — falling back to Resend")
+        except Exception as exc:
+            print(f"[Gmail-OAuth] Failed ({type(exc).__name__}: {exc}) — falling back to Resend")
+
+    # ── Method 2: Resend HTTP API fallback ────────────────────────────────────
     if _RESEND_API_KEY:
         import requests as _requests
         print(f"[Resend] Sending to={to!r} from={_RESEND_FROM!r}...")
-        payload = {
-            "from":    _RESEND_FROM,
-            "to":      [to],
-            "subject": subject,
-            "html":    html,
-        }
         try:
             resp = _requests.post(
                 "https://api.resend.com/emails",
@@ -2237,71 +2271,22 @@ def _gmail_send_email(to: str, subject: str, html: str) -> None:
                     "Authorization": f"Bearer {_RESEND_API_KEY}",
                     "Content-Type":  "application/json",
                 },
-                json=payload,
+                json={"from": _RESEND_FROM, "to": [to], "subject": subject, "html": html},
                 timeout=20,
             )
             if resp.status_code in (200, 201):
-                email_id = resp.json().get("id", "?")
-                print(f"[Resend] ✓ delivered id={email_id} to={to!r}")
+                print(f"[Resend] ✓ delivered id={resp.json().get('id','?')} to={to!r}")
                 return
-            else:
-                body = resp.text
-                raise RuntimeError(
-                    f"[Resend] HTTP {resp.status_code}: {body}"
-                )
+            raise RuntimeError(f"[Resend] HTTP {resp.status_code}: {resp.text}")
         except RuntimeError:
             raise
         except Exception as exc:
             raise RuntimeError(f"[Resend] Request failed: {type(exc).__name__}: {exc}") from exc
 
-    # ── Method 2: Gmail OAuth2 REST API (no SMTP — Railway blocks it) ─────────
-    if not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN:
-        raise RuntimeError(
-            "No email credentials set. Add RESEND_API_KEY to Railway env vars "
-            "(preferred), or GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN."
-        )
-
-    print(f"[Gmail-OAuth] Sending to={to!r} (no Resend key — using OAuth2 REST)...")
-
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text      import MIMEText
-    from google.oauth2.credentials  import Credentials
-    from googleapiclient.discovery  import build
-    from googleapiclient.errors     import HttpError
-    from google.auth.exceptions     import RefreshError
-
-    mime_msg = MIMEMultipart("alternative")
-    mime_msg["Subject"] = subject
-    mime_msg["From"]    = f"NBA Playoff Predictor <{_GMAIL_SENDER}>"
-    mime_msg["To"]      = to
-    mime_msg.attach(MIMEText(html, "html", "utf-8"))
-
-    try:
-        creds = Credentials(
-            token=None,
-            refresh_token=_GMAIL_REFRESH_TOKEN,
-            client_id=_GMAIL_CLIENT_ID,
-            client_secret=_GMAIL_CLIENT_SECRET,
-            token_uri="https://oauth2.googleapis.com/token",
-            scopes=["https://www.googleapis.com/auth/gmail.send"],
-        )
-        service = build("gmail", "v1", credentials=creds)
-    except RefreshError as exc:
-        raise RuntimeError(
-            f"[Gmail-OAuth] Token revoked. Set RESEND_API_KEY instead. Detail: {exc}"
-        ) from exc
-    except Exception as exc:
-        raise RuntimeError(f"[Gmail-OAuth] Build failed: {type(exc).__name__}: {exc}") from exc
-
-    raw_b64 = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode("utf-8")
-    try:
-        result = (service.users().messages()
-                         .send(userId="me", body={"raw": raw_b64}).execute())
-        print(f"[Gmail-OAuth] ✓ delivered id={result.get('id')} to={to!r}")
-    except HttpError as exc:
-        raise RuntimeError(f"[Gmail-OAuth] HTTP {exc.resp.status}: {exc.error_details}") from exc
-    except Exception as exc:
-        raise RuntimeError(f"[Gmail-OAuth] Unexpected: {type(exc).__name__}: {exc}") from exc
+    raise RuntimeError(
+        "No email credentials configured. Add GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET "
+        "+ GMAIL_REFRESH_TOKEN to Railway env vars (primary), or RESEND_API_KEY (fallback)."
+    )
 
 
 def _send_daily_email_reminders(force: bool = False) -> dict:
@@ -2319,11 +2304,11 @@ def _send_daily_email_reminders(force: bool = False) -> dict:
     if datetime.utcnow() >= _EMAIL_REMINDER_CUTOFF:
         return {"skipped": "past cutoff"}
 
-    _has_resend = bool(_RESEND_API_KEY)
     _has_gmail  = bool(_GMAIL_CLIENT_ID and _GMAIL_CLIENT_SECRET and _GMAIL_REFRESH_TOKEN)
-    if not _has_resend and not _has_gmail:
-        print("[EmailReminder] No email credentials set (RESEND_API_KEY or Gmail OAuth2) — skipping")
-        return {"skipped": "no email credentials — set RESEND_API_KEY in Railway"}
+    _has_resend = bool(_RESEND_API_KEY)
+    if not _has_gmail and not _has_resend:
+        print("[EmailReminder] No email credentials set — skipping")
+        return {"skipped": "no email credentials (need Gmail OAuth2 or RESEND_API_KEY)"}
 
     conn = None
     sent = 0
