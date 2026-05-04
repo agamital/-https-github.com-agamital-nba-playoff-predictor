@@ -378,7 +378,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
     queryKey: ['userProfile', username],
     queryFn:  () => api.getUserProfile(username),
     enabled:  !!username,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
     gcTime:   20 * 60 * 1000,
     retry: 1,
   });
@@ -392,7 +392,7 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
     queryKey: ['userPredictions', effectiveUserId, currentUser?.user_id],
     queryFn:  () => api.getMyPredictions(effectiveUserId, '2026', currentUser?.user_id ?? null),
     enabled:  !!effectiveUserId,
-    staleTime: 2 * 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime:   15 * 60 * 1000,
     retry: 1,
   });

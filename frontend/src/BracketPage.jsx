@@ -1829,18 +1829,18 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const { data: series = [],     isLoading: l1, isError: e1, refetch: r1 } = useQuery({
     queryKey: ['series', '2026'],
     queryFn:  () => api.getSeries('2026'),
-    staleTime: 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime:   20 * 60 * 1000,
     retry: 3, retryDelay: _retryDelay,
-    refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000,
+    refetchOnWindowFocus: true, refetchInterval: 60 * 1000,
   });
   const { data: playInGames = [], isLoading: l2, isError: e2, refetch: r2 } = useQuery({
     queryKey: ['playin', '2026'],
     queryFn:  () => api.getPlayInGames('2026'),
-    staleTime: 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime:   20 * 60 * 1000,
     retry: 3, retryDelay: _retryDelay,
-    refetchOnWindowFocus: true, refetchInterval: 3 * 60 * 1000,
+    refetchOnWindowFocus: true, refetchInterval: 60 * 1000,
   });
 
   // SUPPLEMENTAL — bracket degrades gracefully if these fail; not in hasError
@@ -1863,10 +1863,10 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const { data: globalStats } = useQuery({
     queryKey: ['globalStats'],
     queryFn:  () => api.getGlobalStats('2026'),
-    staleTime: 2 * 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime:   20 * 60 * 1000,
     retry: 2, retryDelay: _retryDelay,
-    refetchInterval: 3 * 60 * 1000,
+    refetchInterval: 60 * 1000,
   });
 
   // Load the current user's saved predictions so picks are pre-populated on page load

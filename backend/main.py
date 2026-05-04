@@ -7354,7 +7354,7 @@ async def global_stats(response: Response, season: str = "2026"):
             },
             'total_users': total_users,
         }
-        response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=120"
+        response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
         return result
     except Exception as e:
         print(f"global_stats fatal error: {e}")

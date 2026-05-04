@@ -285,15 +285,15 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
   const { data: pageData, isLoading: pageLoading } = useQuery({
     queryKey: ['futuresPageData'],
     queryFn:  () => api.getFuturesPageData(),
-    staleTime: 2 * 60 * 1000,
-    refetchInterval: 3 * 60 * 1000,
+    staleTime: 30 * 1000,
+    refetchInterval: 60 * 1000,
   });
 
   // ── React Query — regular-season leaders reference ───────────────────────
   const { data: playerLeaders } = useQuery({
     queryKey: ['playerLeaders', '2026'],
     queryFn:  () => api.getPlayerLeaders('2026', 5, true),
-    staleTime: 30 * 60 * 1000,
+    staleTime: 30 * 60 * 1000,   // player stats don't change mid-session
   });
 
   // ── React Query — user's existing futures prediction ────────────────────
@@ -301,8 +301,8 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
     queryKey: ['userFutures', currentUser?.user_id],
     queryFn:  () => api.getFutures(currentUser.user_id),
     enabled:  !!currentUser,
-    staleTime: 60 * 1000,
-    refetchInterval: 3 * 60 * 1000,
+    staleTime: 30 * 1000,
+    refetchInterval: 60 * 1000,
   });
 
   // ── React Query — user's existing leaders prediction ────────────────────
@@ -310,8 +310,8 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
     queryKey: ['userLeaders', currentUser?.user_id],
     queryFn:  () => api.getLeadersPrediction(currentUser.user_id),
     enabled:  !!currentUser,
-    staleTime: 60 * 1000,
-    refetchInterval: 3 * 60 * 1000,
+    staleTime: 30 * 1000,
+    refetchInterval: 60 * 1000,
   });
 
   // Populate form when existing predictions load

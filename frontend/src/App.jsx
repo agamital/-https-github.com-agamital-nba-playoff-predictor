@@ -257,10 +257,10 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
   const { data: homeHighsData, isLoading: homeHighsLoading } = useQuery({
     queryKey: ['playoffHighs', 'v3'],
     queryFn:  () => api.getPlayoffHighs('2026'),
-    staleTime: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     refetchOnWindowFocus: true,
-    refetchInterval: 5 * 60 * 1000,
+    refetchInterval: 2 * 60 * 1000,
     retry: 2,
   });
   const homePlayoffHighs = homeHighsLoading ? undefined : (homeHighsData?.highs ?? null);
@@ -992,7 +992,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
     queryKey: ['seriesPicks', s.series_id],
     queryFn:  () => api.getSeriesPicks(s.series_id),
     enabled:  picksVisible && expanded,
-    staleTime: 2 * 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime:   15 * 60 * 1000,
     retry: 1,
   });
@@ -1846,20 +1846,20 @@ const GlobalStatsTab = ({ currentUser }) => {
   const { data: stats, isLoading: loading } = useQuery({
     queryKey: ['globalStats'],
     queryFn:  () => api.getGlobalStats('2026'),
-    staleTime: 2 * 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime:   20 * 60 * 1000,
     refetchOnWindowFocus: true,
-    refetchInterval: 3 * 60 * 1000,
+    refetchInterval: 60 * 1000,
   });
 
-  // Live playoff single-game records — refreshes every 5 min (auto-updates when boxscores sync)
+  // Live playoff single-game records — refreshes every 2 min (auto-updates when boxscores sync)
   const { data: highsData, isLoading: highsLoading } = useQuery({
     queryKey: ['playoffHighs', 'v3'],
     queryFn:  () => api.getPlayoffHighs('2026'),
-    staleTime: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     refetchOnWindowFocus: true,
-    refetchInterval: 5 * 60 * 1000,
+    refetchInterval: 2 * 60 * 1000,
     retry: 2,
   });
   // highsData?.highs is an object when loaded; undefined while loading/error
@@ -2252,10 +2252,10 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
   const { data: leaderboard = [], isLoading: loading } = useQuery({
     queryKey: ['leaderboard', 'v2'],
     queryFn:  () => api.getLeaderboard('2026'),
-    staleTime: 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime:   15 * 60 * 1000,
     refetchOnWindowFocus: true,
-    refetchInterval: 3 * 60 * 1000,   // auto-refresh every 3 min after game results arrive
+    refetchInterval: 60 * 1000,
   });
 
   const medals = ['🥇', '🥈', '🥉'];
@@ -3214,10 +3214,10 @@ function App() {
     queryKey: ['notifications', currentUser?.user_id],
     queryFn:  () => api.getNotificationsSummary(currentUser.user_id),
     enabled:  !!currentUser?.user_id,
-    staleTime: 2 * 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime:   15 * 60 * 1000,
     refetchOnWindowFocus: true,
-    refetchInterval: 3 * 60 * 1000,
+    refetchInterval: 60 * 1000,
   });
   const navBadgeCount = _navSummary?.total ?? 0;
 

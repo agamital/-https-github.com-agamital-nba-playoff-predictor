@@ -301,7 +301,7 @@ const MyPredictionsPage = ({ currentUser }) => {
     queryKey: ['myPredictions', currentUser?.user_id],
     queryFn:  () => api.getMyPredictions(currentUser.user_id, '2026'),
     enabled:  !!currentUser?.user_id,
-    staleTime: 3 * 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime:   20 * 60 * 1000,
     retry: 1,
   });

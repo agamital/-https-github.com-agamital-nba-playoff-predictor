@@ -4,7 +4,7 @@ import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persist
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 2 * 60 * 1000,      // 2 min — during playoffs data changes frequently
+      staleTime: 30 * 1000,           // 30 s — serve cached instantly, revalidate in background
       gcTime:    24 * 60 * 60 * 1000, // 24 h — keep in memory/localStorage
       refetchOnWindowFocus: true,     // always re-check when user tabs back in
       retry: 1,
