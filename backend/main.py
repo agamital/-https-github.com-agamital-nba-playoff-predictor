@@ -85,12 +85,16 @@ _sync_status = {
 _ONESIGNAL_APP_ID  = os.getenv("ONESIGNAL_APP_ID",  "c69b4c3e-79d1-48a4-8815-3ceabc1eae70")
 _ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY",  "")
 
-# Gmail API (OAuth2) credentials — set these in Railway env vars.
-# Gmail credentials — two methods, App Password preferred (never expires).
-# Method A (preferred): GMAIL_APP_PASSWORD — 16-char App Password from
-#   myaccount.google.com/apppasswords. Uses SMTP+TLS, never expires.
-# Method B (fallback): OAuth2 refresh token — expires if token is revoked.
-_GMAIL_APP_PASSWORD  = os.getenv("GMAIL_APP_PASSWORD",  "")   # preferred
+# ── Resend (HTTP API — works on Railway; SMTP is blocked) ────────────────────
+# Sign up at resend.com, get an API key, add it to Railway env vars.
+# RESEND_FROM must be an address on a domain you've verified in Resend, OR
+# use 'onboarding@resend.dev' to send only to your own verified email (testing).
+_RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+_RESEND_FROM    = os.getenv("RESEND_FROM",
+                             "NBA Playoff Predictor <onboarding@resend.dev>")
+
+# ── Gmail SMTP credentials (kept for local dev; Railway blocks SMTP) ──────────
+_GMAIL_APP_PASSWORD  = os.getenv("GMAIL_APP_PASSWORD",  "")
 _GMAIL_CLIENT_ID     = os.getenv("GMAIL_CLIENT_ID",     "")
 _GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET", "")
 _GMAIL_REFRESH_TOKEN = os.getenv("GMAIL_REFRESH_TOKEN", "")
@@ -1560,9 +1564,9 @@ def _send_missing_picks_alert() -> None:
         return
 
     has_push  = bool(_ONESIGNAL_API_KEY)
-    has_email = bool(_GMAIL_APP_PASSWORD or (_GMAIL_CLIENT_ID and _GMAIL_CLIENT_SECRET and _GMAIL_REFRESH_TOKEN))
+    has_email = bool(_RESEND_API_KEY or (_GMAIL_CLIENT_ID and _GMAIL_CLIENT_SECRET and _GMAIL_REFRESH_TOKEN))
     if not has_push and not has_email:
-        print("[Alert] Neither ONESIGNAL_API_KEY nor Gmail API credentials set — skipping alert")
+        print("[Alert] No push or email credentials set — skipping alert")
         return
 
     conn = None
@@ -2128,8 +2132,8 @@ def _send_bulk_email_reminder(context_label: str, hours_before: int,
     email_labels = [(email_address, [label_str, ...]), ...]
     Skips entries with empty label lists.  Returns count of emails sent.  Never raises.
     """
-    if not _GMAIL_APP_PASSWORD and (not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN):
-        print(f"[BulkEmail {hours_before}h] Gmail credentials not set — skipping")
+    if not _RESEND_API_KEY and (not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN):
+        print(f"[BulkEmail {hours_before}h] No email credentials set — skipping")
         return 0
     if not email_labels:
         return 0
@@ -2204,81 +2208,73 @@ def _build_reminder_html(missing_labels: list[str]) -> str:
 
 def _gmail_send_email(to: str, subject: str, html: str) -> None:
     """
-    Send a transactional email via Gmail.
+    Send a transactional email.
 
-    Method A (preferred) — SMTP + App Password (GMAIL_APP_PASSWORD env var):
-      Static 16-char password from myaccount.google.com/apppasswords.
-      Never expires. Uses port 587 (STARTTLS) which Railway allows.
+    Method 1 (preferred) — Resend HTTP API (RESEND_API_KEY env var):
+      Works on Railway. Simple HTTPS POST to api.resend.com. Never blocked.
+      RESEND_FROM must be a verified sender in your Resend dashboard.
 
-    Method B (fallback) — Gmail REST API + OAuth2 refresh token:
-      Used when GMAIL_APP_PASSWORD is not set. Token can be revoked; if that
-      happens regenerate with tools/get_gmail_token_manual.py.
+    Method 2 (fallback) — Gmail OAuth2 REST API:
+      Used when RESEND_API_KEY is not set and OAuth2 credentials are present.
+      NOTE: Gmail SMTP is blocked on Railway (Errno 101). OAuth2 REST works.
     """
-    import base64, smtplib, ssl
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text      import MIMEText
+    import base64, json
 
-    # ── Build MIME message (shared by both methods) ───────────────────────────
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"NBA Playoff Predictor <{_GMAIL_SENDER}>"
-    msg["To"]      = to
-    msg.attach(MIMEText(html, "html", "utf-8"))
-
-    # ── Method A: SMTP + App Password ────────────────────────────────────────
-    # Try port 587 (STARTTLS) first; fall back to port 465 (SSL) if it hangs.
-    # Always pass timeout=25 so a silently-dropped Railway connection fails fast
-    # instead of blocking indefinitely.
-    if _GMAIL_APP_PASSWORD:
-        _smtp_timeout = 25   # seconds — fail fast if Railway drops the connection
-        print(f"[Gmail-SMTP] Sending to={to!r} via App Password (timeout={_smtp_timeout}s)...")
-        last_exc = None
-
-        # Port 587 — STARTTLS
+    # ── Method 1: Resend HTTP API ─────────────────────────────────────────────
+    if _RESEND_API_KEY:
+        import requests as _requests
+        print(f"[Resend] Sending to={to!r} from={_RESEND_FROM!r}...")
+        payload = {
+            "from":    _RESEND_FROM,
+            "to":      [to],
+            "subject": subject,
+            "html":    html,
+        }
         try:
-            context = ssl.create_default_context()
-            with smtplib.SMTP("smtp.gmail.com", 587, timeout=_smtp_timeout) as server:
-                server.ehlo()
-                server.starttls(context=context)
-                server.ehlo()
-                server.login(_GMAIL_SENDER, _GMAIL_APP_PASSWORD)
-                server.sendmail(_GMAIL_SENDER, to, msg.as_string())
-            print(f"[Gmail-SMTP] ✓ delivered to={to!r} via port 587")
-            return
+            resp = _requests.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {_RESEND_API_KEY}",
+                    "Content-Type":  "application/json",
+                },
+                json=payload,
+                timeout=20,
+            )
+            if resp.status_code in (200, 201):
+                email_id = resp.json().get("id", "?")
+                print(f"[Resend] ✓ delivered id={email_id} to={to!r}")
+                return
+            else:
+                body = resp.text
+                raise RuntimeError(
+                    f"[Resend] HTTP {resp.status_code}: {body}"
+                )
+        except RuntimeError:
+            raise
         except Exception as exc:
-            last_exc = exc
-            print(f"[Gmail-SMTP] port 587 failed ({type(exc).__name__}: {exc}) — trying port 465...")
+            raise RuntimeError(f"[Resend] Request failed: {type(exc).__name__}: {exc}") from exc
 
-        # Port 465 — SSL (fallback when Railway blocks 587)
-        try:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=_smtp_timeout) as server:
-                server.ehlo()
-                server.login(_GMAIL_SENDER, _GMAIL_APP_PASSWORD)
-                server.sendmail(_GMAIL_SENDER, to, msg.as_string())
-            print(f"[Gmail-SMTP] ✓ delivered to={to!r} via port 465")
-            return
-        except Exception as exc2:
-            raise RuntimeError(
-                f"[Gmail-SMTP] Both ports failed. "
-                f"Port 587: {type(last_exc).__name__}: {last_exc}. "
-                f"Port 465: {type(exc2).__name__}: {exc2}. "
-                f"Check GMAIL_APP_PASSWORD and that 2-Step Verification is enabled."
-            ) from exc2
-
-    # ── Method B: OAuth2 REST API fallback ───────────────────────────────────
-    if not _GMAIL_APP_PASSWORD and (not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN):
+    # ── Method 2: Gmail OAuth2 REST API (no SMTP — Railway blocks it) ─────────
+    if not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN:
         raise RuntimeError(
-            "No Gmail credentials set — add GMAIL_APP_PASSWORD (preferred) or "
-            "GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN to Railway"
+            "No email credentials set. Add RESEND_API_KEY to Railway env vars "
+            "(preferred), or GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN."
         )
 
-    print(f"[Gmail-OAuth] Sending to={to!r} (App Password not set, using OAuth)...")
+    print(f"[Gmail-OAuth] Sending to={to!r} (no Resend key — using OAuth2 REST)...")
 
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text      import MIMEText
     from google.oauth2.credentials  import Credentials
     from googleapiclient.discovery  import build
     from googleapiclient.errors     import HttpError
-    from google.auth.exceptions     import RefreshError, TransportError
+    from google.auth.exceptions     import RefreshError
+
+    mime_msg = MIMEMultipart("alternative")
+    mime_msg["Subject"] = subject
+    mime_msg["From"]    = f"NBA Playoff Predictor <{_GMAIL_SENDER}>"
+    mime_msg["To"]      = to
+    mime_msg.attach(MIMEText(html, "html", "utf-8"))
 
     try:
         creds = Credentials(
@@ -2292,27 +2288,20 @@ def _gmail_send_email(to: str, subject: str, html: str) -> None:
         service = build("gmail", "v1", credentials=creds)
     except RefreshError as exc:
         raise RuntimeError(
-            f"[Gmail-OAuth] Token revoked — regenerate with "
-            f"tools/get_gmail_token_manual.py and update GMAIL_REFRESH_TOKEN "
-            f"in Railway. Better: set GMAIL_APP_PASSWORD to avoid this forever. "
-            f"Detail: {exc}"
+            f"[Gmail-OAuth] Token revoked. Set RESEND_API_KEY instead. Detail: {exc}"
         ) from exc
     except Exception as exc:
         raise RuntimeError(f"[Gmail-OAuth] Build failed: {type(exc).__name__}: {exc}") from exc
 
-    raw_b64 = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    raw_b64 = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode("utf-8")
     try:
         result = (service.users().messages()
                          .send(userId="me", body={"raw": raw_b64}).execute())
         print(f"[Gmail-OAuth] ✓ delivered id={result.get('id')} to={to!r}")
     except HttpError as exc:
-        raise RuntimeError(
-            f"[Gmail-OAuth] HTTP {exc.resp.status}: {exc.error_details}"
-        ) from exc
+        raise RuntimeError(f"[Gmail-OAuth] HTTP {exc.resp.status}: {exc.error_details}") from exc
     except Exception as exc:
-        raise RuntimeError(
-            f"[Gmail-OAuth] Unexpected error: {type(exc).__name__}: {exc}"
-        ) from exc
+        raise RuntimeError(f"[Gmail-OAuth] Unexpected: {type(exc).__name__}: {exc}") from exc
 
 
 def _send_daily_email_reminders(force: bool = False) -> dict:
@@ -2330,9 +2319,11 @@ def _send_daily_email_reminders(force: bool = False) -> dict:
     if datetime.utcnow() >= _EMAIL_REMINDER_CUTOFF:
         return {"skipped": "past cutoff"}
 
-    if not _GMAIL_APP_PASSWORD and (not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN):
-        print("[EmailReminder] Gmail API credentials not set — skipping")
-        return {"skipped": "no gmail credentials"}
+    _has_resend = bool(_RESEND_API_KEY)
+    _has_gmail  = bool(_GMAIL_CLIENT_ID and _GMAIL_CLIENT_SECRET and _GMAIL_REFRESH_TOKEN)
+    if not _has_resend and not _has_gmail:
+        print("[EmailReminder] No email credentials set (RESEND_API_KEY or Gmail OAuth2) — skipping")
+        return {"skipped": "no email credentials — set RESEND_API_KEY in Railway"}
 
     conn = None
     sent = 0
