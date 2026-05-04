@@ -562,8 +562,8 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
   const { data: seriesPlayers = [] } = useQuery({
     queryKey: ['seriesPlayers', seriesId],
     queryFn:  () => api.getSeriesPlayers(seriesId),
-    staleTime: 30 * 60 * 1000,
-    gcTime:   120 * 60 * 1000,
+    staleTime: 4 * 60 * 60 * 1000,    // player rosters per series — stable for hours
+    gcTime:   4 * 60 * 60 * 1000,
     enabled: !!seriesId,
   });
 
@@ -1274,7 +1274,7 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
   const { data: seriesPlayers = [] } = useQuery({
     queryKey: ['seriesPlayers', series.id],
     queryFn:  () => api.getSeriesPlayers(series.id),
-    staleTime: 30 * 60 * 1000,
+    staleTime: 4 * 60 * 60 * 1000,    // player rosters per series — stable for hours
     enabled: !!(picked && !isCompleted && !isLocked),
   });
 
@@ -1847,17 +1847,17 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const { data: allTeams = [],   isLoading: l3, isError: e3, refetch: r3 } = useQuery({
     queryKey: ['teams'],
     queryFn:  () => api.getTeams(),
-    staleTime: 10 * 60 * 1000,
-    gcTime:   60 * 60 * 1000,   // teams never change — keep in cache 1 hour
+    staleTime: 24 * 60 * 60 * 1000,   // playoff rosters are fixed for the season
+    gcTime:   24 * 60 * 60 * 1000,
     retry: 2, retryDelay: _retryDelay,
   });
   const { data: standingsRaw,    isLoading: l4, isError: e4, refetch: r4 } = useQuery({
     queryKey: ['standings'],
     queryFn:  () => api.getStandings(),
-    staleTime: 10 * 60 * 1000,
-    gcTime:   60 * 60 * 1000,   // standings are static post-cutoff — keep in cache 1 hour
+    staleTime: 24 * 60 * 60 * 1000,   // static post-season cutoff
+    gcTime:   24 * 60 * 60 * 1000,
     retry: 2, retryDelay: _retryDelay,
-    refetchInterval: 10 * 60 * 1000,
+    refetchInterval: 24 * 60 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
   const { data: globalStats } = useQuery({

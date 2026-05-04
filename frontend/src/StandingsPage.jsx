@@ -3,6 +3,13 @@ import { RefreshCw, Trophy, WifiOff, AlertTriangle, Database, Wifi, Star, Clock,
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './services/api';
 
+// ── Game-time cache helper ───────────────────────────────────────────────────
+// Playoff games run 21:00–08:00 UTC. During that window boxscores update
+// frequently; outside it historical data is stable.
+const _isGamesTime = () => { const h = new Date().getUTCHours(); return h >= 21 || h < 8; };
+const _boxscoreStale    = () => _isGamesTime() ? 3 * 60 * 1000  : 30 * 60 * 1000;
+const _boxscoreInterval = () => _isGamesTime() ? 3 * 60 * 1000  : false;
+
 // ── NBA team ID map for logo CDN ────────────────────────────────────────────
 const NBA_TEAM_IDS = {
   ATL: 1610612737, BOS: 1610612738, BKN: 1610612751, CHA: 1610612766,
@@ -78,7 +85,7 @@ const GameWithPerformersCard = ({ game, onClick }) => {
     qc.prefetchQuery({
       queryKey: ['gameBoxscore', game.id],
       queryFn:  () => api.getGameBoxscore(game.id),
-      staleTime: 30 * 60 * 1000,
+      staleTime: _boxscoreStale(),
     });
   };
 
@@ -172,7 +179,7 @@ const GameCard = ({ game, onClick }) => {
     qc.prefetchQuery({
       queryKey: ['gameBoxscore', game.id],
       queryFn:  () => api.getGameBoxscore(game.id),
-      staleTime: 30 * 60 * 1000,
+      staleTime: _boxscoreStale(),
     });
   };
   return (
@@ -220,7 +227,8 @@ const BoxscoreModal = ({ game, onClose }) => {
     queryKey: ['gameBoxscore', game.id],
     queryFn:  () => api.getGameBoxscore(game.id),
     enabled:  !!game.id,
-    staleTime: 30 * 60 * 1000,
+    staleTime:      _boxscoreStale(),
+    refetchInterval: _boxscoreInterval(),
   });
 
   useEffect(() => {

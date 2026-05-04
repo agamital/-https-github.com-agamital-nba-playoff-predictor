@@ -6398,7 +6398,7 @@ async def api_teams(response: Response, conference: Optional[str] = None, playof
             t['conf_rank'] = rank_map.get(t['id'], 99)
         teams.sort(key=lambda t: (t['conference'], t.get('conf_rank', 99)))
 
-    response.headers["Cache-Control"] = "public, max-age=300"  # teams rarely change
+    response.headers["Cache-Control"] = "public, max-age=86400"  # playoff rosters fixed for season
     return teams
 
 @app.post("/api/auth/register")
