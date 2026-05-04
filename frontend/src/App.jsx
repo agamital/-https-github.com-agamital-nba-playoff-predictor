@@ -928,11 +928,22 @@ const PicksLockedPlaceholder = () => (
   </div>
 );
 
-// Format an ISO UTC time to Jerusalem (IDT = UTC+3) display string, e.g. "Saturday April 18 · 20:00 IDT"
-function _fmtIDT(isoZ) {
-  if (!isoZ) return null;
+// Normalise a backend datetime string to a proper UTC ISO string.
+// The backend stores '2026-05-05 23:00:00' (space-separated, no Z).
+// new Date('2026-05-05 23:00:00') is treated as LOCAL time in Chrome — wrong.
+// This makes it unambiguously UTC so every browser parses it the same way.
+function _toUtcIso(raw) {
+  if (!raw) return null;
+  const t = String(raw).trim().replace(' ', 'T');
+  return t.endsWith('Z') || t.includes('+') ? t : t + 'Z';
+}
+
+// Format a backend datetime string to Jerusalem (IDT = UTC+3) display string,
+// e.g. "Saturday April 18 · 20:00 IDT"
+function _fmtIDT(raw) {
+  if (!raw) return null;
   try {
-    const d = new Date(isoZ);
+    const d = new Date(_toUtcIso(raw));
     const idt = new Date(d.getTime() + 3 * 60 * 60 * 1000);
     const days   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -972,7 +983,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
   const awayPct = s.away_pct;
   const noVotes = total === 0;
 
-  const g1Ms = s.game1_start_time ? new Date(s.game1_start_time).getTime() : null;
+  const g1Ms = s.game1_start_time ? new Date(_toUtcIso(s.game1_start_time)).getTime() : null;
   const _initVisible = s.picks_locked || s.status !== 'active' || (g1Ms != null && Date.now() >= g1Ms);
   const [picksVisible, setPicksVisible] = useState(_initVisible);
 
