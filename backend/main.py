@@ -2226,22 +2226,45 @@ def _gmail_send_email(to: str, subject: str, html: str) -> None:
     msg.attach(MIMEText(html, "html", "utf-8"))
 
     # ── Method A: SMTP + App Password ────────────────────────────────────────
+    # Try port 587 (STARTTLS) first; fall back to port 465 (SSL) if it hangs.
+    # Always pass timeout=25 so a silently-dropped Railway connection fails fast
+    # instead of blocking indefinitely.
     if _GMAIL_APP_PASSWORD:
-        print(f"[Gmail-SMTP] Sending to={to!r} via App Password...")
+        _smtp_timeout = 25   # seconds — fail fast if Railway drops the connection
+        print(f"[Gmail-SMTP] Sending to={to!r} via App Password (timeout={_smtp_timeout}s)...")
+        last_exc = None
+
+        # Port 587 — STARTTLS
         try:
             context = ssl.create_default_context()
-            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=_smtp_timeout) as server:
                 server.ehlo()
                 server.starttls(context=context)
+                server.ehlo()
                 server.login(_GMAIL_SENDER, _GMAIL_APP_PASSWORD)
                 server.sendmail(_GMAIL_SENDER, to, msg.as_string())
-            print(f"[Gmail-SMTP] ✓ delivered to={to!r}")
+            print(f"[Gmail-SMTP] ✓ delivered to={to!r} via port 587")
             return
         except Exception as exc:
+            last_exc = exc
+            print(f"[Gmail-SMTP] port 587 failed ({type(exc).__name__}: {exc}) — trying port 465...")
+
+        # Port 465 — SSL (fallback when Railway blocks 587)
+        try:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=_smtp_timeout) as server:
+                server.ehlo()
+                server.login(_GMAIL_SENDER, _GMAIL_APP_PASSWORD)
+                server.sendmail(_GMAIL_SENDER, to, msg.as_string())
+            print(f"[Gmail-SMTP] ✓ delivered to={to!r} via port 465")
+            return
+        except Exception as exc2:
             raise RuntimeError(
-                f"[Gmail-SMTP] FAILED — {type(exc).__name__}: {exc}. "
+                f"[Gmail-SMTP] Both ports failed. "
+                f"Port 587: {type(last_exc).__name__}: {last_exc}. "
+                f"Port 465: {type(exc2).__name__}: {exc2}. "
                 f"Check GMAIL_APP_PASSWORD and that 2-Step Verification is enabled."
-            ) from exc
+            ) from exc2
 
     # ── Method B: OAuth2 REST API fallback ───────────────────────────────────
     if not _GMAIL_APP_PASSWORD and (not _GMAIL_CLIENT_ID or not _GMAIL_CLIENT_SECRET or not _GMAIL_REFRESH_TOKEN):

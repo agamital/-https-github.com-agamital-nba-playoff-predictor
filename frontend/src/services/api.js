@@ -546,14 +546,23 @@ export const triggerReminderJob = async () => {
 };
 
 // Synchronous run — waits for actual result; force=true bypasses 20h dedup
+// 120s timeout: SMTP has 25s per port × 2 ports fallback, plus per-user loop
 export const runReminderNow = async (force = true) => {
-  const response = await adminApi.post(`/api/admin/run-reminder-now?force=${force}`);
+  const response = await adminApi.post(
+    `/api/admin/run-reminder-now?force=${force}`,
+    null,
+    { timeout: 120000 }
+  );
   return response.data;
 };
 
 export const sendTestEmail = async (to) => {
-  // adminApi gives 60s timeout — SMTP can be slow on cold Railway instances
-  const response = await adminApi.post('/api/admin/send-test-email', null, { params: { to } });
+  // 60s: SMTP has 25s per port × 2 ports fallback
+  const response = await adminApi.post(
+    '/api/admin/send-test-email',
+    null,
+    { params: { to }, timeout: 60000 }
+  );
   return response.data;
 };
 

@@ -1530,7 +1530,7 @@ const ReminderCard = ({ addToast }) => {
           <h3 className="text-white font-bold text-base">Daily Email Reminders</h3>
           <p className="text-slate-400 text-xs mt-0.5">
             Sends emails to users with missing picks for unstarted matchups.
-            "Run Now" bypasses the 20-hour dedup and waits for the real result.
+            "Run Now" bypasses the 20-hour dedup and waits for the real result (up to ~2 min).
             Cron fires daily at 10:00 AM IDT (07:00 UTC).
           </p>
         </div>
