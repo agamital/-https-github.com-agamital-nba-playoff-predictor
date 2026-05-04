@@ -1768,6 +1768,67 @@ const PlayoffCurrentHighs = ({ highs, compact = false }) => {
   );
 };
 
+// ── Collapsible round sections for Community Picks ────────────────────────────
+// Kept as a separate component so useState isn't called inside a callback/map
+const RoundPickSections = ({ sortedRounds, byRound, initOpen, currentUser }) => {
+  const [openRounds, setOpenRounds] = React.useState(initOpen);
+  const toggle = (round) => setOpenRounds(prev => ({ ...prev, [round]: !prev[round] }));
+
+  const ROUND_COLORS = {
+    'First Round':           { text: 'text-orange-400', border: 'border-orange-500/25', bg: 'bg-orange-500/8',  dot: '①' },
+    'Conference Semifinals': { text: 'text-amber-400',  border: 'border-amber-500/25',  bg: 'bg-amber-500/8',   dot: '②' },
+    'Conference Finals':     { text: 'text-red-400',    border: 'border-red-500/25',    bg: 'bg-red-500/8',     dot: '③' },
+    'NBA Finals':            { text: 'text-yellow-400', border: 'border-yellow-500/25', bg: 'bg-yellow-500/8',  dot: '🏆' },
+  };
+
+  return (
+    <div className="space-y-3">
+      {sortedRounds.map(round => {
+        const open    = !!openRounds[round];
+        const series  = byRound[round];
+        const allDone = series.every(s => s.status === 'completed');
+        const cfg     = ROUND_COLORS[round] || { text: 'text-slate-400', border: 'border-slate-700', bg: 'bg-slate-800/30', dot: '•' };
+        const votes   = series.reduce((s, x) => s + (x.total_votes || 0), 0);
+
+        return (
+          <div key={round} className={`rounded-2xl border ${cfg.border} overflow-hidden`}>
+            {/* Header */}
+            <button
+              onClick={() => toggle(round)}
+              className={`w-full flex items-center justify-between px-4 py-3 ${cfg.bg} hover:opacity-90 transition-opacity`}
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="text-sm leading-none">{cfg.dot}</span>
+                <span className={`text-sm font-black ${cfg.text}`}>{round}</span>
+                <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-slate-800/60 border border-slate-700/50 text-slate-400">
+                  {series.length} series · {votes} picks
+                </span>
+                {allDone && (
+                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-green-500/15 border border-green-500/25 text-green-400 flex items-center gap-1">
+                    <CheckCircle className="w-2.5 h-2.5" /> Done
+                  </span>
+                )}
+              </div>
+              {open
+                ? <ChevronUp   className="w-4 h-4 text-slate-400 shrink-0" />
+                : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+              }
+            </button>
+            {/* Content */}
+            {open && (
+              <div className="p-3 space-y-3 bg-slate-950/20">
+                {series.map(s => (
+                  <SeriesVoteBar key={s.series_id} s={s} currentUser={currentUser} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const GlobalStatsTab = ({ currentUser }) => {
   const { data: stats, isLoading: loading } = useQuery({
     queryKey: ['globalStats'],
@@ -1935,15 +1996,16 @@ const GlobalStatsTab = ({ currentUser }) => {
         </div>
       )}
 
-      {/* ── Series votes by round ── */}
-      {sortedRounds.map(round => (
-        <div key={round} className="space-y-3">
-          <SectionDivider label={round} />
-          {byRound[round].map(s => (
-            <SeriesVoteBar key={s.series_id} s={s} currentUser={currentUser} />
-          ))}
-        </div>
-      ))}
+      {/* ── Series votes by round (collapsible) ── */}
+      {(() => {
+        // Default: collapse a round if every series in it is completed
+        const initOpen = {};
+        sortedRounds.forEach(r => {
+          const allDone = byRound[r].every(s => s.status === 'completed');
+          initOpen[r] = !allDone;
+        });
+        return <RoundPickSections sortedRounds={sortedRounds} byRound={byRound} initOpen={initOpen} currentUser={currentUser} />;
+      })()}
 
       {/* ── Futures top picks ── */}
       {hasFutures && (
