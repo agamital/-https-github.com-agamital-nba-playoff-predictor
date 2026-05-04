@@ -1769,9 +1769,22 @@ const PlayoffCurrentHighs = ({ highs, compact = false }) => {
 };
 
 // ── Collapsible round sections for Community Picks ────────────────────────────
-// Kept as a separate component so useState isn't called inside a callback/map
-const RoundPickSections = ({ sortedRounds, byRound, initOpen, currentUser }) => {
-  const [openRounds, setOpenRounds] = React.useState(initOpen);
+// Kept as a separate component so useState isn't called inside a callback/map.
+// byRound is used inside the lazy initialiser so state is correct even when
+// data arrives from cache (no loading phase). The parent passes a stable `key`
+// equal to sortedRounds.join('|') so the component remounts the first time
+// real rounds appear, guaranteeing the initialiser fires with populated data.
+const RoundPickSections = ({ sortedRounds, byRound, currentUser }) => {
+  const [openRounds, setOpenRounds] = React.useState(() => {
+    // Closed by default for any round where every series is already completed;
+    // open for rounds that are still active.
+    const init = {};
+    sortedRounds.forEach(r => {
+      const allDone = (byRound[r] || []).every(s => s.status === 'completed');
+      init[r] = !allDone;   // false = collapsed when done, true = open when active
+    });
+    return init;
+  });
   const toggle = (round) => setOpenRounds(prev => ({ ...prev, [round]: !prev[round] }));
 
   const ROUND_COLORS = {
@@ -1997,15 +2010,14 @@ const GlobalStatsTab = ({ currentUser }) => {
       )}
 
       {/* ── Series votes by round (collapsible) ── */}
-      {(() => {
-        // Default: collapse a round if every series in it is completed
-        const initOpen = {};
-        sortedRounds.forEach(r => {
-          const allDone = byRound[r].every(s => s.status === 'completed');
-          initOpen[r] = !allDone;
-        });
-        return <RoundPickSections sortedRounds={sortedRounds} byRound={byRound} initOpen={initOpen} currentUser={currentUser} />;
-      })()}
+      {/* key = round names joined: forces a clean remount the first time real
+          data arrives so useState's lazy initialiser always runs with data. */}
+      <RoundPickSections
+        key={sortedRounds.join('|')}
+        sortedRounds={sortedRounds}
+        byRound={byRound}
+        currentUser={currentUser}
+      />
 
       {/* ── Futures top picks ── */}
       {hasFutures && (
