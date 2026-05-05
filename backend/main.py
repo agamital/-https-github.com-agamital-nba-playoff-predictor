@@ -488,6 +488,15 @@ def init_db():
         except Exception as e:
             print(f"init_db: series.{_col} migration: {e}")
             c.execute(f'ROLLBACK TO SAVEPOINT sp_{_col}')
+    # Add stat-value columns (accumulative totals) alongside the leader name columns
+    for _col in ('actual_leading_scorer_pts', 'actual_leading_rebounder_reb', 'actual_leading_assister_ast'):
+        c.execute(f'SAVEPOINT sp_{_col}')
+        try:
+            c.execute(f'ALTER TABLE series ADD COLUMN IF NOT EXISTS {_col} INTEGER')
+            c.execute(f'RELEASE SAVEPOINT sp_{_col}')
+        except Exception as e:
+            print(f"init_db: series.{_col} migration: {e}")
+            c.execute(f'ROLLBACK TO SAVEPOINT sp_{_col}')
 
     c.execute('''CREATE TABLE IF NOT EXISTS playin_games (
         id SERIAL PRIMARY KEY,
@@ -3610,18 +3619,35 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
             """, (season, series_start, home_abbr, away_abbr))
             rows = c.fetchall()
             if not rows:
+                # No games found for this series yet — clear any stale leaders
+                # that may have been set from a prior round (before the fix).
+                c.execute("""
+                    UPDATE series SET
+                        actual_leading_scorer      = NULL,
+                        actual_leading_rebounder   = NULL,
+                        actual_leading_assister    = NULL,
+                        actual_leading_scorer_pts  = NULL,
+                        actual_leading_rebounder_reb = NULL,
+                        actual_leading_assister_ast  = NULL
+                    WHERE id = %s
+                """, (sid,))
                 continue
             # stable max: ORDER BY pts DESC means ties go to the higher scorer
-            scorer    = max(rows, key=lambda r: r[1] or 0)[0]
-            rebounder = max(rows, key=lambda r: r[2] or 0)[0]
-            assister  = max(rows, key=lambda r: r[3] or 0)[0]
+            scorer_row    = max(rows, key=lambda r: r[1] or 0)
+            rebounder_row = max(rows, key=lambda r: r[2] or 0)
+            assister_row  = max(rows, key=lambda r: r[3] or 0)
             c.execute("""
                 UPDATE series SET
-                    actual_leading_scorer    = %s,
-                    actual_leading_rebounder = %s,
-                    actual_leading_assister  = %s
+                    actual_leading_scorer        = %s,
+                    actual_leading_rebounder     = %s,
+                    actual_leading_assister      = %s,
+                    actual_leading_scorer_pts    = %s,
+                    actual_leading_rebounder_reb = %s,
+                    actual_leading_assister_ast  = %s
                 WHERE id = %s
-            """, (scorer, rebounder, assister, sid))
+            """, (scorer_row[0], rebounder_row[0], assister_row[0],
+                  int(scorer_row[1] or 0), int(rebounder_row[2] or 0), int(assister_row[3] or 0),
+                  sid))
 
         conn.commit()
         print(f"[Boxscore] ✓ Updated leaders for {len(active_series)} active series")
@@ -6584,7 +6610,9 @@ async def api_series(response: Response, season: str = "2026", background_tasks:
                      s.actual_leading_assister,
                      s.game1_start_time,
                      (SELECT COUNT(*) FROM predictions p WHERE p.series_id = s.id) AS pred_count,
-                     COALESCE(s.bracket_group, \'A\')
+                     COALESCE(s.bracket_group, \'A\'),
+                     s.actual_leading_scorer_pts, s.actual_leading_rebounder_reb,
+                     s.actual_leading_assister_ast
                      FROM series s
                      JOIN teams ht ON s.home_team_id = ht.id
                      JOIN teams at ON s.away_team_id = at.id
@@ -6642,9 +6670,12 @@ async def api_series(response: Response, season: str = "2026", background_tasks:
                 'winner_team_id': row[10],
                 'status': row[11],
                 'actual_games': row[12],
-                'leading_scorer':    row[19],
-                'leading_rebounder': row[20],
-                'leading_assister':  row[21],
+                'leading_scorer':        row[19],
+                'leading_rebounder':     row[20],
+                'leading_assister':      row[21],
+                'leading_scorer_pts':    row[25],
+                'leading_rebounder_reb': row[26],
+                'leading_assister_ast':  row[27],
                 'game1_start_time':  g1_start,
                 'picks_locked':      picks_locked,
                 'bracket_group':     bracket_group,

@@ -644,13 +644,14 @@ const InlinePicker = ({ seriesId, series, pick, onGamesSelect, onLeaderSelect, o
             {series?.status === 'active' ? '📊 Provisional Leaders' : '📊 Series Leaders'}
           </p>
           {[
-            { abbr: 'PTS', val: series?.leading_scorer },
-            { abbr: 'REB', val: series?.leading_rebounder },
-            { abbr: 'AST', val: series?.leading_assister },
+            { abbr: 'PTS', val: series?.leading_scorer,    num: series?.leading_scorer_pts },
+            { abbr: 'REB', val: series?.leading_rebounder, num: series?.leading_rebounder_reb },
+            { abbr: 'AST', val: series?.leading_assister,  num: series?.leading_assister_ast },
           ].filter(l => l.val).map(l => (
             <p key={l.abbr} className="text-[8px] text-slate-500 truncate leading-tight">
               <span className="text-slate-600 font-black">{l.abbr}:</span>{' '}
               <span className="text-slate-400">{l.val.split(' ').slice(-1)[0]}</span>
+              {l.num != null && <span className="text-cyan-400/70 font-bold"> ({l.num})</span>}
             </p>
           ))}
         </div>
@@ -1366,13 +1367,16 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
           </p>
           <div className="grid grid-cols-3 gap-1">
             {[
-              { label: 'PTS', val: series.leading_scorer },
-              { label: 'REB', val: series.leading_rebounder },
-              { label: 'AST', val: series.leading_assister },
+              { label: 'PTS', val: series.leading_scorer,    num: series.leading_scorer_pts },
+              { label: 'REB', val: series.leading_rebounder, num: series.leading_rebounder_reb },
+              { label: 'AST', val: series.leading_assister,  num: series.leading_assister_ast },
             ].map(l => l.val && (
               <div key={l.label} className="text-center">
                 <p className="text-[8px] text-slate-600 font-bold">{l.label}</p>
-                <p className="text-[10px] text-slate-300 font-bold truncate">{l.val.split(' ').slice(-1)[0]}</p>
+                <p className="text-[10px] text-slate-300 font-bold truncate">
+                  {l.val.split(' ').slice(-1)[0]}
+                  {l.num != null && <span className="text-cyan-400/70"> ({l.num})</span>}
+                </p>
               </div>
             ))}
           </div>
