@@ -1446,7 +1446,13 @@ def sync_series_provisional_leaders(season: str = "2026") -> dict:
                 # No completed games recorded yet — nothing to compute
                 continue
 
-            leaders: dict[str, str | None] = {}
+            # Normalize abbrs: ESPN may store 'SA' for Spurs, 'GS' for Warriors, etc.
+            _abbr_fix = {'SA': 'SAS', 'GS': 'GSW', 'NO': 'NOP', 'NY': 'NYK', 'UTAH': 'UTA'}
+            normalized_abbrs = list({
+                _abbr_fix.get(a, a) for a in abbrs
+            } | {a for a in abbrs})  # include both raw and fixed forms
+
+            leaders: dict[str, tuple[str | None, int | None]] = {}  # cat → (name, total)
             for cat, col in (
                 ("scorer",    "points"),
                 ("rebounder", "rebounds"),
@@ -1460,21 +1466,27 @@ def sync_series_provisional_leaders(season: str = "2026") -> dict:
                     GROUP BY player_name
                     ORDER BY total DESC NULLS LAST
                     LIMIT 1
-                """, (event_ids, abbrs))
+                """, (event_ids, [a.upper() for a in normalized_abbrs]))
                 row = c.fetchone()
-                leaders[cat] = row[0] if row else None
+                leaders[cat] = (row[0], int(row[1]) if row and row[1] is not None else None) if row else (None, None)
 
-            if not any(leaders.values()):
+            if not any(v[0] for v in leaders.values()):
                 continue
 
             c.execute("""
                 UPDATE series
-                SET actual_leading_scorer    = %s,
-                    actual_leading_rebounder = %s,
-                    actual_leading_assister  = %s
+                SET actual_leading_scorer        = %s,
+                    actual_leading_rebounder     = %s,
+                    actual_leading_assister      = %s,
+                    actual_leading_scorer_pts    = %s,
+                    actual_leading_rebounder_reb = %s,
+                    actual_leading_assister_ast  = %s
                 WHERE id = %s
-            """, (leaders["scorer"], leaders["rebounder"],
-                  leaders["assister"], series_id))
+            """, (
+                leaders["scorer"][0],    leaders["rebounder"][0],    leaders["assister"][0],
+                leaders["scorer"][1],    leaders["rebounder"][1],    leaders["assister"][1],
+                series_id,
+            ))
             result["series_updated"] += 1
 
         conn.commit()
