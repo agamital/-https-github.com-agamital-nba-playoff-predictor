@@ -3578,17 +3578,21 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
     # fallback would include First Round stats in later-round leader calculations
     # (e.g. Shai's 4 games vs PHX would pollute the OKC vs LAL R2 leaders).
     _ROUND_FALLBACK_DATE = {
+        # One day before the first game of each round (US ET), so we never
+        # miss Game 1 even when ESPN stores game_date as the US ET date
+        # while game1_start_time is in UTC (late US games cross midnight UTC).
         'First Round':           '2026-04-18',
-        'Conference Semifinals': '2026-05-05',
-        'Conference Finals':     '2026-05-19',
-        'NBA Finals':            '2026-06-04',
+        'Conference Semifinals': '2026-05-04',  # R2 games start May 5 ET
+        'Conference Finals':     '2026-05-18',
+        'NBA Finals':            '2026-06-03',
     }
     try:
         c.execute("""
             SELECT s.id, s.round,
                    ht.abbreviation AS home_abbr,
                    at.abbreviation AS away_abbr,
-                   DATE(s.game1_start_time) AS series_start
+                   -- Convert UTC timestamp → US/Eastern date to match ESPN's game_date
+                   DATE(s.game1_start_time AT TIME ZONE 'America/New_York') AS series_start
             FROM series s
             JOIN teams ht ON ht.id = s.home_team_id
             JOIN teams at ON at.id = s.away_team_id
@@ -3597,7 +3601,7 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
         active_series = c.fetchall()
 
         for sid, round_name, home_abbr, away_abbr, series_start in active_series:
-            # Use game1_start_time date if set; otherwise fall back to the
+            # Use game1_start_time (ET date) if set; otherwise fall back to the
             # round-specific start date so we never bleed stats from prior rounds.
             if series_start is None:
                 series_start = _ROUND_FALLBACK_DATE.get(round_name, '2026-04-18')
