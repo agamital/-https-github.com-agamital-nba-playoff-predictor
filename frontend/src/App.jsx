@@ -2585,6 +2585,9 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                                         <span className="text-[9px] font-black text-cyan-400/70 shrink-0 w-7">{catLabel[cat]}</span>
                                         <span className="text-[10px] font-black text-cyan-300 truncate flex-1">
                                           {linfo.player?.split(' ').slice(-1)[0]}
+                                          {linfo.value != null && (
+                                            <span className="text-white font-black"> ({linfo.value})</span>
+                                          )}
                                           <span className="text-cyan-400/50 font-normal"> ✓ leading</span>
                                         </span>
                                         <span className="text-[10px] font-black text-amber-300 shrink-0">+{linfo.pts}</span>

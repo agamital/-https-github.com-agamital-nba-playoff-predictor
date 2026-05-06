@@ -7069,7 +7069,10 @@ async def leaderboard(response: Response, season: str = "2026"):
                        ht.name, at.name,
                        s.actual_leading_scorer,
                        s.actual_leading_rebounder,
-                       s.actual_leading_assister
+                       s.actual_leading_assister,
+                       s.actual_leading_scorer_pts,
+                       s.actual_leading_rebounder_reb,
+                       s.actual_leading_assister_ast
                 FROM series s
                 JOIN teams ht ON ht.id = s.home_team_id
                 JOIN teams at ON at.id = s.away_team_id
@@ -7078,7 +7081,8 @@ async def leaderboard(response: Response, season: str = "2026"):
             active_series = {}
             for row in c.fetchall():
                 sid, rnd, conf, hid, aid, hw, aw, hs, as_, h_abbr, a_abbr, h_name, a_name, \
-                    act_scorer, act_rebounder, act_assister = row
+                    act_scorer, act_rebounder, act_assister, \
+                    act_scorer_pts, act_rebounder_reb, act_assister_ast = row
                 if (hw or 0) > (aw or 0):
                     leading = hid
                 elif (aw or 0) > (hw or 0):
@@ -7092,9 +7096,12 @@ async def leaderboard(response: Response, season: str = "2026"):
                     'home_wins': hw or 0, 'away_wins': aw or 0,
                     'home_abbr': h_abbr or '', 'away_abbr': a_abbr or '',
                     'home_name': h_name or '', 'away_name': a_name or '',
-                    'actual_scorer':    act_scorer,
-                    'actual_rebounder': act_rebounder,
-                    'actual_assister':  act_assister,
+                    'actual_scorer':       act_scorer,
+                    'actual_rebounder':    act_rebounder,
+                    'actual_assister':     act_assister,
+                    'actual_scorer_pts':   act_scorer_pts,
+                    'actual_rebounder_reb':act_rebounder_reb,
+                    'actual_assister_ast': act_assister_ast,
                 }
 
             # Fetch winner + leader predictions for all active series
@@ -7164,6 +7171,11 @@ async def leaderboard(response: Response, season: str = "2026"):
                     # ── Series leader bets provisional ──
                     leader_bonus = round(SERIES_LEADER_BONUS * round_mult)
                     matched_leaders = {}
+                    _stat_vals = {
+                        'scorer':    sinfo.get('actual_scorer_pts'),
+                        'rebounder': sinfo.get('actual_rebounder_reb'),
+                        'assister':  sinfo.get('actual_assister_ast'),
+                    }
                     for cat, actual_val in [
                         ('scorer',    sinfo.get('actual_scorer')),
                         ('rebounder', sinfo.get('actual_rebounder')),
@@ -7175,6 +7187,7 @@ async def leaderboard(response: Response, season: str = "2026"):
                                 'pts':    leader_bonus,
                                 'player': actual_val,
                                 'bet':    pred_val,
+                                'value':  _stat_vals.get(cat),   # e.g. 23 pts / 12 reb
                             }
                             series_prov_total += leader_bonus
 
