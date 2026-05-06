@@ -1319,10 +1319,21 @@ def _fetch_boxscore_primary(espn_game_id: str) -> list:
               f"Actual top-level keys: {top_keys}. "
               f"ESPN fallback will be attempted.")
 
+    # ESPN uses shortened abbreviations that differ from our teams table standard ones.
+    # Normalize them so player_game_stats.team_abbr always matches teams.abbreviation.
+    _ESPN_ABBR_FIX = {
+        'SA':   'SAS',  # San Antonio Spurs
+        'GS':   'GSW',  # Golden State Warriors
+        'NO':   'NOP',  # New Orleans Pelicans
+        'NY':   'NYK',  # New York Knicks
+        'UTAH': 'UTA',  # Utah Jazz
+    }
+
     players = []
     for team_group in raw_player_groups:
         team_obj    = team_group.get("team", {})
-        team_abbr   = (team_obj.get("abbreviation") or "").upper()
+        raw_abbr    = (team_obj.get("abbreviation") or "").upper()
+        team_abbr   = _ESPN_ABBR_FIX.get(raw_abbr, raw_abbr)  # normalize ESPN→standard
         espn_team_id = str(team_obj.get("id", ""))
 
         for stat_block in team_group.get("statistics", []):
@@ -3586,6 +3597,21 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
         'Conference Finals':     '2026-05-18',
         'NBA Finals':            '2026-06-03',
     }
+    # One-time fix: correct any player_game_stats rows that were stored with
+    # ESPN's shortened abbreviations (e.g. 'SA' → 'SAS', 'GS' → 'GSW').
+    try:
+        _abbr_fixes = [('SA', 'SAS'), ('GS', 'GSW'), ('NO', 'NOP'), ('NY', 'NYK'), ('UTAH', 'UTA')]
+        _fixed_total = 0
+        for wrong, right in _abbr_fixes:
+            c.execute("UPDATE player_game_stats SET team_abbr = %s WHERE team_abbr = %s", (right, wrong))
+            _fixed_total += c.rowcount or 0
+        conn.commit()
+        if _fixed_total:
+            print(f"[Boxscore] ✓ Normalized {_fixed_total} ESPN team abbreviation rows in player_game_stats")
+    except Exception as _abbr_err:
+        print(f"[Boxscore] abbreviation fix error (non-critical): {_abbr_err}")
+        try: conn.rollback()
+        except Exception: pass
     try:
         c.execute("""
             SELECT s.id, s.round,
