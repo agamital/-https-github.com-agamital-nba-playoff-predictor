@@ -3617,8 +3617,13 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
             SELECT s.id, s.round,
                    ht.abbreviation AS home_abbr,
                    at.abbreviation AS away_abbr,
-                   -- Convert UTC timestamp → US/Eastern date to match ESPN's game_date
-                   DATE(s.game1_start_time AT TIME ZONE 'America/New_York') AS series_start
+                   -- Subtract 1 day so late US games (stored UTC next-day) still
+                   -- fall within the >= filter. Safe even if game1_start_time is
+                   -- exactly on the series start date, because game_date >= (start-1)
+                   -- will always be true for any R2 game.
+                   CASE WHEN s.game1_start_time IS NOT NULL
+                        THEN DATE(s.game1_start_time) - 1
+                        ELSE NULL END AS series_start
             FROM series s
             JOIN teams ht ON ht.id = s.home_team_id
             JOIN teams at ON at.id = s.away_team_id
