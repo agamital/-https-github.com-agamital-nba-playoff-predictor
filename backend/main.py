@@ -7028,13 +7028,17 @@ async def leaderboard(response: Response, season: str = "2026"):
                 SELECT s.id, s.round, s.conference,
                        s.home_team_id, s.away_team_id,
                        s.home_wins, s.away_wins,
-                       s.home_seed, s.away_seed
+                       s.home_seed, s.away_seed,
+                       ht.abbreviation, at.abbreviation,
+                       ht.name, at.name
                 FROM series s
+                JOIN teams ht ON ht.id = s.home_team_id
+                JOIN teams at ON at.id = s.away_team_id
                 WHERE s.season = %s AND s.status = 'active'
             """, (season,))
             active_series = {}
             for row in c.fetchall():
-                sid, rnd, conf, hid, aid, hw, aw, hs, as_ = row
+                sid, rnd, conf, hid, aid, hw, aw, hs, as_, h_abbr, a_abbr, h_name, a_name = row
                 if (hw or 0) > (aw or 0):
                     leading = hid
                 elif (aw or 0) > (hw or 0):
@@ -7046,6 +7050,8 @@ async def leaderboard(response: Response, season: str = "2026"):
                     'home_id': hid, 'away_id': aid,
                     'home_seed': hs or 0, 'away_seed': as_ or 0,
                     'home_wins': hw or 0, 'away_wins': aw or 0,
+                    'home_abbr': h_abbr or '', 'away_abbr': a_abbr or '',
+                    'home_name': h_name or '', 'away_name': a_name or '',
                 }
 
             # Fetch all predictions for active series
@@ -7097,10 +7103,25 @@ async def leaderboard(response: Response, season: str = "2026"):
                     pts = round(BASE_WINNER_PTS * round_mult * underdog_mult)
                     series_prov_total += pts
                     label = f"{rnd.replace('Conference ', 'Conf. ')} ({sinfo['conf'][:1]})"
-                    score_label = f"{sinfo['home_wins']}-{sinfo['away_wins']}" if leading == sinfo['home_id'] else f"{sinfo['away_wins']}-{sinfo['home_wins']}"
+                    # Score from leading team's perspective
+                    if leading == sinfo['home_id']:
+                        score_label = f"{sinfo['home_wins']}-{sinfo['away_wins']}"
+                    else:
+                        score_label = f"{sinfo['away_wins']}-{sinfo['home_wins']}"
+                    # Picked / leading abbr
+                    picked_abbr  = sinfo['home_abbr'] if pred == sinfo['home_id'] else sinfo['away_abbr']
+                    leading_abbr = sinfo['home_abbr'] if leading == sinfo['home_id'] else sinfo['away_abbr']
+                    opp_abbr     = sinfo['away_abbr'] if pred == sinfo['home_id'] else sinfo['home_abbr']
+                    opp_wins     = sinfo['away_wins'] if pred == sinfo['home_id'] else sinfo['home_wins']
+                    pick_wins    = sinfo['home_wins'] if pred == sinfo['home_id'] else sinfo['away_wins']
                     series_prov_breakdown[f"series_{sid}"] = {
                         'pts': pts, 'round': rnd, 'conf': sinfo['conf'],
                         'label': label, 'score': score_label,
+                        'picked_abbr': picked_abbr,
+                        'leading_abbr': leading_abbr,
+                        'opp_abbr': opp_abbr,
+                        'pick_wins': pick_wins,
+                        'opp_wins': opp_wins,
                     }
 
                 entry['provisional_series_pts'] = series_prov_total

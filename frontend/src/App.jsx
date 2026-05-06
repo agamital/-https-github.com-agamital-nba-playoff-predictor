@@ -2542,14 +2542,40 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     {Object.keys(provSeriesBD).length > 0 && (
                       <div className="px-3 pt-3">
                         <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">🏆 Active Series Picks (leading)</p>
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                           {Object.entries(provSeriesBD).map(([key, info]) => (
-                            <div key={key} className="flex items-center justify-between bg-slate-800/50 border border-slate-700/50 rounded-xl px-3 py-2">
-                              <div>
-                                <p className="text-[11px] font-black text-white">{info.label}</p>
-                                <p className="text-[9px] text-slate-500 mt-0.5">Your pick leads {info.score} ✓</p>
+                            <div key={key} className="bg-slate-800/60 border border-green-500/20 rounded-xl overflow-hidden">
+                              {/* Top: round label + pts */}
+                              <div className="flex items-center justify-between px-3 pt-2 pb-1">
+                                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{info.label}</span>
+                                <span className="text-xs font-black text-amber-300">+{info.pts}</span>
                               </div>
-                              <span className="text-sm font-black text-amber-300">+{info.pts}</span>
+                              {/* Middle: matchup visual */}
+                              <div className="flex items-center gap-1.5 px-3 pb-2">
+                                {/* Picked team — always highlighted green */}
+                                <div className="flex items-center gap-1 bg-green-500/15 border border-green-500/40 rounded-lg px-2 py-1 min-w-0">
+                                  <span className="text-[9px] text-green-400/70 font-bold shrink-0">✓</span>
+                                  <span className="text-[12px] font-black text-green-300 truncate">{info.picked_abbr || info.label}</span>
+                                  <span className="text-[11px] font-black text-white ml-1">{info.pick_wins ?? info.score?.split('-')[0]}</span>
+                                </div>
+
+                                {/* Score separator */}
+                                <div className="flex flex-col items-center shrink-0">
+                                  <span className="text-[9px] font-black text-slate-600">VS</span>
+                                  <span className="text-[8px] text-slate-700">leading</span>
+                                </div>
+
+                                {/* Opponent team */}
+                                <div className="flex items-center gap-1 bg-slate-700/40 border border-slate-600/30 rounded-lg px-2 py-1 min-w-0">
+                                  <span className="text-[12px] font-black text-slate-400 truncate">{info.opp_abbr || '—'}</span>
+                                  <span className="text-[11px] font-black text-slate-400 ml-1">{info.opp_wins ?? info.score?.split('-')[1]}</span>
+                                </div>
+
+                                {/* Status badge */}
+                                <div className="ml-auto shrink-0 flex items-center gap-1 bg-green-500/10 border border-green-500/30 rounded-lg px-2 py-1">
+                                  <span className="text-[9px] text-green-400 font-black">LEADING ✓</span>
+                                </div>
+                              </div>
                             </div>
                           ))}
                         </div>
