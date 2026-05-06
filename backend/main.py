@@ -4694,6 +4694,71 @@ async def startup():
           "17:00, 18:00, 19:00, 20:00, 21:00, 22:00, 23:00 UTC")
     print("[Scheduler] Full-chain sync scheduled at 04:00–09:00 UTC + 00:30 + 02:30 UTC (play-in window)")
 
+    # ── 2b) LIVE game-time sync — every 5 minutes during NBA game hours ──────────
+    # NBA games run ~23:30–05:00 UTC.  This lightweight chain updates boxscores,
+    # series leaders, and provisional pts in near-real-time so rankings shift
+    # as players score/rebound during live games.
+    # Skips slow steps (standings, backfill) — only the 3 fast ones.
+    def _live_game_sync():
+        from game_processor import sync_playoff_results_from_api, sync_series_provisional_leaders
+        utc_h = datetime.utcnow().hour
+        # Only active during game window: 21:00 UTC → 07:00 UTC
+        if not (utc_h >= 21 or utc_h < 7):
+            return
+        utc_now = datetime.utcnow()
+        label   = utc_now.strftime('%H:%M')
+        today     = utc_now.strftime('%Y-%m-%d')
+        yesterday = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
+
+        # Step A — Boxscores: today + yesterday (covers late games crossing midnight UTC)
+        for _date, _lbl in [(today, 'today'), (yesterday, 'yesterday')]:
+            try:
+                bx = sync_daily_boxscores(date_str=_date, season='2026',
+                                          force=True, triggered_by='live_sync')
+                if bx.get('games_processed', 0):
+                    print(f"[Live {label}] Boxscore ({_lbl}) — "
+                          f"games={bx['games_processed']} "
+                          f"players={bx.get('players_upserted', 0)}")
+            except Exception as _e:
+                print(f"[Live {label}] Boxscore ({_lbl}) ERROR: {_e}")
+
+        # Step B — Series leaders (cumulative SUM per player in each active series)
+        try:
+            pl = sync_series_provisional_leaders('2026')
+            if pl.get('series_updated', 0):
+                print(f"[Live {label}] Leaders — updated={pl['series_updated']}")
+        except Exception as _e:
+            print(f"[Live {label}] Leaders ERROR: {_e}")
+
+        # Step C — Playoff results (catches series completions mid-night)
+        try:
+            po = sync_playoff_results_from_api('2026')
+            if po.get('completed', 0) or po.get('updated', 0):
+                print(f"[Live {label}] Playoff — "
+                      f"updated={po.get('updated', 0)} completed={po.get('completed', 0)}")
+        except Exception as _e:
+            print(f"[Live {label}] Playoff ERROR: {_e}")
+
+    # Every 5 minutes during game hours (two cron ranges cover 21:00–06:59 UTC)
+    _scheduler.add_job(
+        _live_game_sync,
+        CronTrigger.from_crontab('*/5 21,22,23 * * *'),
+        id='live_sync_evening',
+        replace_existing=True,
+        misfire_grace_time=60,
+        max_instances=1,
+    )
+    _scheduler.add_job(
+        _live_game_sync,
+        CronTrigger.from_crontab('*/5 0,1,2,3,4,5,6 * * *'),
+        id='live_sync_overnight',
+        replace_existing=True,
+        misfire_grace_time=60,
+        max_instances=1,
+    )
+    print("[Scheduler] Live game-time sync every 5 min during 21:00–07:00 UTC "
+          "(00:00–10:00 IDT) — boxscores + leaders + playoff results")
+
     # ── 2c) Auto-lock futures + leaders at first First Round tip-off ─────────
     # Saturday April 18 17:00 UTC = CLE vs TOR 1 PM ET = 20:00 IDT
     _FUTURES_LOCK_DT = datetime(2026, 4, 18, 17, 0, 0)
