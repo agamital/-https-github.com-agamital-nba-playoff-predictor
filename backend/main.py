@@ -7052,15 +7052,19 @@ async def leaderboard(response: Response, season: str = "2026"):
                     entry['provisional_leaders_pts'] = 0
                     entry['provisional_breakdown'] = {}
 
-        # ── B. Provisional Series pts (active series where user's pick is leading) ─
+        # ── B. Provisional Series pts (winner picks leading + series leader bets) ─
         try:
+            from scoring import _names_match as _nm, SERIES_LEADER_BONUS
             c.execute("""
                 SELECT s.id, s.round, s.conference,
                        s.home_team_id, s.away_team_id,
                        s.home_wins, s.away_wins,
                        s.home_seed, s.away_seed,
                        ht.abbreviation, at.abbreviation,
-                       ht.name, at.name
+                       ht.name, at.name,
+                       s.actual_leading_scorer,
+                       s.actual_leading_rebounder,
+                       s.actual_leading_assister
                 FROM series s
                 JOIN teams ht ON ht.id = s.home_team_id
                 JOIN teams at ON at.id = s.away_team_id
@@ -7068,13 +7072,14 @@ async def leaderboard(response: Response, season: str = "2026"):
             """, (season,))
             active_series = {}
             for row in c.fetchall():
-                sid, rnd, conf, hid, aid, hw, aw, hs, as_, h_abbr, a_abbr, h_name, a_name = row
+                sid, rnd, conf, hid, aid, hw, aw, hs, as_, h_abbr, a_abbr, h_name, a_name, \
+                    act_scorer, act_rebounder, act_assister = row
                 if (hw or 0) > (aw or 0):
                     leading = hid
                 elif (aw or 0) > (hw or 0):
                     leading = aid
                 else:
-                    leading = None  # tied — no provisional
+                    leading = None  # tied — no provisional winner
                 active_series[sid] = {
                     'leading': leading, 'round': rnd, 'conf': conf,
                     'home_id': hid, 'away_id': aid,
@@ -7082,18 +7087,27 @@ async def leaderboard(response: Response, season: str = "2026"):
                     'home_wins': hw or 0, 'away_wins': aw or 0,
                     'home_abbr': h_abbr or '', 'away_abbr': a_abbr or '',
                     'home_name': h_name or '', 'away_name': a_name or '',
+                    'actual_scorer':    act_scorer,
+                    'actual_rebounder': act_rebounder,
+                    'actual_assister':  act_assister,
                 }
 
-            # Fetch all predictions for active series
+            # Fetch winner + leader predictions for all active series
             series_preds_by_user = {}
             if active_series and user_ids:
                 c.execute("""
-                    SELECT p.user_id, p.series_id, p.predicted_winner_id
+                    SELECT p.user_id, p.series_id, p.predicted_winner_id,
+                           p.leading_scorer, p.leading_rebounder, p.leading_assister
                     FROM predictions p
                     WHERE p.series_id = ANY(%s) AND p.user_id = ANY(%s)
                 """, (list(active_series.keys()), user_ids))
-                for uid, sid, pred_winner in c.fetchall():
-                    series_preds_by_user.setdefault(uid, {})[sid] = pred_winner
+                for uid, sid, pred_winner, pred_sc, pred_rb, pred_as in c.fetchall():
+                    series_preds_by_user.setdefault(uid, {})[sid] = {
+                        'winner':    pred_winner,
+                        'scorer':    pred_sc,
+                        'rebounder': pred_rb,
+                        'assister':  pred_as,
+                    }
 
             for entry in board:
                 uid = entry['user_id']
@@ -7102,57 +7116,78 @@ async def leaderboard(response: Response, season: str = "2026"):
                 series_prov_breakdown = {}
 
                 for sid, sinfo in active_series.items():
-                    leading = sinfo['leading']
-                    if not leading:
-                        continue
-                    pred = user_preds.get(sid)
-                    if pred != leading:
-                        continue
+                    rnd          = sinfo['round']
+                    round_mult   = ROUND_MULTIPLIERS.get(rnd, 1.0)
+                    user_pred    = user_preds.get(sid, {})
+                    pred_winner  = user_pred.get('winner')
+                    leading      = sinfo['leading']
+                    label        = f"{rnd.replace('Conference ', 'Conf. ')} ({sinfo['conf'][:1]})"
 
-                    # Calculate winner pts (no games bonus — series not done)
-                    rnd = sinfo['round']
-                    round_mult = ROUND_MULTIPLIERS.get(rnd, 1.0)
-                    underdog_mult = 1.0
+                    winner_pts   = 0
+                    picked_abbr  = opp_abbr = ''
+                    pick_wins    = opp_wins = 0
+                    score_label  = ''
 
-                    if rnd == 'First Round':
-                        hs, as_ = sinfo['home_seed'], sinfo['away_seed']
-                        seed_pair = frozenset({hs, as_})
-                        base_mult = R1_UNDERDOG_MULTIPLIERS.get(seed_pair, 1.0)
-                        # Is picked team the underdog (higher seed number)?
-                        picked_home = (pred == sinfo['home_id'])
-                        home_is_underdog = hs > as_
-                        if (picked_home and home_is_underdog) or (not picked_home and not home_is_underdog):
-                            underdog_mult = base_mult
-                    elif rnd in ('Conference Semifinals', 'Conference Finals', 'NBA Finals'):
-                        # Check if picked team is lower seed (underdog)
-                        picked_home = (pred == sinfo['home_id'])
-                        hs, as_ = sinfo['home_seed'], sinfo['away_seed']
-                        if (picked_home and hs > as_) or (not picked_home and as_ > hs):
-                            underdog_mult = LATE_ROUND_UNDERDOG_MULT
+                    # ── Winner provisional ──
+                    if leading and pred_winner == leading:
+                        underdog_mult = 1.0
+                        if rnd == 'First Round':
+                            hs, as_ = sinfo['home_seed'], sinfo['away_seed']
+                            seed_pair = frozenset({hs, as_})
+                            base_mult = R1_UNDERDOG_MULTIPLIERS.get(seed_pair, 1.0)
+                            picked_home = (pred_winner == sinfo['home_id'])
+                            home_is_underdog = hs > as_
+                            if (picked_home and home_is_underdog) or (not picked_home and not home_is_underdog):
+                                underdog_mult = base_mult
+                        elif rnd in ('Conference Semifinals', 'Conference Finals', 'NBA Finals'):
+                            picked_home = (pred_winner == sinfo['home_id'])
+                            hs, as_ = sinfo['home_seed'], sinfo['away_seed']
+                            if (picked_home and hs > as_) or (not picked_home and as_ > hs):
+                                underdog_mult = LATE_ROUND_UNDERDOG_MULT
+                        winner_pts = round(BASE_WINNER_PTS * round_mult * underdog_mult)
+                        series_prov_total += winner_pts
 
-                    pts = round(BASE_WINNER_PTS * round_mult * underdog_mult)
-                    series_prov_total += pts
-                    label = f"{rnd.replace('Conference ', 'Conf. ')} ({sinfo['conf'][:1]})"
-                    # Score from leading team's perspective
-                    if leading == sinfo['home_id']:
-                        score_label = f"{sinfo['home_wins']}-{sinfo['away_wins']}"
-                    else:
-                        score_label = f"{sinfo['away_wins']}-{sinfo['home_wins']}"
-                    # Picked / leading abbr
-                    picked_abbr  = sinfo['home_abbr'] if pred == sinfo['home_id'] else sinfo['away_abbr']
-                    leading_abbr = sinfo['home_abbr'] if leading == sinfo['home_id'] else sinfo['away_abbr']
-                    opp_abbr     = sinfo['away_abbr'] if pred == sinfo['home_id'] else sinfo['home_abbr']
-                    opp_wins     = sinfo['away_wins'] if pred == sinfo['home_id'] else sinfo['home_wins']
-                    pick_wins    = sinfo['home_wins'] if pred == sinfo['home_id'] else sinfo['away_wins']
-                    series_prov_breakdown[f"series_{sid}"] = {
-                        'pts': pts, 'round': rnd, 'conf': sinfo['conf'],
-                        'label': label, 'score': score_label,
-                        'picked_abbr': picked_abbr,
-                        'leading_abbr': leading_abbr,
-                        'opp_abbr': opp_abbr,
-                        'pick_wins': pick_wins,
-                        'opp_wins': opp_wins,
-                    }
+                        picked_abbr = sinfo['home_abbr'] if pred_winner == sinfo['home_id'] else sinfo['away_abbr']
+                        opp_abbr    = sinfo['away_abbr'] if pred_winner == sinfo['home_id'] else sinfo['home_abbr']
+                        pick_wins   = sinfo['home_wins'] if pred_winner == sinfo['home_id'] else sinfo['away_wins']
+                        opp_wins    = sinfo['away_wins'] if pred_winner == sinfo['home_id'] else sinfo['home_wins']
+                        if leading == sinfo['home_id']:
+                            score_label = f"{sinfo['home_wins']}-{sinfo['away_wins']}"
+                        else:
+                            score_label = f"{sinfo['away_wins']}-{sinfo['home_wins']}"
+
+                    # ── Series leader bets provisional ──
+                    leader_bonus = round(SERIES_LEADER_BONUS * round_mult)
+                    matched_leaders = {}
+                    for cat, actual_val in [
+                        ('scorer',    sinfo.get('actual_scorer')),
+                        ('rebounder', sinfo.get('actual_rebounder')),
+                        ('assister',  sinfo.get('actual_assister')),
+                    ]:
+                        pred_val = user_pred.get(cat)
+                        if pred_val and actual_val and _nm(pred_val, actual_val):
+                            matched_leaders[cat] = {
+                                'pts':    leader_bonus,
+                                'player': actual_val,
+                                'bet':    pred_val,
+                            }
+                            series_prov_total += leader_bonus
+
+                    # Only create a breakdown entry if something is happening
+                    if winner_pts > 0 or matched_leaders:
+                        leader_pts = sum(v['pts'] for v in matched_leaders.values())
+                        series_prov_breakdown[f"series_{sid}"] = {
+                            'pts':          winner_pts + leader_pts,
+                            'winner_pts':   winner_pts,
+                            'leader_pts':   leader_pts,
+                            'round':        rnd, 'conf': sinfo['conf'],
+                            'label':        label, 'score': score_label,
+                            'picked_abbr':  picked_abbr,
+                            'opp_abbr':     opp_abbr,
+                            'pick_wins':    pick_wins,
+                            'opp_wins':     opp_wins,
+                            'leader_cats':  matched_leaders,   # {'scorer': {...}, ...}
+                        }
 
                 entry['provisional_series_pts'] = series_prov_total
                 entry['provisional_series_breakdown'] = series_prov_breakdown

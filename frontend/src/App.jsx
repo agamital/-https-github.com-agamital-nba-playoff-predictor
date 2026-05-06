@@ -2541,43 +2541,60 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     {/* Series provisional section */}
                     {Object.keys(provSeriesBD).length > 0 && (
                       <div className="px-3 pt-3">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">🏆 Active Series Picks (leading)</p>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">🏆 Active Series Bets</p>
                         <div className="space-y-2">
-                          {Object.entries(provSeriesBD).map(([key, info]) => (
-                            <div key={key} className="bg-slate-800/60 border border-green-500/20 rounded-xl overflow-hidden">
-                              {/* Top: round label + pts */}
-                              <div className="flex items-center justify-between px-3 pt-2 pb-1">
-                                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{info.label}</span>
-                                <span className="text-xs font-black text-amber-300">+{info.pts}</span>
+                          {Object.entries(provSeriesBD).map(([key, info]) => {
+                            const leaderCats = info.leader_cats || {};
+                            const leaderEntries = Object.entries(leaderCats);
+                            const catLabel = { scorer: 'PTS', rebounder: 'REB', assister: 'AST' };
+                            return (
+                              <div key={key} className="bg-slate-800/60 border border-green-500/20 rounded-xl overflow-hidden">
+                                {/* Top: round label + total pts */}
+                                <div className="flex items-center justify-between px-3 pt-2 pb-1">
+                                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{info.label}</span>
+                                  <span className="text-xs font-black text-amber-300">+{info.pts}</span>
+                                </div>
+
+                                {/* Winner pick row — only shown when user's winner is leading */}
+                                {info.winner_pts > 0 && (
+                                  <div className="flex items-center gap-1.5 px-3 pb-1.5">
+                                    <div className="flex items-center gap-1 bg-green-500/15 border border-green-500/40 rounded-lg px-2 py-1 min-w-0">
+                                      <span className="text-[9px] text-green-400/70 font-bold shrink-0">✓</span>
+                                      <span className="text-[12px] font-black text-green-300 truncate">{info.picked_abbr}</span>
+                                      <span className="text-[11px] font-black text-white ml-1">{info.pick_wins}</span>
+                                    </div>
+                                    <div className="flex flex-col items-center shrink-0">
+                                      <span className="text-[8px] font-black text-slate-600">VS</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 bg-slate-700/40 border border-slate-600/30 rounded-lg px-2 py-1 min-w-0">
+                                      <span className="text-[12px] font-black text-slate-400 truncate">{info.opp_abbr || '—'}</span>
+                                      <span className="text-[11px] font-black text-slate-400 ml-1">{info.opp_wins}</span>
+                                    </div>
+                                    <div className="ml-auto shrink-0 flex items-center gap-1 bg-green-500/10 border border-green-500/25 rounded-lg px-2 py-1">
+                                      <span className="text-[9px] text-green-400 font-black">LEADING</span>
+                                      <span className="text-[9px] text-amber-300 font-black ml-1">+{info.winner_pts}</span>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Leader bets rows — one per matched category */}
+                                {leaderEntries.length > 0 && (
+                                  <div className={`px-3 space-y-1 ${info.winner_pts > 0 ? 'border-t border-slate-700/40 pt-1.5' : ''} pb-2`}>
+                                    {leaderEntries.map(([cat, linfo]) => (
+                                      <div key={cat} className="flex items-center gap-2 bg-cyan-500/8 border border-cyan-500/20 rounded-lg px-2 py-1">
+                                        <span className="text-[9px] font-black text-cyan-400/70 shrink-0 w-7">{catLabel[cat]}</span>
+                                        <span className="text-[10px] font-black text-cyan-300 truncate flex-1">
+                                          {linfo.player?.split(' ').slice(-1)[0]}
+                                          <span className="text-cyan-400/50 font-normal"> ✓ leading</span>
+                                        </span>
+                                        <span className="text-[10px] font-black text-amber-300 shrink-0">+{linfo.pts}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
-                              {/* Middle: matchup visual */}
-                              <div className="flex items-center gap-1.5 px-3 pb-2">
-                                {/* Picked team — always highlighted green */}
-                                <div className="flex items-center gap-1 bg-green-500/15 border border-green-500/40 rounded-lg px-2 py-1 min-w-0">
-                                  <span className="text-[9px] text-green-400/70 font-bold shrink-0">✓</span>
-                                  <span className="text-[12px] font-black text-green-300 truncate">{info.picked_abbr || info.label}</span>
-                                  <span className="text-[11px] font-black text-white ml-1">{info.pick_wins ?? info.score?.split('-')[0]}</span>
-                                </div>
-
-                                {/* Score separator */}
-                                <div className="flex flex-col items-center shrink-0">
-                                  <span className="text-[9px] font-black text-slate-600">VS</span>
-                                  <span className="text-[8px] text-slate-700">leading</span>
-                                </div>
-
-                                {/* Opponent team */}
-                                <div className="flex items-center gap-1 bg-slate-700/40 border border-slate-600/30 rounded-lg px-2 py-1 min-w-0">
-                                  <span className="text-[12px] font-black text-slate-400 truncate">{info.opp_abbr || '—'}</span>
-                                  <span className="text-[11px] font-black text-slate-400 ml-1">{info.opp_wins ?? info.score?.split('-')[1]}</span>
-                                </div>
-
-                                {/* Status badge */}
-                                <div className="ml-auto shrink-0 flex items-center gap-1 bg-green-500/10 border border-green-500/30 rounded-lg px-2 py-1">
-                                  <span className="text-[9px] text-green-400 font-black">LEADING ✓</span>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
