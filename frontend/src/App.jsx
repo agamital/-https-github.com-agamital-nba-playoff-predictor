@@ -2523,74 +2523,80 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                   </div>
                 </div>
 
-                {/* Provisional breakdown panel */}
+                {/* ── Provisional breakdown panel — mobile-first ── */}
                 {provPopover === user.user_id && hasProvBreakdown && (
-                  <div className="mx-3 sm:mx-4 mb-2 rounded-2xl overflow-hidden border border-amber-400/40 bg-gradient-to-b from-amber-500/10 to-amber-500/5">
+                  <div className="mx-2 mb-3 rounded-2xl overflow-hidden border border-amber-400/40 bg-gradient-to-b from-amber-500/10 to-amber-500/5 shadow-xl">
+
                     {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-2.5 border-b border-amber-400/20">
-                      <div className="flex items-center gap-2">
-                        <span className="text-amber-400 text-base">⚡</span>
-                        <span className="text-sm font-black text-amber-300">Provisional Pts</span>
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-amber-400/20">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xl">⚡</span>
+                        <div>
+                          <p className="text-sm font-black text-amber-300 leading-tight">Provisional Pts</p>
+                          <p className="text-[10px] text-slate-500 leading-tight">temporary · finalizes when series end</p>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-500">temporary · finalizes when series end</span>
-                        <span className="text-base font-black text-amber-400">+{provPts}</span>
-                      </div>
+                      <span className="text-2xl font-black text-amber-400">+{provPts}</span>
                     </div>
 
-                    {/* Series provisional section */}
+                    {/* ── Active Series Bets ── */}
                     {Object.keys(provSeriesBD).length > 0 && (
-                      <div className="px-3 pt-3">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">🏆 Active Series Bets</p>
-                        <div className="space-y-2">
+                      <div className="px-3 pt-3 pb-1">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">🏆 Active Series Bets</p>
+                        <div className="space-y-2.5">
                           {Object.entries(provSeriesBD).map(([key, info]) => {
                             const leaderCats = info.leader_cats || {};
                             const leaderEntries = Object.entries(leaderCats);
                             const catLabel = { scorer: 'PTS', rebounder: 'REB', assister: 'AST' };
                             return (
-                              <div key={key} className="bg-slate-800/60 border border-green-500/20 rounded-xl overflow-hidden">
-                                {/* Top: round label + total pts */}
-                                <div className="flex items-center justify-between px-3 pt-2 pb-1">
-                                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{info.label}</span>
-                                  <span className="text-xs font-black text-amber-300">+{info.pts}</span>
+                              <div key={key} className="bg-slate-800/70 border border-green-500/25 rounded-2xl overflow-hidden">
+
+                                {/* Round label + total pts */}
+                                <div className="flex items-center justify-between px-3.5 pt-2.5 pb-1">
+                                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">{info.label}</span>
+                                  <span className="text-sm font-black text-amber-300">+{info.pts}</span>
                                 </div>
 
-                                {/* Winner pick row — only shown when user's winner is leading */}
+                                {/* Winner pick — scoreboard style */}
                                 {info.winner_pts > 0 && (
-                                  <div className="flex items-center gap-1.5 px-3 pb-1.5">
-                                    <div className="flex items-center gap-1 bg-green-500/15 border border-green-500/40 rounded-lg px-2 py-1 min-w-0">
-                                      <span className="text-[9px] text-green-400/70 font-bold shrink-0">✓</span>
-                                      <span className="text-[12px] font-black text-green-300 truncate">{info.picked_abbr}</span>
-                                      <span className="text-[11px] font-black text-white ml-1">{info.pick_wins}</span>
-                                    </div>
-                                    <div className="flex flex-col items-center shrink-0">
-                                      <span className="text-[8px] font-black text-slate-600">VS</span>
-                                    </div>
-                                    <div className="flex items-center gap-1 bg-slate-700/40 border border-slate-600/30 rounded-lg px-2 py-1 min-w-0">
-                                      <span className="text-[12px] font-black text-slate-400 truncate">{info.opp_abbr || '—'}</span>
-                                      <span className="text-[11px] font-black text-slate-400 ml-1">{info.opp_wins}</span>
-                                    </div>
-                                    <div className="ml-auto shrink-0 flex items-center gap-1 bg-green-500/10 border border-green-500/25 rounded-lg px-2 py-1">
-                                      <span className="text-[9px] text-green-400 font-black">LEADING</span>
-                                      <span className="text-[9px] text-amber-300 font-black ml-1">+{info.winner_pts}</span>
+                                  <div className="mx-3 mb-2.5">
+                                    <div className="flex items-center bg-green-500/10 border border-green-500/30 rounded-xl px-3 py-2.5">
+                                      {/* Picked team */}
+                                      <div className="flex items-center gap-1.5 flex-1">
+                                        <span className="text-green-400 text-sm font-black">✓</span>
+                                        <span className="text-base font-black text-green-300">{info.picked_abbr}</span>
+                                        <span className="text-2xl font-black text-white ml-1">{info.pick_wins}</span>
+                                      </div>
+                                      {/* Score divider */}
+                                      <span className="text-xs font-bold text-slate-600 px-2">—</span>
+                                      {/* Opponent */}
+                                      <div className="flex items-center gap-1.5 flex-1 justify-end">
+                                        <span className="text-2xl font-black text-slate-500">{info.opp_wins}</span>
+                                        <span className="text-base font-black text-slate-500">{info.opp_abbr || '—'}</span>
+                                      </div>
+                                      {/* Badge */}
+                                      <div className="ml-3 shrink-0 bg-green-500/20 border border-green-500/35 rounded-lg px-2 py-1">
+                                        <p className="text-[9px] font-black text-green-400 leading-none">LEADING</p>
+                                        <p className="text-[11px] font-black text-amber-300 leading-none">+{info.winner_pts}</p>
+                                      </div>
                                     </div>
                                   </div>
                                 )}
 
-                                {/* Leader bets rows — one per matched category */}
+                                {/* Leader bets — one row per matched category */}
                                 {leaderEntries.length > 0 && (
-                                  <div className={`px-3 space-y-1 ${info.winner_pts > 0 ? 'border-t border-slate-700/40 pt-1.5' : ''} pb-2`}>
+                                  <div className={`mx-3 space-y-1.5 ${info.winner_pts > 0 ? 'border-t border-slate-700/50 pt-2.5' : 'pt-0.5'} pb-3`}>
                                     {leaderEntries.map(([cat, linfo]) => (
-                                      <div key={cat} className="flex items-center gap-2 bg-cyan-500/8 border border-cyan-500/20 rounded-lg px-2 py-1">
-                                        <span className="text-[9px] font-black text-cyan-400/70 shrink-0 w-7">{catLabel[cat]}</span>
-                                        <span className="text-[10px] font-black text-cyan-300 truncate flex-1">
-                                          {linfo.player?.split(' ').slice(-1)[0]}
-                                          {linfo.value != null && (
-                                            <span className="text-white font-black"> ({linfo.value})</span>
-                                          )}
-                                          <span className="text-cyan-400/50 font-normal"> ✓ leading</span>
-                                        </span>
-                                        <span className="text-[10px] font-black text-amber-300 shrink-0">+{linfo.pts}</span>
+                                      <div key={cat} className="flex items-center justify-between bg-cyan-500/8 border border-cyan-500/20 rounded-xl px-3 py-2.5">
+                                        <div className="flex items-center gap-2.5 min-w-0">
+                                          <span className="text-xs font-black text-cyan-400 shrink-0 w-8">{catLabel[cat]}</span>
+                                          <span className="text-sm font-black text-cyan-300 truncate">
+                                            {linfo.player?.split(' ').slice(-1)[0]}
+                                            {linfo.value != null && <span className="text-white font-black"> ({linfo.value})</span>}
+                                          </span>
+                                          <span className="text-[10px] text-cyan-400/50 shrink-0">✓ leading</span>
+                                        </div>
+                                        <span className="text-sm font-black text-amber-300 shrink-0 ml-2">+{linfo.pts}</span>
                                       </div>
                                     ))}
                                   </div>
@@ -2602,30 +2608,30 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                       </div>
                     )}
 
-                    {/* Leaders provisional section */}
+                    {/* ── Max-Stat Bets (Playoff Highs proximity) ── */}
                     {Object.keys(provBreakdownNorm).length > 0 && (
                       <div className="px-3 pt-3">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">📊 Max-Stat Bets (proximity)</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">📊 Max-Stat Bets (proximity)</p>
                         <div className="grid grid-cols-2 gap-2">
                           {Object.entries(provBreakdownNorm).map(([cat, info]) => {
                             const { pts: catPts, predicted, record } = typeof info === 'object' ? info : { pts: info, predicted: null, record: null };
                             const catLabel = { scorer: '🏀 Points', assists: '🎯 Assists', rebounds: '💪 Rebounds', threes: '3️⃣ Threes', steals: '🤚 Steals', blocks: '🚫 Blocks' }[cat] || cat;
                             const exact = predicted === record;
                             return (
-                              <div key={cat} className="bg-amber-500/10 border border-amber-400/25 rounded-xl p-2.5">
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className="text-[10px] font-black text-slate-300">{catLabel}</span>
-                                  <span className="text-sm font-black text-amber-300">+{catPts}</span>
+                              <div key={cat} className="bg-amber-500/10 border border-amber-400/25 rounded-xl p-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-xs font-black text-slate-300">{catLabel}</span>
+                                  <span className="text-base font-black text-amber-300">+{catPts}</span>
                                 </div>
                                 {predicted != null && record != null && (
-                                  <div className="space-y-1">
-                                    <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2 py-1">
-                                      <span className="text-[9px] text-slate-500 font-bold">Bet</span>
-                                      <span className="text-xs font-black text-white">{predicted}</span>
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2.5 py-1.5">
+                                      <span className="text-[10px] text-slate-500 font-bold">Bet</span>
+                                      <span className="text-sm font-black text-white">{predicted}</span>
                                     </div>
-                                    <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2 py-1">
-                                      <span className="text-[9px] text-slate-500 font-bold">Record</span>
-                                      <span className={`text-xs font-black ${exact ? 'text-green-400' : 'text-cyan-400'}`}>{record}{exact ? ' ✓' : ''}</span>
+                                    <div className="flex items-center justify-between bg-slate-800/60 rounded-lg px-2.5 py-1.5">
+                                      <span className="text-[10px] text-slate-500 font-bold">Record</span>
+                                      <span className={`text-sm font-black ${exact ? 'text-green-400' : 'text-cyan-400'}`}>{record}{exact ? ' ✓' : ''}</span>
                                     </div>
                                   </div>
                                 )}
@@ -2636,14 +2642,12 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                       </div>
                     )}
 
-                    {/* Summary + footer */}
-                    <div className="px-4 pt-3 pb-3 flex items-center justify-between">
-                      <span className="text-[10px] text-slate-500">⏳ Temporary — finalizes when series &amp; playoffs end</span>
-                      {provPts > 0 && (
-                        <span className="text-[11px] font-black text-amber-400">
-                          {user.points} real + {provPts}⚡ = {user.points + provPts}
-                        </span>
-                      )}
+                    {/* Footer */}
+                    <div className="px-4 pt-3 pb-4 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-500">⏳ Finalizes when series end</span>
+                      <span className="text-xs font-black text-amber-400">
+                        {user.points} + {provPts}⚡ = {user.points + provPts}
+                      </span>
                     </div>
                   </div>
                 )}
