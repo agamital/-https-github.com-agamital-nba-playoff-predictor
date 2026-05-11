@@ -196,19 +196,31 @@ export default function ScoringGuide() {
           <h2 className="text-base font-black text-cyan-400 uppercase tracking-widest flex-1">Series Leaders</h2>
           <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">NEW</span>
         </div>
-        <p className="text-slate-500 text-xs mb-4">
+        <p className="text-slate-500 text-xs mb-3">
           For each series, predict the leading scorer, rebounder, and assister.
-          <strong className="text-slate-300"> +{SERIES_LEADER_BONUS} pts</strong> per correct prediction — up to +30 pts per series.
+          Points scale with round — up to +75 pts per Finals series (3 leaders).
         </p>
+        <div className="grid grid-cols-4 gap-1.5 mb-3">
+          {[
+            { round: 'R1',     pts: 10, color: 'text-slate-300' },
+            { round: 'Semis',  pts: 15, color: 'text-cyan-400'  },
+            { round: 'CF',     pts: 20, color: 'text-orange-400'},
+            { round: 'Finals', pts: 25, color: 'text-amber-400' },
+          ].map(r => (
+            <div key={r.round} className="rounded-lg border border-slate-700/50 bg-slate-800/40 p-2 text-center">
+              <div className={`text-base font-black ${r.color}`}>+{r.pts}</div>
+              <div className="text-[9px] text-slate-500 font-bold mt-0.5">{r.round}</div>
+            </div>
+          ))}
+        </div>
         <div className="grid grid-cols-3 gap-2">
           {[
             { label: 'Top Scorer',    color: 'text-yellow-400', ring: 'border-yellow-500/20 bg-yellow-500/5' },
             { label: 'Top Rebounder', color: 'text-green-400',  ring: 'border-green-500/20  bg-green-500/5'  },
             { label: 'Top Assister',  color: 'text-blue-400',   ring: 'border-blue-500/20   bg-blue-500/5'   },
           ].map(c => (
-            <div key={c.label} className={`rounded-xl border ${c.ring} p-3 text-center`}>
-              <div className={`text-2xl font-black ${c.color}`}>+{SERIES_LEADER_BONUS}</div>
-              <div className="text-[10px] text-slate-500 font-bold mt-0.5">{c.label}</div>
+            <div key={c.label} className={`rounded-xl border ${c.ring} p-2.5 text-center`}>
+              <div className={`text-[10px] font-black ${c.color}`}>{c.label}</div>
             </div>
           ))}
         </div>

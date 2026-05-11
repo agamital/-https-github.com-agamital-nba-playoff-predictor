@@ -214,7 +214,7 @@ const SeriesCard = ({ series, onSave, onToggleLock, onReset, addToast }) => {
       </div>
 
       <div className="mb-4">
-        <p className="text-xs text-slate-400 mb-2 uppercase font-bold">Series Leaders <span className="text-slate-600 normal-case font-normal">(+10 pts each — leave blank to keep existing)</span></p>
+        <p className="text-xs text-slate-400 mb-2 uppercase font-bold">Series Leaders <span className="text-slate-600 normal-case font-normal">(R1:+10 · Semis:+15 · CF:+20 · Finals:+25 each — leave blank to keep existing)</span></p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           {[['scorer', 'Points Leader', scorer, setScorer], ['rebounder', 'Rebounds Leader', rebounder, setRebounder], ['assister', 'Assists Leader', assister, setAssister]].map(([key, label, val, setter]) => (
             <div key={key}>
