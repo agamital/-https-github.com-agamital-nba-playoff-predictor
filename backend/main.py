@@ -4340,6 +4340,31 @@ async def startup():
         except Exception as e:
             print(f"[Startup] Backfill series ERROR: {e}")
 
+        # Re-run bracket advancement for all completed series.
+        # Catches any Conference Finals / NBA Finals that weren't auto-created
+        # (e.g. due to the bracket_group bug where Conf Semis A+B partners weren't found).
+        try:
+            conn_adv = get_db_conn()
+            c_adv = conn_adv.cursor()
+            c_adv.execute('''SELECT id, round, conference, bracket_group, winner_team_id,
+                             home_team_id, home_seed, away_seed
+                             FROM series WHERE season = %s AND status = %s''', ('2026', 'completed'))
+            adv_rows = c_adv.fetchall()
+            adv_created = 0
+            for sid, rnd, conf, bg, wid, hid, hs, as_ in adv_rows:
+                ws = hs if wid == hid else as_
+                try:
+                    _try_advance_bracket(c_adv, sid, '2026', rnd, conf, bg, wid, ws)
+                    adv_created += 1
+                except Exception as e2:
+                    print(f"[Startup] Advance series {sid} ERROR: {e2}")
+            conn_adv.commit()
+            conn_adv.close()
+            if adv_created:
+                print(f"[Startup] Bracket advancement: checked {adv_created} completed series")
+        except Exception as e:
+            print(f"[Startup] Bracket advancement ERROR: {e}")
+
         # Backfill null seeds on Conf Semis / later series by looking up the
         # team's seed from their most recent Round 1 (or earlier) appearance.
         try:
@@ -8549,7 +8574,24 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
     if not next_round:
         return
 
+    def _resolve_seed(team_id, known_seed):
+        """If known_seed is None, look it up from any series appearance for this team."""
+        if known_seed is not None:
+            return known_seed
+        c.execute("""SELECT home_seed FROM series
+                     WHERE season=%s AND home_team_id=%s AND home_seed IS NOT NULL
+                     LIMIT 1""", (season, team_id))
+        row = c.fetchone()
+        if row:
+            return row[0]
+        c.execute("""SELECT away_seed FROM series
+                     WHERE season=%s AND away_team_id=%s AND away_seed IS NOT NULL
+                     LIMIT 1""", (season, team_id))
+        row = c.fetchone()
+        return row[0] if row else None
+
     if next_round == 'NBA Finals':
+        # Both Conference Finals must be done (across conferences)
         c.execute('''SELECT winner_team_id, home_team_id, away_team_id, home_seed, away_seed
                      FROM series
                      WHERE season = %s AND round = 'Conference Finals' AND status = 'completed'
@@ -8560,13 +8602,46 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
             if not c.fetchone():
                 t1, t1_seed = cf_winners[0][0], (cf_winners[0][3] if cf_winners[0][1] == cf_winners[0][0] else cf_winners[0][4])
                 t2, t2_seed = cf_winners[1][0], (cf_winners[1][3] if cf_winners[1][1] == cf_winners[1][0] else cf_winners[1][4])
+                t1_seed = _resolve_seed(t1, t1_seed)
+                t2_seed = _resolve_seed(t2, t2_seed)
                 c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
                              home_seed, away_seed, status, bracket_group)
                              VALUES (%s, 'NBA Finals', 'Finals', %s, %s, %s, %s, 'active', 'A')''',
                           (season, t1, t2, t1_seed, t2_seed))
+                print(f"[Bracket] NBA Finals created: team {t1} vs team {t2}")
         return
 
-    # Find the partner series in the same bracket_group
+    if next_round == 'Conference Finals':
+        # Partner is ANY other completed Conf Semis in the same conference (different bracket_group)
+        c.execute('''SELECT id, winner_team_id, home_team_id, away_team_id, home_seed, away_seed
+                     FROM series
+                     WHERE season = %s AND round = 'Conference Semifinals' AND conference = %s
+                       AND status = 'completed' AND id != %s''',
+                  (season, conf, completed_series_id))
+        partner = c.fetchone()
+        if partner:
+            partner_winner_id = partner[1]
+            partner_seed = partner[4] if partner[2] == partner_winner_id else partner[5]
+            winner_seed_r  = _resolve_seed(winner_team_id,   winner_seed)
+            partner_seed_r = _resolve_seed(partner_winner_id, partner_seed)
+            # Only create if the CF doesn't already exist for this conference
+            c.execute('''SELECT id FROM series WHERE season = %s AND round = 'Conference Finals'
+                         AND conference = %s''', (season, conf))
+            if not c.fetchone():
+                if (winner_seed_r or 99) <= (partner_seed_r or 99):
+                    new_home_id, new_home_seed = winner_team_id,   winner_seed_r
+                    new_away_id, new_away_seed = partner_winner_id, partner_seed_r
+                else:
+                    new_home_id, new_home_seed = partner_winner_id, partner_seed_r
+                    new_away_id, new_away_seed = winner_team_id,   winner_seed_r
+                c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
+                             home_seed, away_seed, status, bracket_group)
+                             VALUES (%s, 'Conference Finals', %s, %s, %s, %s, %s, 'active', 'A')''',
+                          (season, conf, new_home_id, new_away_id, new_home_seed, new_away_seed))
+                print(f"[Bracket] {conf} Conference Finals created: team {new_home_id} vs team {new_away_id}")
+        return
+
+    # First Round → Conference Semifinals: partner must be in the SAME bracket_group
     c.execute('''SELECT id, winner_team_id, home_team_id, away_team_id, home_seed, away_seed FROM series
                  WHERE season = %s AND round = %s AND conference = %s
                  AND bracket_group = %s AND status = 'completed' AND id != %s''',
@@ -8575,33 +8650,15 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
 
     if partner:
         partner_winner_id = partner[1]
-        # Determine partner winner's seed
         partner_seed = partner[4] if partner[2] == partner_winner_id else partner[5]
 
-        def _resolve_seed(team_id, known_seed):
-            """If known_seed is None, look it up from any R1 series appearance for this team."""
-            if known_seed is not None:
-                return known_seed
-            c.execute("""SELECT home_seed FROM series
-                         WHERE season=%s AND home_team_id=%s AND home_seed IS NOT NULL
-                         LIMIT 1""", (season, team_id))
-            row = c.fetchone()
-            if row:
-                return row[0]
-            c.execute("""SELECT away_seed FROM series
-                         WHERE season=%s AND away_team_id=%s AND away_seed IS NOT NULL
-                         LIMIT 1""", (season, team_id))
-            row = c.fetchone()
-            return row[0] if row else None
-
-        winner_seed  = _resolve_seed(winner_team_id,  winner_seed)
+        winner_seed  = _resolve_seed(winner_team_id,   winner_seed)
         partner_seed = _resolve_seed(partner_winner_id, partner_seed)
 
         c.execute('''SELECT id FROM series WHERE season = %s AND round = %s
                      AND conference = %s AND bracket_group = %s''',
                   (season, next_round, conf, bracket_group))
         if not c.fetchone():
-            # Always put the lower (better) seed as home_team so seeds display correctly
             if (winner_seed or 99) <= (partner_seed or 99):
                 new_home_id, new_home_seed = winner_team_id, winner_seed
                 new_away_id, new_away_seed = partner_winner_id, partner_seed
@@ -8613,6 +8670,7 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
                          VALUES (%s, %s, %s, %s, %s, %s, %s, 'active', %s)''',
                       (season, next_round, conf, new_home_id, new_away_id,
                        new_home_seed, new_away_seed, bracket_group))
+            print(f"[Bracket] {conf} {next_round} created: team {new_home_id} vs team {new_away_id}")
 
 
 @app.post("/api/admin/series/{series_id}/result")
