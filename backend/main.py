@@ -9481,53 +9481,89 @@ async def debug_game_stats(date: str | None = None, season: str = "2026"):
 
 @app.get("/api/admin/series-leaders-debug")
 async def series_leaders_debug(season: str = "2026"):
-    """Return per-series cumulative player totals (pts/reb/ast) so leaders can be verified."""
+    """
+    Return per-series cumulative player totals (pts/reb/ast) for all active+completed
+    playoff series. Uses series_processed_events (same logic as the real leader sync)
+    so results exactly match what is stored in the DB.
+    """
     conn = get_db_conn()
     c = conn.cursor()
+
+    # All Conf Semis+ series that have at least one processed game event
     c.execute("""
-        SELECT s.id, ht.abbreviation, at.abbreviation,
-               s.home_wins, s.away_wins, s.round,
-               s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister,
-               COALESCE(DATE(s.game1_start_time), '2026-04-18'::date) AS series_start
+        SELECT DISTINCT s.id, ht.abbreviation, at.abbreviation,
+               s.home_wins, s.away_wins, s.round, s.status,
+               s.actual_leading_scorer,    s.actual_leading_scorer_pts,
+               s.actual_leading_rebounder, s.actual_leading_rebounder_reb,
+               s.actual_leading_assister,  s.actual_leading_assister_ast
         FROM series s
         JOIN teams ht ON ht.id = s.home_team_id
         JOIN teams at ON at.id = s.away_team_id
-        WHERE s.season = %s AND s.status = 'active'
+        JOIN series_processed_events spe ON spe.series_id = s.id
+        WHERE s.season = %s AND s.status IN ('active', 'completed')
         ORDER BY s.id
     """, (season,))
     series_rows = c.fetchall()
 
-    result = []
-    for sid, home, away, hw, aw, rnd, cur_scorer, cur_reb, cur_ast, series_start in series_rows:
-        c.execute("""
-            SELECT player_name, team_abbr,
-                   SUM(points)   AS tot_pts,
-                   SUM(rebounds) AS tot_reb,
-                   SUM(assists)  AS tot_ast,
-                   COUNT(*)      AS games
-            FROM player_game_stats
-            WHERE season = %s AND game_date >= %s AND team_abbr IN (%s, %s)
-            GROUP BY player_name, team_abbr
-            ORDER BY tot_pts DESC
-        """, (season, series_start, home, away))
-        players = [{"name": r[0], "team": r[1], "pts": r[2], "reb": r[3], "ast": r[4], "gp": r[5]}
-                   for r in c.fetchall()]
+    _abbr_fix = {'SA': 'SAS', 'GS': 'GSW', 'NO': 'NOP', 'NY': 'NYK', 'UTAH': 'UTA'}
 
-        top_scorer    = max(players, key=lambda p: p["pts"] or 0) if players else None
-        top_rebounder = max(players, key=lambda p: p["reb"] or 0) if players else None
-        top_assister  = max(players, key=lambda p: p["ast"] or 0) if players else None
+    result = []
+    for (sid, home, away, hw, aw, rnd, status,
+         db_scorer, db_scorer_pts,
+         db_reb,    db_reb_tot,
+         db_ast,    db_ast_tot) in series_rows:
+
+        abbrs = list({_abbr_fix.get(a, a) for a in [home.upper(), away.upper()]} |
+                     {home.upper(), away.upper()})
+
+        # Game event IDs for this series
+        c.execute("""
+            SELECT event_id FROM series_processed_events
+            WHERE series_id = %s AND event_type = 'playoff'
+        """, (sid,))
+        event_ids = [r[0] for r in c.fetchall()]
+
+        # Aggregate all three categories using the exact same query as the real sync
+        players = {}
+        for cat, col in (("pts", "points"), ("reb", "rebounds"), ("ast", "assists")):
+            c.execute(f"""
+                SELECT player_name, UPPER(team_abbr) AS team, SUM({col}) AS total, COUNT(*) AS gp
+                FROM player_game_stats
+                WHERE espn_game_id = ANY(%s)
+                  AND UPPER(team_abbr) = ANY(%s)
+                GROUP BY player_name, UPPER(team_abbr)
+                ORDER BY total DESC NULLS LAST
+            """, (event_ids, abbrs))
+            for name, team, total, gp in c.fetchall():
+                if name not in players:
+                    players[name] = {"name": name, "team": team, "pts": 0, "reb": 0, "ast": 0, "gp": gp}
+                players[name][cat] = int(total) if total else 0
+                players[name]["gp"] = gp
+
+        plist = list(players.values())
+        top_scorer    = max(plist, key=lambda p: p["pts"]) if plist else None
+        top_rebounder = max(plist, key=lambda p: p["reb"]) if plist else None
+        top_assister  = max(plist, key=lambda p: p["ast"]) if plist else None
 
         result.append({
-            "series": f"{home} vs {away}",
-            "record": f"{hw}-{aw}",
-            "round": rnd,
-            "db_scorer":    cur_scorer,
-            "db_rebounder": cur_reb,
-            "db_assister":  cur_ast,
-            "computed_scorer":    {"name": top_scorer["name"],    "total": top_scorer["pts"],    "gp": top_scorer["gp"]}    if top_scorer    else None,
-            "computed_rebounder": {"name": top_rebounder["name"], "total": top_rebounder["reb"], "gp": top_rebounder["gp"]} if top_rebounder else None,
-            "computed_assister":  {"name": top_assister["name"],  "total": top_assister["ast"],  "gp": top_assister["gp"]}  if top_assister  else None,
-            "top10_scorers": sorted(players, key=lambda p: p["pts"] or 0, reverse=True)[:5],
+            "series":  f"{home} vs {away}",
+            "record":  f"{hw}-{aw}",
+            "round":   rnd,
+            "status":  status,
+            "games_in_db": len(event_ids),
+            # What is stored in the series table right now
+            "db": {
+                "scorer":    {"name": db_scorer, "pts": db_scorer_pts},
+                "rebounder": {"name": db_reb,    "reb": db_reb_tot},
+                "assister":  {"name": db_ast,    "ast": db_ast_tot},
+            },
+            # What the boxscore data actually says (using same event_ids as real sync)
+            "computed": {
+                "scorer":    {"name": top_scorer["name"],    "pts": top_scorer["pts"],    "gp": top_scorer["gp"]}    if top_scorer    else None,
+                "rebounder": {"name": top_rebounder["name"], "reb": top_rebounder["reb"], "gp": top_rebounder["gp"]} if top_rebounder else None,
+                "assister":  {"name": top_assister["name"],  "ast": top_assister["ast"],  "gp": top_assister["gp"]}  if top_assister  else None,
+            },
+            "top5": sorted(plist, key=lambda p: p["pts"], reverse=True)[:5],
         })
 
     conn.close()
