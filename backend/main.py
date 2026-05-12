@@ -4747,15 +4747,8 @@ async def startup():
             except Exception as _e:
                 print(f"[Live {label}] Boxscore ({_lbl}) ERROR: {_e}")
 
-        # Step B — Series leaders (cumulative SUM per player in each active series)
-        try:
-            pl = sync_series_provisional_leaders('2026')
-            if pl.get('series_updated', 0):
-                print(f"[Live {label}] Leaders — updated={pl['series_updated']}")
-        except Exception as _e:
-            print(f"[Live {label}] Leaders ERROR: {_e}")
-
-        # Step C — Playoff results (catches series completions mid-night)
+        # Step B — Playoff results FIRST so new event IDs are in series_processed_events
+        # before the leaders computation reads from that table.
         try:
             po = sync_playoff_results_from_api('2026')
             if po.get('completed', 0) or po.get('updated', 0):
@@ -4763,6 +4756,15 @@ async def startup():
                       f"updated={po.get('updated', 0)} completed={po.get('completed', 0)}")
         except Exception as _e:
             print(f"[Live {label}] Playoff ERROR: {_e}")
+
+        # Step C — Series leaders (cumulative SUM per player in each active+recent series)
+        # Must run AFTER Step B so all game event IDs are registered.
+        try:
+            pl = sync_series_provisional_leaders('2026')
+            if pl.get('series_updated', 0):
+                print(f"[Live {label}] Leaders — updated={pl['series_updated']}")
+        except Exception as _e:
+            print(f"[Live {label}] Leaders ERROR: {_e}")
 
     # Every 5 minutes during game hours (two cron ranges cover 21:00–06:59 UTC)
     _scheduler.add_job(

@@ -1415,18 +1415,17 @@ def sync_series_provisional_leaders(season: str = "2026") -> dict:
         conn = _get_db()
         c = conn.cursor()
 
-        # Target: active series + completed series still missing leaders
+        # Target: ALL series that have at least one processed event — active AND completed.
+        # Completed series are included so their final stat totals are always recomputed
+        # from boxscore data (guards against stale values set before the last game synced).
         c.execute("""
-            SELECT s.id, ht.abbreviation, at.abbreviation, s.status
+            SELECT DISTINCT s.id, ht.abbreviation, at.abbreviation, s.status
             FROM series s
             JOIN teams ht ON s.home_team_id = ht.id
             JOIN teams at ON s.away_team_id = at.id
+            JOIN series_processed_events spe ON spe.series_id = s.id
             WHERE s.season = %s
-              AND (
-                  s.status = 'active'
-                  OR (s.status = 'completed'
-                      AND s.actual_leading_scorer IS NULL)
-              )
+              AND s.status IN ('active', 'completed')
         """, (season,))
         target_series = c.fetchall()
         result["series_checked"] = len(target_series)
