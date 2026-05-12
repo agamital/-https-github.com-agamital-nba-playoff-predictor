@@ -4670,6 +4670,16 @@ async def startup():
         except Exception as e:
             print(f"[Auto-Sync {label}] Playoff ERROR: {type(e).__name__}: {e}")
 
+        # Step 5b — Re-sync leaders AFTER playoff results so any new game event IDs
+        # registered in Step 5 are included in the leader stat totals.
+        # This ensures completed games are always counted even if Step 3 ran first.
+        try:
+            pl2 = sync_series_provisional_leaders('2026')
+            if pl2.get('series_updated', 0):
+                print(f"[Auto-Sync {label}] Leaders (post-results) — updated={pl2['series_updated']}")
+        except Exception as e:
+            print(f"[Auto-Sync {label}] Leaders (post-results) ERROR: {type(e).__name__}: {e}")
+
         # Step 6 — DB-driven backfill: score any predictions that the API-driven
         # steps missed (e.g. ESPN no longer showing old events, or prior deploy
         # lacked scoring logic).  Fast, DB-only, idempotent.
@@ -9395,6 +9405,21 @@ async def admin_sync_playoffs_from_api(season: str = "2026"):
     loop = asyncio.get_event_loop()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         result = await loop.run_in_executor(pool, sync_playoff_results_from_api, season)
+    return result
+
+
+@app.post("/api/admin/sync-series-leaders")
+async def admin_sync_series_leaders(season: str = "2026"):
+    """
+    Manually trigger sync_series_provisional_leaders: recompute actual_leading_scorer /
+    rebounder / assister for all active + completed series from boxscore data.
+    Call this after boxscore sync or when leader stats look stale.
+    """
+    import concurrent.futures
+    from game_processor import sync_series_provisional_leaders
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        result = await loop.run_in_executor(pool, sync_series_provisional_leaders, season)
     return result
 
 
