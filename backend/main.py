@@ -8582,6 +8582,13 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
         'Conference Semifinals': 'Conference Finals',
         'Conference Finals': 'NBA Finals',
     }
+    # Estimated Game 1 tip-off times (UTC) used as default game1_start_time when auto-creating
+    # later-round series.  Admin should update via /api/admin/series/{id}/start-time.
+    # These defaults ensure picks lock automatically even if the admin forgets.
+    _ROUND_ESTIMATED_GAME1 = {
+        'Conference Finals': '2026-05-20 23:30:00',  # ~7:30 PM ET May 20 — update via admin
+        'NBA Finals':        '2026-06-05 23:30:00',  # ~7:30 PM ET June 5 — update via admin
+    }
     next_round = round_progression.get(round_name)
     if not next_round:
         return
@@ -8616,11 +8623,12 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
                 t2, t2_seed = cf_winners[1][0], (cf_winners[1][3] if cf_winners[1][1] == cf_winners[1][0] else cf_winners[1][4])
                 t1_seed = _resolve_seed(t1, t1_seed)
                 t2_seed = _resolve_seed(t2, t2_seed)
+                finals_g1 = _ROUND_ESTIMATED_GAME1.get('NBA Finals')
                 c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
-                             home_seed, away_seed, status, bracket_group)
-                             VALUES (%s, 'NBA Finals', 'Finals', %s, %s, %s, %s, 'active', 'A')''',
-                          (season, t1, t2, t1_seed, t2_seed))
-                print(f"[Bracket] NBA Finals created: team {t1} vs team {t2}")
+                             home_seed, away_seed, status, bracket_group, game1_start_time)
+                             VALUES (%s, 'NBA Finals', 'Finals', %s, %s, %s, %s, 'active', 'A', %s)''',
+                          (season, t1, t2, t1_seed, t2_seed, finals_g1))
+                print(f"[Bracket] NBA Finals created: team {t1} vs team {t2} (game1={finals_g1})")
         return
 
     if next_round == 'Conference Finals':
@@ -8646,11 +8654,12 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
                 else:
                     new_home_id, new_home_seed = partner_winner_id, partner_seed_r
                     new_away_id, new_away_seed = winner_team_id,   winner_seed_r
+                cf_g1 = _ROUND_ESTIMATED_GAME1.get('Conference Finals')
                 c.execute('''INSERT INTO series (season, round, conference, home_team_id, away_team_id,
-                             home_seed, away_seed, status, bracket_group)
-                             VALUES (%s, 'Conference Finals', %s, %s, %s, %s, %s, 'active', 'A')''',
-                          (season, conf, new_home_id, new_away_id, new_home_seed, new_away_seed))
-                print(f"[Bracket] {conf} Conference Finals created: team {new_home_id} vs team {new_away_id}")
+                             home_seed, away_seed, status, bracket_group, game1_start_time)
+                             VALUES (%s, 'Conference Finals', %s, %s, %s, %s, %s, 'active', 'A', %s)''',
+                          (season, conf, new_home_id, new_away_id, new_home_seed, new_away_seed, cf_g1))
+                print(f"[Bracket] {conf} Conference Finals created: team {new_home_id} vs team {new_away_id} (game1={cf_g1})")
         return
 
     # First Round → Conference Semifinals: partner must be in the SAME bracket_group
