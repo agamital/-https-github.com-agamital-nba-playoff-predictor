@@ -1,4 +1,4 @@
-import{r as _a}from"./ui-C1aE-8rc.js";var Co={exports:{}},ve={},xo={exports:{}},_o={};/**
+import{r as _a}from"./query-CL0AZl_F.js";var Co={exports:{}},ve={},xo={exports:{}},_o={};/**
  * @license React
  * scheduler.production.min.js
  *

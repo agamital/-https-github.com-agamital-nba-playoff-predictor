@@ -165,7 +165,7 @@ const MvpSearchInput = ({ value, onChange, locked, placeholder, conference, mvpT
                   </span>
                 )}
                 {p.logo_url ? (
-                  <img src={p.logo_url} alt={p.team} className="w-5 h-5 shrink-0 object-contain" onError={e => e.target.style.display='none'} />
+                  <img src={p.logo_url} alt={p.team} className="w-5 h-5 shrink-0 object-contain" loading="lazy" onError={e => e.target.style.display='none'} />
                 ) : (
                   <span className="w-5 h-5 shrink-0 text-[9px] font-black text-slate-500 flex items-center justify-center">{p.team}</span>
                 )}
@@ -222,7 +222,7 @@ const TeamGrid = ({ teams, selectedId, onSelect, locked, oddsField, cols = 5 }) 
               : 'border-slate-800 bg-slate-900/60 hover:border-slate-600 hover:bg-slate-800/60'
           }`}
         >
-          <img src={team.logo_url} alt={team.abbreviation} className="w-10 h-10" onError={e => e.target.style.display = 'none'} />
+          <img src={team.logo_url} alt={team.abbreviation} className="w-10 h-10" loading="lazy" onError={e => e.target.style.display = 'none'} />
           <span className={`text-[11px] font-black leading-tight text-center ${isSelected ? 'text-orange-400' : 'text-slate-300'}`}>
             {team.abbreviation}
           </span>
@@ -460,7 +460,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
               correct === 0 ? 'border-red-500/40 bg-red-500/10' :
               'border-orange-500/30 bg-orange-500/10'
             }`}>
-              <img src={team.logo_url} alt="" className="w-10 h-10 mx-auto mb-1" onError={e => e.target.style.display='none'} />
+              <img src={team.logo_url} alt="" className="w-10 h-10 mx-auto mb-1" loading="lazy" onError={e => e.target.style.display='none'} />
               <p className="text-[10px] text-slate-500 uppercase font-bold">{label}</p>
               <p className="text-xs font-black text-white">{team.abbreviation}</p>
               {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400 mx-auto mt-1" />}
@@ -621,7 +621,7 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
                           <div key={p.player_id} className="flex items-center gap-2">
                             <span className="text-[10px] font-black text-slate-600 w-3">{i + 1}</span>
                             {p.logo_url ? (
-                              <img src={p.logo_url} alt={p.team} className="w-4 h-4 shrink-0" onError={e => e.target.style.display = 'none'} />
+                              <img src={p.logo_url} alt={p.team} className="w-4 h-4 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
                             ) : (
                               <span className="text-[9px] font-black text-slate-600 w-4 shrink-0">{p.team}</span>
                             )}

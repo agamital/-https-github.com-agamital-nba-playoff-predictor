@@ -27,8 +27,10 @@ export default defineConfig({
         manualChunks: {
           vendor: ['react', 'react-dom'],
           ui:     ['lucide-react'],
+          query:  ['@tanstack/react-query'],
         }
       }
-    }
+    },
+    chunkSizeWarningLimit: 1000
   }
 })

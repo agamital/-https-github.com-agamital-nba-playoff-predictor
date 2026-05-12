@@ -175,3 +175,23 @@ nav,
   right: 0;
   max-height: min(84dvh, 84vh);
 }
+
+/* ── Mobile performance: GPU-layer promotion ─────────────────────────────── */
+/* Promote scroll containers to their own compositing layer so the GPU
+   can scroll them without involving the main thread. */
+.overflow-y-auto,
+.overflow-y-scroll {
+  will-change: transform;
+}
+
+/* Images: async decoding so they don't block the main thread */
+img {
+  decoding: async;
+}
+
+/* ── Reduce paint cost on card grid ─────────────────────────────────────── */
+/* contain: layout style paint — tells the browser each card is an isolated
+   paint region so it never repaints siblings when one card changes. */
+.card-contain {
+  contain: layout style paint;
+}

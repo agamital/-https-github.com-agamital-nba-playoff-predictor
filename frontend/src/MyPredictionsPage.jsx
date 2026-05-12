@@ -54,15 +54,15 @@ const PlayInCard = ({ pred }) => {
           {pred.conference} · {pred.game_type?.replace(/_/g, ' ')}
         </p>
         <div className="flex items-center gap-2 mb-2">
-          <img src={pred.team1?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
+          <img src={pred.team1?.logo_url} alt="" className="w-6 h-6 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
           <span className="text-xs font-black text-slate-300">{pred.team1?.abbreviation}</span>
           <span className="text-slate-600 text-xs">vs</span>
-          <img src={pred.team2?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
+          <img src={pred.team2?.logo_url} alt="" className="w-6 h-6 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
           <span className="text-xs font-black text-slate-300">{pred.team2?.abbreviation}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] text-slate-500">My pick:</span>
-          <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5 shrink-0" onError={e => e.target.style.display = 'none'} />
+          <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
           <span className="text-xs font-black text-orange-400">{pred.predicted_winner?.abbreviation}</span>
         </div>
       </div>
@@ -91,10 +91,10 @@ const SeriesCard = ({ pred }) => {
       {/* Matchup row */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          <img src={pred.home_team?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
+          <img src={pred.home_team?.logo_url} alt="" className="w-6 h-6 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
           <span className="text-xs font-black text-slate-300">{pred.home_team?.abbreviation}</span>
           <span className="text-slate-600 text-xs">vs</span>
-          <img src={pred.away_team?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
+          <img src={pred.away_team?.logo_url} alt="" className="w-6 h-6 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
           <span className="text-xs font-black text-slate-300">{pred.away_team?.abbreviation}</span>
           <span className="text-[10px] text-slate-600 ml-1">{pred.conference}</span>
         </div>
@@ -112,7 +112,7 @@ const SeriesCard = ({ pred }) => {
       {/* My pick row */}
       <div className="flex items-center gap-1.5">
         <span className="text-[10px] text-slate-500">My pick:</span>
-        <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5 shrink-0" onError={e => e.target.style.display = 'none'} />
+        <img src={pred.predicted_winner?.logo_url} alt="" className="w-5 h-5 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
         <span className="text-xs font-black text-orange-400">{pred.predicted_winner?.name}</span>
         {pred.predicted_games && (
           <span className="text-[10px] text-slate-500">· in {pred.predicted_games}g</span>
@@ -215,7 +215,7 @@ const FuturesPick = ({ label, color, team, mvp, isCorrect }) => {
         <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${color}`}>{label}</p>
         {team ? (
           <div className="flex items-center gap-2">
-            <img src={team.logo_url} alt="" className="w-7 h-7 shrink-0" onError={e => e.target.style.display = 'none'} />
+            <img src={team.logo_url} alt="" className="w-7 h-7 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
             <span className="text-sm font-black text-white truncate">{team.name}</span>
           </div>
         ) : mvp ? (
@@ -244,7 +244,7 @@ const PickBar = ({ label, color, items, icon: Icon }) => {
         <div key={i} className="flex items-center gap-2">
           {item.team ? (
             <>
-              <img src={item.team.logo_url} alt="" className="w-5 h-5 shrink-0" onError={e => e.target.style.display = 'none'} />
+              <img src={item.team.logo_url} alt="" className="w-5 h-5 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
               <span className="text-xs text-slate-300 font-bold w-8">{item.team.abbreviation}</span>
             </>
           ) : (
@@ -527,7 +527,7 @@ const MyPredictionsPage = ({ currentUser }) => {
                             <td className="px-3 py-2.5 text-center">
                               {entry.champion_team ? (
                                 <div className="flex items-center justify-center gap-1">
-                                  <img src={entry.champion_team.logo_url} alt="" className="w-5 h-5" onError={e => e.target.style.display = 'none'} />
+                                  <img src={entry.champion_team.logo_url} alt="" className="w-5 h-5" loading="lazy" onError={e => e.target.style.display = 'none'} />
                                   <span className="text-slate-300 font-bold">{entry.champion_team.abbreviation}</span>
                                 </div>
                               ) : <span className="text-slate-600">—</span>}
@@ -535,7 +535,7 @@ const MyPredictionsPage = ({ currentUser }) => {
                             <td className="px-3 py-2.5 text-center">
                               {entry.west_champ_team ? (
                                 <div className="flex items-center justify-center gap-1">
-                                  <img src={entry.west_champ_team.logo_url} alt="" className="w-5 h-5" onError={e => e.target.style.display = 'none'} />
+                                  <img src={entry.west_champ_team.logo_url} alt="" className="w-5 h-5" loading="lazy" onError={e => e.target.style.display = 'none'} />
                                   <span className="text-slate-300 font-bold">{entry.west_champ_team.abbreviation}</span>
                                 </div>
                               ) : <span className="text-slate-600">—</span>}
@@ -543,7 +543,7 @@ const MyPredictionsPage = ({ currentUser }) => {
                             <td className="px-3 py-2.5 text-center">
                               {entry.east_champ_team ? (
                                 <div className="flex items-center justify-center gap-1">
-                                  <img src={entry.east_champ_team.logo_url} alt="" className="w-5 h-5" onError={e => e.target.style.display = 'none'} />
+                                  <img src={entry.east_champ_team.logo_url} alt="" className="w-5 h-5" loading="lazy" onError={e => e.target.style.display = 'none'} />
                                   <span className="text-slate-300 font-bold">{entry.east_champ_team.abbreviation}</span>
                                 </div>
                               ) : <span className="text-slate-600">—</span>}

@@ -381,7 +381,7 @@ const MatchCard = ({ series, pick, onTeamClick, hasBet }) => {
           <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-yellow-400 rounded-l" />
         )}
         <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0"
-          onError={e => e.target.style.display = 'none'} />
+          loading="lazy" onError={e => e.target.style.display = 'none'} />
         <span className={`text-sm font-black truncate flex-1 ${
           won                              ? 'text-green-300' :
           picked && !isCompleted && hasBet ? 'text-yellow-300' :
@@ -486,7 +486,7 @@ const PlayInCard = ({ game, pick, onTeamClick, hasBet }) => {
         {showGold && (
           <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-yellow-400 rounded-l" />
         )}
-        <img src={team?.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display = 'none'} />
+        <img src={team?.logo_url} alt="" className="w-6 h-6 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
         <span className={`text-xs font-black truncate flex-1 ${
           isWinner   ? 'text-green-300' :
           showGold   ? 'text-yellow-300' :
@@ -714,7 +714,7 @@ const PLAYIN_ORDER = [
 const SeedBadge = ({ team, seed }) => (
   <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-800/80 border border-slate-700/60">
     {team?.logo_url
-      ? <img src={team.logo_url} alt="" className="w-5 h-5" onError={e => e.target.style.display = 'none'} />
+      ? <img src={team.logo_url} alt="" className="w-5 h-5" loading="lazy" onError={e => e.target.style.display = 'none'} />
       : <div className="w-5 h-5 rounded-full bg-slate-700 flex items-center justify-center text-[9px] font-black text-slate-400">{seed}</div>
     }
     <span className="text-[10px] font-black text-slate-300">{team?.abbreviation || `#${seed} Seed`}</span>
@@ -796,7 +796,7 @@ const SeedWaitingCard = ({ team }) => (
     {/* Top row: real seed */}
     <div className="flex-1 flex items-center gap-2 px-3 border-b border-slate-800 hover:bg-slate-800/40 transition-colors">
       <span className="text-xs text-orange-400 w-4 shrink-0 font-black">{team.seed}</span>
-      <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
+      <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
       <span className="text-sm font-black text-white">{team.abbreviation}</span>
     </div>
     {/* Bottom row: TBD play-in winner */}
@@ -884,12 +884,12 @@ const ProvisionalSemiMobileCard = ({ slot }) => {
     return (
       <div className="rounded-xl border border-orange-500/30 bg-orange-500/5 p-3 flex items-center gap-3">
         <div className="flex flex-col items-center gap-1 flex-1">
-          <img src={knownWinner.logo_url} alt="" className="w-10 h-10" onError={e => e.target.style.display='none'} />
+          <img src={knownWinner.logo_url} alt="" className="w-10 h-10" loading="lazy" onError={e => e.target.style.display='none'} />
           <span className="text-xs font-black text-orange-400">#{knownWinner.seed} {knownWinner.abbreviation}</span>
         </div>
         <div className="text-slate-600 font-black text-xs shrink-0">vs</div>
         <div className="flex flex-col items-center gap-1 flex-1">
-          <img src={knownWinner2.logo_url} alt="" className="w-10 h-10" onError={e => e.target.style.display='none'} />
+          <img src={knownWinner2.logo_url} alt="" className="w-10 h-10" loading="lazy" onError={e => e.target.style.display='none'} />
           <span className="text-xs font-black text-orange-400">#{knownWinner2.seed} {knownWinner2.abbreviation}</span>
         </div>
       </div>
@@ -900,7 +900,7 @@ const ProvisionalSemiMobileCard = ({ slot }) => {
   return (
     <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3 flex items-center gap-3">
       <div className="flex flex-col items-center gap-1 flex-1">
-        <img src={knownWinner.logo_url} alt="" className="w-10 h-10" onError={e => e.target.style.display='none'} />
+        <img src={knownWinner.logo_url} alt="" className="w-10 h-10" loading="lazy" onError={e => e.target.style.display='none'} />
         <span className="text-xs font-black text-green-400">#{knownWinner.seed} {knownWinner.abbreviation}</span>
         <span className="text-[9px] text-green-500/60 font-bold">✓ Advanced</span>
       </div>
@@ -929,7 +929,7 @@ const ProvisionalSemiDesktopCard = ({ slot }) => {
 
   const knownRow = (team) => (
     <div className="flex-1 flex items-center gap-2 px-3 w-full">
-      <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" onError={e => e.target.style.display = 'none'} />
+      <img src={team.logo_url} alt="" className="w-8 h-8 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
       <span className="text-sm font-black text-green-300 truncate flex-1">{team.abbreviation}</span>
       <span className="text-[10px] text-green-400/60 shrink-0">#{team.seed}</span>
     </div>
@@ -1063,7 +1063,7 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
           'border-slate-700 bg-slate-900/60 hover:border-slate-600'
         }`}>
         <span className={`text-xs font-black w-5 ${picked && confirmed && !editing ? 'text-yellow-400' : picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-slate-500'}`}>{team?.seed}</span>
-        <img src={team?.logo_url} alt="" className="w-9 h-9 shrink-0" onError={e => e.target.style.display = 'none'} />
+        <img src={team?.logo_url} alt="" className="w-9 h-9 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
         <p className={`font-black text-sm flex-1 text-left ${picked && confirmed && !editing ? 'text-yellow-300 drop-shadow-sm' : picked && isUnderdog ? 'text-amber-400' : picked ? 'text-orange-400' : 'text-white'}`}>{team?.name}</p>
         {picked && confirmed && !editing
           ? <span className="text-[8px] font-black px-2 py-1 rounded-lg shrink-0 bg-yellow-500/25 border border-yellow-500/50 text-yellow-300">⭐ MY BET</span>
@@ -1178,7 +1178,7 @@ const MobilePlayInCard = ({ game, pick, onTeamClick, onSave, saved, communitySta
               </p>
               <div className="flex items-center gap-1.5">
                 <img src={predData.predicted_winner?.logo_url} alt=""
-                  className="w-6 h-6 shrink-0" onError={e => e.target.style.display='none'} />
+                  className="w-6 h-6 shrink-0" loading="lazy" onError={e => e.target.style.display='none'} />
                 <span className="text-sm font-black text-white">{predData.predicted_winner?.name || predData.predicted_winner?.abbreviation}</span>
               </div>
             </div>
@@ -1237,7 +1237,7 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
           'border-slate-700 bg-slate-900/60 hover:border-slate-600'
         }`}>
         <span className={`text-xs font-black w-5 shrink-0 ${isWon ? 'text-green-400' : isPicked && !isCompleted && confirmed ? 'text-yellow-400' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-slate-500'}`}>{team.seed}</span>
-        <img src={team.logo_url} alt="" className="w-10 h-10 shrink-0" onError={e => e.target.style.display = 'none'} />
+        <img src={team.logo_url} alt="" className="w-10 h-10 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
         <div className="text-left flex-1 min-w-0">
           <p className={`font-black text-base leading-tight truncate ${isWon ? 'text-green-400' : isPicked && !isCompleted && confirmed ? 'text-yellow-300 drop-shadow-sm' : isPicked && !isCompleted && isTeamUnderdog ? 'text-amber-400' : isPicked && !isCompleted ? 'text-orange-400' : 'text-white'}`}>{team.name}</p>
           <p className="text-xs text-slate-500">{isWon && series.actual_games ? `Won in ${series.actual_games}` : isTeamUnderdog && !isCompleted ? '🔥 Underdog — higher reward' : team.seed != null ? `Seed #${team.seed}` : ''}</p>
@@ -1478,7 +1478,7 @@ const MobileMatchCard = ({ series, pick, onTeamClick, onGamesSelect, onLeaderSel
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex items-center gap-1.5">
                     <img src={dispWinner?.logo_url} alt=""
-                      className="w-5 h-5 shrink-0" onError={e => e.target.style.display='none'} />
+                      className="w-5 h-5 shrink-0" loading="lazy" onError={e => e.target.style.display='none'} />
                     <span className="text-sm font-black text-white">{dispWinner?.name || dispWinner?.abbreviation}</span>
                   </div>
                   {dispGames && (
@@ -1575,7 +1575,7 @@ const CommunitySeriesRow = ({ series, communityStats }) => {
       <div className="flex items-center gap-2 mb-1.5">
         {/* Home team */}
         <div className={`flex items-center gap-1.5 flex-1 min-w-0 ${hWon ? '' : isCompleted ? 'opacity-40' : ''}`}>
-          <img src={h.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display='none'} />
+          <img src={h.logo_url} alt="" className="w-6 h-6 shrink-0" loading="lazy" onError={e => e.target.style.display='none'} />
           <span className={`text-xs font-black truncate ${hWon ? 'text-green-400' : 'text-slate-200'}`}>
             {h.seed ? `#${h.seed} ` : ''}{h.abbreviation}
           </span>
@@ -1603,7 +1603,7 @@ const CommunitySeriesRow = ({ series, communityStats }) => {
           <span className={`text-xs font-black truncate ${aWon ? 'text-green-400' : 'text-slate-200'}`}>
             {a.seed ? `#${a.seed} ` : ''}{a.abbreviation}
           </span>
-          <img src={a.logo_url} alt="" className="w-6 h-6 shrink-0" onError={e => e.target.style.display='none'} />
+          <img src={a.logo_url} alt="" className="w-6 h-6 shrink-0" loading="lazy" onError={e => e.target.style.display='none'} />
         </div>
       </div>
 

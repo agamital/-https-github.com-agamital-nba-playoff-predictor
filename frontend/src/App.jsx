@@ -127,7 +127,7 @@ const PageSpinner = () => (
 );
 
 const Button = ({ children, onClick, className, variant = 'default', ...props }) => {
-  const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-all';
+  const baseClass = 'px-4 py-2 rounded-lg font-semibold transition-colors';
   const variants = {
     default: 'bg-orange-500 hover:bg-orange-600 text-white',
     outline: 'border-2 border-slate-700 bg-slate-800/50 text-white hover:bg-slate-700',
@@ -140,7 +140,7 @@ const Button = ({ children, onClick, className, variant = 'default', ...props })
 };
 
 const Card = ({ children, className, onClick }) => (
-  <div className={`bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur-sm ${className}`} onClick={onClick}>
+  <div className={`bg-slate-900 border border-slate-800 rounded-lg ${className}`} onClick={onClick}>
     {children}
   </div>
 );
@@ -431,13 +431,13 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
         <div className="flex gap-3 justify-center mb-7">
           <button
             onClick={() => onNavigate('betting')}
-            className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white font-black text-sm transition-all shadow-lg shadow-orange-500/25 active:scale-95"
+            className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white font-black text-sm transition-colors shadow-lg shadow-orange-500/25 active:scale-95"
           >
             🏀 Start Predicting
           </button>
           <button
             onClick={() => onNavigate('leaderboard')}
-            className="px-6 py-3.5 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white font-bold text-sm transition-all active:scale-95"
+            className="px-6 py-3.5 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white font-bold text-sm transition-colors active:scale-95"
           >
             View Leaderboard
           </button>
@@ -469,7 +469,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
         {/* How Scoring Works */}
         <button
           onClick={() => onNavigate('scoring')}
-          className="w-full flex items-center gap-3 p-4 mb-5 rounded-xl bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/15 transition-all text-left group active:scale-[0.99]"
+          className="w-full flex items-center gap-3 p-4 mb-5 rounded-xl bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/15 transition-colors text-left group active:scale-[0.99]"
         >
           <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center shrink-0">
             <Info className="w-4 h-4 text-blue-400" />
@@ -489,7 +489,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
               {progressSteps.map(step => (
                 <div
                   key={step.num}
-                  className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                  className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
                     step.done   ? 'bg-green-500/10 border-green-500/20' :
                     step.partial? 'bg-orange-500/10 border-orange-500/20' :
                                   'bg-slate-800/40 border-slate-700/50'
@@ -517,7 +517,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
                   {step.onClick && (
                     <button
                       onClick={step.onClick}
-                      className={`text-xs font-black px-3 py-1.5 rounded-lg shrink-0 transition-all ${
+                      className={`text-xs font-black px-3 py-1.5 rounded-lg shrink-0 transition-colors ${
                         step.done   ? 'text-green-400 bg-green-500/10 hover:bg-green-500/20' :
                         step.partial? 'text-orange-400 bg-orange-500/10 hover:bg-orange-500/20' :
                                       'text-white bg-orange-500 hover:bg-orange-600'
@@ -692,7 +692,7 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
         <button
           onClick={handleGoogleLogin}
           disabled={googleLoading}
-          className="w-full flex items-center justify-center gap-3 py-4 px-6 bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-800 font-bold rounded-2xl transition-all shadow-lg hover:shadow-xl text-base disabled:opacity-60 disabled:cursor-not-allowed"
+          className="w-full flex items-center justify-center gap-3 py-4 px-6 bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-800 font-bold rounded-2xl transition-colors shadow-lg hover:shadow-xl text-base disabled:opacity-60 disabled:cursor-not-allowed"
           style={{ minHeight: 56 }}
         >
           {googleLoading ? (
@@ -842,7 +842,7 @@ const BettingPage = ({ currentUser }) => {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
                       <img src={s.home_team.logo_url} alt={s.home_team.name} className="w-10 h-10"
-                        onError={(e) => e.target.src = `https://via.placeholder.com/40?text=${s.home_team.abbreviation}`} />
+                        loading="lazy" onError={(e) => e.target.src = `https://via.placeholder.com/40?text=${s.home_team.abbreviation}`} />
                       <div>
                         <p className="font-bold text-white">{s.home_team.name}</p>
                         <p className="text-xs text-slate-400">Seed {s.home_team.seed}</p>
@@ -855,7 +855,7 @@ const BettingPage = ({ currentUser }) => {
                         <p className="text-xs text-slate-400">Seed {s.away_team.seed}</p>
                       </div>
                       <img src={s.away_team.logo_url} alt={s.away_team.name} className="w-10 h-10"
-                        onError={(e) => e.target.src = `https://via.placeholder.com/40?text=${s.away_team.abbreviation}`} />
+                        loading="lazy" onError={(e) => e.target.src = `https://via.placeholder.com/40?text=${s.away_team.abbreviation}`} />
                     </div>
                   </div>
 
@@ -1072,7 +1072,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
         ) : (
           <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
             <div
-              className="h-full bg-blue-500/80 transition-all duration-700"
+              className="h-full bg-blue-500/80 transition-[width] duration-700"
               style={{ width: `${homePct}%` }}
             />
             <div className="h-full bg-orange-500/70 flex-1" />
@@ -1129,7 +1129,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
                     return wt ? (
                       <div className="flex items-center gap-1.5">
                         <Trophy className="w-3.5 h-3.5 text-green-400 shrink-0" />
-                        <img src={wt.logo_url} alt="" className="w-5 h-5 shrink-0" onError={e => e.target.style.display='none'} />
+                        <img src={wt.logo_url} alt="" className="w-5 h-5 shrink-0" loading="lazy" onError={e => e.target.style.display='none'} />
                         <span className="text-[11px] font-black text-green-400">
                           {wt.abbreviation}{s.actual_games ? ` in ${s.actual_games}` : ''}
                         </span>
@@ -1206,7 +1206,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-1.5">
                                 {p.avatar_url ? (
-                                  <img src={p.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" onError={e => { e.target.style.display = 'none'; }} />
+                                  <img src={p.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" loading="lazy" onError={e => { e.target.style.display = 'none'; }} />
                                 ) : (
                                   <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-orange-500/30' : 'bg-slate-700'}`}>
                                     <span className={`text-[6px] font-black ${isMe ? 'text-orange-400' : 'text-slate-400'}`}>{(p.username || '?')[0].toUpperCase()}</span>
@@ -1227,7 +1227,7 @@ const SeriesVoteBar = ({ s, currentUser }) => {
                             {/* Pick */}
                             <td className="px-1 py-2 text-center">
                               <div className="flex items-center justify-center gap-1">
-                                <img src={p.team_logo_url} alt="" className="w-4 h-4 shrink-0" onError={e => e.target.style.display = 'none'} />
+                                <img src={p.team_logo_url} alt="" className="w-4 h-4 shrink-0" loading="lazy" onError={e => e.target.style.display = 'none'} />
                                 <span className={`text-[10px] font-black whitespace-nowrap ${
                                   perfect                         ? 'text-amber-400' :
                                   isCompleted && p.is_correct === 1 ? 'text-green-400' :
@@ -1321,7 +1321,7 @@ const FuturesPickBar = ({ item, rank, totalUsers }) => {
         </div>
         <div className="h-2.5 bg-slate-800 rounded-full overflow-hidden">
           <div
-            className="h-full rounded-full transition-all duration-700"
+            className="h-full rounded-full transition-[width] duration-700"
             style={{ width: `${Math.max(pct, 4)}%`, background: style.bar }}
           />
         </div>
@@ -1426,7 +1426,7 @@ const PlayinVoteBar = ({ g, currentUser }) => {
 
         {/* Vote bar */}
         <div className="relative h-8 rounded-full overflow-hidden bg-slate-800 flex">
-          <div className="h-full bg-purple-500/70 transition-all duration-700"
+          <div className="h-full bg-purple-500/70 transition-[width] duration-700"
             style={{ width: noVotes ? '50%' : `${g.team1_pct}%` }} />
           <div className="h-full bg-pink-500/60 flex-1" />
           <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
@@ -1470,7 +1470,7 @@ const PlayinVoteBar = ({ g, currentUser }) => {
                   <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-purple-500/10' : ''}`}>
                     {p.avatar_url ? (
                       <img src={p.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
-                        onError={e => { e.target.style.display = 'none'; }} />
+                        loading="lazy" onError={e => { e.target.style.display = 'none'; }} />
                     ) : (
                       <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-purple-500/30' : 'bg-slate-700'}`}>
                         <span className={`text-[8px] font-black ${isMe ? 'text-purple-400' : 'text-slate-400'}`}>
@@ -1482,7 +1482,7 @@ const PlayinVoteBar = ({ g, currentUser }) => {
                     <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-purple-300' : 'text-slate-300'}`}>{p.username}</span>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <img src={p.team_logo_url} alt="" className="w-4 h-4"
-                        onError={e => e.target.style.display = 'none'} />
+                        loading="lazy" onError={e => e.target.style.display = 'none'} />
                       <span className={`text-[10px] font-black ${isMe ? 'text-purple-400' : 'text-slate-400'}`}>{p.team_abbreviation}</span>
                       {gameStatus === 'completed' && (
                         <ResultBadge isCorrect={p.is_correct} pts={p.is_correct ? p.points_earned : null} />
@@ -1531,7 +1531,7 @@ const PlayerPickBar = ({ item, rank }) => {
           <span className="text-[10px] font-bold text-slate-400 shrink-0 ml-1">{item.count} <span className="text-orange-400">({pct}%)</span></span>
         </div>
         <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-          <div className={`h-full rounded-full transition-all duration-700 ${style.bar}`}
+          <div className={`h-full rounded-full transition-[width] duration-700 ${style.bar}`}
             style={{ width: `${Math.max(pct, 3)}%` }} />
         </div>
       </div>
@@ -1581,7 +1581,7 @@ const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onT
                     <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-amber-500/8' : ''}`}>
                       {e.avatar_url ? (
                         <img src={e.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
-                          onError={ev => { ev.target.style.display = 'none'; }} />
+                          loading="lazy" onError={ev => { ev.target.style.display = 'none'; }} />
                       ) : (
                         <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-amber-500/30' : 'bg-slate-700'}`}>
                           <span className={`text-[8px] font-black ${isMe ? 'text-amber-400' : 'text-slate-400'}`}>
@@ -1594,7 +1594,7 @@ const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onT
                       <div className="flex items-center gap-1.5 shrink-0">
                         {team?.logo_url && (
                           <img src={team.logo_url} alt="" className="w-5 h-5"
-                            onError={ev => ev.target.style.display = 'none'} />
+                            loading="lazy" onError={ev => ev.target.style.display = 'none'} />
                         )}
                         <span className={`text-[10px] font-black ${isMe ? 'text-amber-400' : 'text-slate-400'}`}>
                           {team?.abbreviation || team?.name || '?'}
@@ -1657,7 +1657,7 @@ const MvpCategoryCard = ({ label, labelCls, items, expanded, onToggle, entries, 
                     <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-blue-500/8' : ''}`}>
                       {e.avatar_url ? (
                         <img src={e.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
-                          onError={ev => { ev.target.style.display = 'none'; }} />
+                          loading="lazy" onError={ev => { ev.target.style.display = 'none'; }} />
                       ) : (
                         <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-blue-500/30' : 'bg-slate-700'}`}>
                           <span className={`text-[8px] font-black ${isMe ? 'text-blue-400' : 'text-slate-400'}`}>
@@ -1724,7 +1724,7 @@ const PlayoffCurrentHighs = ({ highs, compact = false }) => {
           return (
             <div
               key={cat}
-              className={`relative flex items-center gap-3 rounded-2xl border px-3.5 py-3 transition-all ${bg} ${h ? 'hover:scale-[1.01]' : 'opacity-60'}`}
+              className={`relative flex items-center gap-3 rounded-2xl border px-3.5 py-3 transition-colors ${bg} ${h ? 'hover:scale-[1.01]' : 'opacity-60'}`}
             >
               {/* Emoji icon */}
               <span className="text-xl leading-none shrink-0">{emoji}</span>
@@ -1992,7 +1992,7 @@ const GlobalStatsTab = ({ currentUser }) => {
         <div>
           <button
             onClick={() => setShowPlayIn(v => !v)}
-            className="w-full flex items-center justify-between px-4 py-3 rounded-2xl border border-slate-700/60 bg-slate-900/60 hover:border-slate-600 transition-all group"
+            className="w-full flex items-center justify-between px-4 py-3 rounded-2xl border border-slate-700/60 bg-slate-900/60 hover:border-slate-600 transition-colors group"
           >
             <div className="flex items-center gap-2.5">
               <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Play-In Tournament</span>
@@ -2171,7 +2171,7 @@ const GlobalStatsTab = ({ currentUser }) => {
                             <span className="text-[9px] text-slate-600 font-bold w-6 shrink-0">{unit}</span>
                             <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
                               <div
-                                className={`h-full rounded-full transition-all duration-500 ${i === 0 ? bar : 'bg-slate-600/50'}`}
+                                className={`h-full rounded-full transition-[width] duration-500 ${i === 0 ? bar : 'bg-slate-600/50'}`}
                                 style={{ width: `${Math.max(item.count / maxCount * 100, 8)}%` }}
                               />
                             </div>
@@ -2212,7 +2212,7 @@ const GlobalStatsTab = ({ currentUser }) => {
                                   <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-amber-500/8' : ''}`}>
                                     {p.avatar_url ? (
                                       <img src={p.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
-                                        onError={e => { e.target.style.display = 'none'; }} />
+                                        loading="lazy" onError={e => { e.target.style.display = 'none'; }} />
                                     ) : (
                                       <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-amber-500/30' : 'bg-slate-700'}`}>
                                         <span className={`text-[8px] font-black ${isMe ? 'text-amber-400' : 'text-slate-400'}`}>
@@ -2316,7 +2316,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
       <div className="flex gap-1 bg-slate-900/70 border border-slate-800 rounded-xl p-1 mb-5">
         {[{ id: 'rankings', label: '🏅 Rankings' }, { id: 'global', label: '🌍 Community Picks' }].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex-1 py-2.5 px-3 rounded-lg text-sm font-bold transition-all ${
+            className={`flex-1 py-2.5 px-3 rounded-lg text-sm font-bold transition-colors ${
               tab === t.id ? 'bg-orange-500 text-white shadow' : 'text-slate-400 hover:text-white'
             }`}>
             {t.label}
@@ -2437,7 +2437,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                             user.rank === 2 ? 'border-slate-400/60' :
                             user.rank === 3 ? 'border-orange-600/60' : 'border-slate-700'
                           }`}
-                          onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
+                          loading="lazy" onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
                       ) : null}
                       <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-black text-[10px] sm:text-xs ${user.avatar_url ? 'hidden' : ''} ${
                         isMe ? 'bg-orange-500/20 text-orange-400 border border-orange-500/40' :
@@ -2483,7 +2483,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     <button
                       onClick={() => setExpanded(isExpanded ? null : user.rank)}
                       title="Tap to see score breakdown"
-                      className={`flex flex-col items-center rounded-lg sm:rounded-xl px-1 sm:px-2.5 py-1 sm:py-1.5 border min-w-[2.2rem] sm:min-w-[3rem] transition-all ${
+                      className={`flex flex-col items-center rounded-lg sm:rounded-xl px-1 sm:px-2.5 py-1 sm:py-1.5 border min-w-[2.2rem] sm:min-w-[3rem] transition-colors ${
                         isExpanded
                           ? 'bg-orange-500/25 border-orange-500/60'
                           : 'bg-slate-800/80 border-slate-700 hover:bg-slate-700 hover:border-slate-600'
@@ -2500,7 +2500,7 @@ const LeaderboardPage = ({ onUserClick, currentUser }) => {
                     <button
                       onClick={() => provPts > 0 && setProvPopover(provPopover === user.user_id ? null : user.user_id)}
                       title={provPts > 0 ? 'Tap to see provisional pts' : 'No provisional pts yet'}
-                      className={`flex flex-col items-center rounded-lg sm:rounded-xl px-1 sm:px-2.5 py-1 sm:py-1.5 border min-w-[2.2rem] sm:min-w-[3rem] transition-all ${
+                      className={`flex flex-col items-center rounded-lg sm:rounded-xl px-1 sm:px-2.5 py-1 sm:py-1.5 border min-w-[2.2rem] sm:min-w-[3rem] transition-colors ${
                         provPts === 0
                           ? 'border-slate-800/50 bg-transparent cursor-default opacity-40'
                           : provPopover === user.user_id
@@ -3046,7 +3046,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
           disabled={subLoading || !isSDKReady}
           aria-pressed={isSubscribed}
           title={!isSDKReady ? 'Push notifications unavailable' : isSubscribed ? 'Disable push notifications' : 'Enable push notifications'}
-          className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:opacity-50 ${
+          className={`relative w-12 h-6 rounded-full transition-colors duration-200 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:opacity-50 ${
             isSubscribed && isSDKReady ? 'bg-orange-500 shadow-md shadow-orange-500/40' : 'bg-slate-700'
           }`}
         >
@@ -3177,7 +3177,7 @@ const BellButton = ({ userId, onNavigate, className = '' }) => {
                   onClick={handleSubscribeToggle}
                   disabled={subLoading || !isSDKReady}
                   aria-pressed={isSubscribed}
-                  className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 disabled:opacity-50 ${isSubscribed && isSDKReady ? 'bg-orange-500 shadow-md shadow-orange-500/40' : 'bg-slate-700'}`}
+                  className={`relative w-12 h-6 rounded-full transition-colors duration-200 shrink-0 disabled:opacity-50 ${isSubscribed && isSDKReady ? 'bg-orange-500 shadow-md shadow-orange-500/40' : 'bg-slate-700'}`}
                 >
                   <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${isSubscribed && isSDKReady ? 'translate-x-6' : 'translate-x-0'}`} />
                 </button>
@@ -3443,11 +3443,11 @@ function App() {
   }, [currentUser]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900">
+    <div className="min-h-screen bg-slate-950">
 
       {/* ── DESKTOP SIDEBAR ── */}
       <aside className="hidden md:fixed md:inset-y-0 md:flex md:w-64 md:flex-col z-40">
-        <div className="flex flex-col flex-grow pt-5 bg-slate-900/50 backdrop-blur-xl border-r border-blue-500/20">
+        <div className="flex flex-col flex-grow pt-5 bg-slate-900 border-r border-blue-500/20">
           <button onClick={() => navigate('home')} className="flex items-center px-4 mb-8 active:opacity-70 transition-opacity">
             <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center mr-3 shrink-0">
               <Trophy className="w-7 h-7 text-white" />
@@ -3469,7 +3469,7 @@ function App() {
               const badge = item.id === 'betting' && navBadgeCount > 0 ? navBadgeCount : 0;
               return (
                 <button key={item.id} onClick={handleNav}
-                  className={`group flex items-center w-full px-3 py-3 text-sm font-semibold rounded-xl transition-all ${
+                  className={`group flex items-center w-full px-3 py-3 text-sm font-semibold rounded-xl transition-colors ${
                     currentPage === item.id
                       ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
                       : 'text-slate-300 hover:bg-slate-800/50'
@@ -3497,7 +3497,7 @@ function App() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => navigate('account')}
-                  className={`group flex items-center flex-1 px-3 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                  className={`group flex items-center flex-1 px-3 py-2.5 text-sm font-semibold rounded-xl transition-colors ${
                     currentPage === 'account'
                       ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg'
                       : 'text-slate-300 hover:bg-slate-800/50'
@@ -3510,7 +3510,7 @@ function App() {
               </div>
               <div className="flex items-center px-2 py-1">
                 {currentUser.avatar_url ? (
-                  <img src={currentUser.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover mr-3 shrink-0" />
+                  <img src={currentUser.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover mr-3 shrink-0" loading="lazy" />
                 ) : (
                   <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold mr-3 shrink-0">
                     {currentUser.username[0].toUpperCase()}
@@ -3540,7 +3540,7 @@ function App() {
       </aside>
 
       {/* ── MOBILE TOP BAR (brand only, no hamburger) ── */}
-      <div className="md:hidden sticky top-0 z-50 bg-slate-900/95 backdrop-blur-xl border-b border-blue-500/20 pt-safe">
+      <div className="md:hidden sticky top-0 z-50 bg-slate-900 border-b border-blue-500/20 pt-safe" style={{ willChange: 'transform' }}>
         <div className="flex items-center justify-between px-4" style={{ minHeight: 56 }}>
           <button
             onClick={() => navigate('home')}
@@ -3576,7 +3576,7 @@ function App() {
                 style={{ minHeight: 44 }}
               >
                 {currentUser.avatar_url ? (
-                  <img src={currentUser.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+                  <img src={currentUser.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" loading="lazy" />
                 ) : (
                   <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-sm font-black shrink-0">
                     {currentUser.username[0].toUpperCase()}
@@ -3601,7 +3601,7 @@ function App() {
       <InstallBanner />
 
       {/* ── MOBILE BOTTOM NAV BAR ── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 flex nav-safe-bottom">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900 border-t border-slate-800 flex nav-safe-bottom" style={{ willChange: 'transform', transform: 'translateZ(0)' }}>
         {bottomNavItems.map((item) => {
           const Icon = item.icon;
           const active = currentPage === item.id;
