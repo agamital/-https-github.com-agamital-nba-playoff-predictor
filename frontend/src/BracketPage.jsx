@@ -1026,11 +1026,25 @@ const SemisCol = ({ label, semisSlots = [], provisionalSlots = [], picks = {}, o
   );
 };
 
-const CFCol = ({ label }) => (
+const CFCol = ({ label, cfSlots = [], picks = {}, onTeamClick, confirmed = {} }) => (
   <div style={{ flexShrink: 0 }}>
-    <p className="text-xs text-slate-500 uppercase font-bold mb-3 text-center tracking-wider">{label}</p>
+    <p className="text-xs text-yellow-400/80 uppercase font-bold mb-3 text-center tracking-wider">{label}</p>
     <div style={{ height: BH + 28, display: 'flex', alignItems: 'center' }}>
-      <TBDCard />
+      {cfSlots.length > 0 ? (
+        <div className="space-y-2">
+          {cfSlots.map(s => (
+            <MatchCard
+              key={s.id}
+              series={s}
+              pick={picks[s.id]}
+              onTeamClick={onTeamClick}
+              hasBet={!!confirmed[s.id]}
+            />
+          ))}
+        </div>
+      ) : (
+        <TBDCard />
+      )}
     </div>
   </div>
 );
@@ -1952,7 +1966,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     });
   };
 
-  const { westSlots, eastSlots, westSemisSlots, eastSemisSlots, westProvisionalSemis, eastProvisionalSemis, westSeries, eastSeries, westPI, eastPI, westSeed1, westSeed2, eastSeed1, eastSeed2, westSeedTeams, eastSeedTeams } = useMemo(() => {
+  const { westSlots, eastSlots, westSemisSlots, eastSemisSlots, westProvisionalSemis, eastProvisionalSemis, westCFSlots, eastCFSlots, westSeries, eastSeries, westPI, eastPI, westSeed1, westSeed2, eastSeed1, eastSeed2, westSeedTeams, eastSeedTeams } = useMemo(() => {
     const minSeed = s => Math.min(
       s.home_seed ?? s.home_team?.seed ?? 99,
       s.away_seed ?? s.away_team?.seed ?? 99
@@ -1973,6 +1987,9 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     const isR2 = s => normRound(s) === 'second_round' || normRound(s) === 'conference_semifinals';
     const westR2 = west.filter(isR2);
     const eastR2 = east.filter(isR2);
+    const isCF = s => normRound(s) === 'conference_finals';
+    const westCF = west.filter(isCF);
+    const eastCF = east.filter(isCF);
 
     const order = [1, 4, 3, 2];
     const wSlots = order.map(seed => westR1.find(s => minSeed(s) === seed) || null);
@@ -2063,6 +2080,8 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
       eastSemisSlots: eSemis,
       westProvisionalSemis: wProvisionalSemis,
       eastProvisionalSemis: eProvisionalSemis,
+      westCFSlots: westCF,
+      eastCFSlots: eastCF,
       westSeries:  west,
       eastSeries: east,
       westPI: playInGames.filter(g => g.conference === 'Western'),
@@ -2290,12 +2309,14 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
         {(() => {
           const r1All   = [...(westSlots || []), ...(eastSlots || [])].filter(Boolean);
           const r2All   = [...(westSemisSlots || []), ...(eastSemisSlots || [])];
+          const cfAll   = [...(westCFSlots || []), ...(eastCFSlots || [])];
           const piAll   = [...(westPI   || []), ...(eastPI   || [])].filter(g => g.status !== 'completed');
           const r1Saved = r1All.filter(s => myPredMap[s.id] || confirmed[s.id]).length;
           const r2Saved = r2All.filter(s => myPredMap[s.id] || confirmed[s.id]).length;
+          const cfSaved = cfAll.filter(s => myPredMap[s.id] || confirmed[s.id]).length;
           const piSaved = piAll.filter(g => myPiPredMap[g.id] || piConfirmed[g.id]).length;
-          const total   = r1All.length + r2All.length + piAll.length;
-          const done    = r1Saved + r2Saved + piSaved;
+          const total   = r1All.length + r2All.length + cfAll.length + piAll.length;
+          const done    = r1Saved + r2Saved + cfSaved + piSaved;
           const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
           const allDone = done === total && total > 0;
           return (
@@ -2391,11 +2412,11 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                 <ConnectorCol count={2} dir="right" />
                 <SemisCol label="Conf Semis" semisSlots={westSemisSlots} provisionalSlots={westProvisionalSemis} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} confirmed={confirmed} onEdit={handleEdit} myPredMap={myPredMap} />
                 <ConnectorCol count={1} dir="right" />
-                <CFCol label="Conf Finals" />
+                <CFCol label="Conf Finals" cfSlots={westCFSlots} picks={picks} onTeamClick={handleTeamClick} confirmed={confirmed} />
                 <HLine />
                 <FinalsCard />
                 <HLine />
-                <CFCol label="Conf Finals" />
+                <CFCol label="Conf Finals" cfSlots={eastCFSlots} picks={picks} onTeamClick={handleTeamClick} confirmed={confirmed} />
                 <ConnectorCol count={1} dir="left" />
                 <SemisCol label="Conf Semis" semisSlots={eastSemisSlots} provisionalSlots={eastProvisionalSemis} picks={picks} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved} confirmed={confirmed} onEdit={handleEdit} myPredMap={myPredMap} />
                 <ConnectorCol count={2} dir="left" />
@@ -2468,12 +2489,14 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
       {(() => {
         const r1All = [...westSlots, ...eastSlots].filter(Boolean);
         const r2All = [...westSemisSlots, ...eastSemisSlots];
+        const cfAll = [...westCFSlots, ...eastCFSlots];
         const piAll = [...westPI, ...eastPI];
         const r1Saved = r1All.filter(s => confirmed[s.id]).length;
         const r2Saved = r2All.filter(s => confirmed[s.id]).length;
+        const cfSaved = cfAll.filter(s => confirmed[s.id]).length;
         const piSaved = piAll.filter(g => piConfirmed[g.id]).length;
-        const totalSaved = r1Saved + r2Saved + piSaved;
-        const totalAll = r1All.length + r2All.length + piAll.length;
+        const totalSaved = r1Saved + r2Saved + cfSaved + piSaved;
+        const totalAll = r1All.length + r2All.length + cfAll.length + piAll.length;
         if (totalAll === 0) return null;
         const pct = Math.round((totalSaved / totalAll) * 100);
         return (
@@ -2623,14 +2646,32 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
               )}
             </div>
           )}
+
+          {/* ── Conference Finals ── */}
+          {westCFSlots.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 my-4">
+                <div className="h-px flex-1 bg-yellow-500/30" />
+                <span className="text-xs text-yellow-400 font-black uppercase tracking-wider">🏆 Conference Finals</span>
+                <div className="h-px flex-1 bg-yellow-500/30" />
+              </div>
+              <div className="space-y-3">
+                {westCFSlots.map(s => (
+                  <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Finals teaser */}
-        <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/20 rounded-2xl p-5 text-center">
-          <Trophy className="w-10 h-10 text-yellow-400 mx-auto mb-2" />
-          <p className="text-yellow-400 font-black text-lg">NBA Finals</p>
-          <p className="text-slate-500 text-sm mt-1">To be determined</p>
-        </div>
+        {/* Finals teaser — only when no CF series are live/complete yet */}
+        {westCFSlots.length === 0 && eastCFSlots.length === 0 && (
+          <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/20 rounded-2xl p-5 text-center">
+            <Trophy className="w-10 h-10 text-yellow-400 mx-auto mb-2" />
+            <p className="text-yellow-400 font-black text-lg">NBA Finals</p>
+            <p className="text-slate-500 text-sm mt-1">To be determined</p>
+          </div>
+        )}
 
         {/* Eastern Conference */}
         <div>
@@ -2749,6 +2790,22 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                   <p className="text-xs text-slate-600">Check back once all First Round series finish</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Conference Finals ── */}
+          {eastCFSlots.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 my-4">
+                <div className="h-px flex-1 bg-yellow-500/30" />
+                <span className="text-xs text-yellow-400 font-black uppercase tracking-wider">🏆 Conference Finals</span>
+                <div className="h-px flex-1 bg-yellow-500/30" />
+              </div>
+              <div className="space-y-3">
+                {eastCFSlots.map(s => (
+                  <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+                ))}
+              </div>
             </div>
           )}
         </div>
