@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Trophy, CheckCircle, XCircle, Clock, Star, Users, BarChart2,
@@ -154,6 +154,15 @@ const RoundSection = ({ roundCfg, preds, defaultOpen = true }) => {
   const total   = preds.length;
   const pts     = preds.reduce((s, p) => s + (p.points_earned || 0), 0);
   const allDone = preds.every(p => p.is_correct !== null);
+
+  // Auto-collapse fully-scored rounds (only once, user can re-open)
+  const autoClosedRef = useRef(false);
+  useEffect(() => {
+    if (allDone && total > 0 && !autoClosedRef.current) {
+      autoClosedRef.current = true;
+      setOpen(false);
+    }
+  }, [allDone, total]);
 
   return (
     <div className={`rounded-2xl border ${ac.border} overflow-hidden`}>

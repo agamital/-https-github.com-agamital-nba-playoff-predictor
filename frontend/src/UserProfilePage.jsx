@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Trophy, CheckCircle, XCircle, Star, ArrowLeft, Medal, BarChart2, Lock, Eye, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
 import * as api from './services/api';
@@ -156,6 +156,17 @@ const ROUNDS = [
 // ── Collapsible round section ──────────────────────────────────────────────────
 const RoundSection = ({ roundCfg, children, count, correct, pts, allDone }) => {
   const [open, setOpen] = useSectionOpen('round_' + roundCfg.key, true);
+  // Auto-collapse when round is fully scored, but only once (not on manual re-opens)
+  const autoClosedRef = useRef(false);
+  useEffect(() => {
+    if (allDone && count > 0 && !autoClosedRef.current) {
+      autoClosedRef.current = true;
+      // Only auto-close if user hasn't set a local preference
+      try {
+        if (localStorage.getItem('nba_pp_round_' + roundCfg.key) === null) setOpen(false);
+      } catch { setOpen(false); }
+    }
+  }, [allDone, count]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className={`rounded-2xl border ${roundCfg.borderCls} overflow-hidden mb-4`}>
       <button

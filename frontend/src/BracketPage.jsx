@@ -1807,9 +1807,11 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
   const [showFull, setShowFull]       = useState(() => {
     try { return localStorage.getItem('bracketShowFull') === 'true'; } catch { return false; }
   });
-  const [showPlayIn, setShowPlayIn]   = useState(false);
-  const [showR1West, setShowR1West]   = useState(true);
-  const [showR1East, setShowR1East]   = useState(true);
+  const [showPlayIn, setShowPlayIn]       = useState(false);
+  const [showR1West, setShowR1West]       = useState(true);
+  const [showR1East, setShowR1East]       = useState(true);
+  const [showSemisWest, setShowSemisWest] = useState(true);
+  const [showSemisEast, setShowSemisEast] = useState(true);
   const [showCommunityBrowser, setShowCommunityBrowser] = useState(false);
   const [communityCollapsed, setCommunityCollapsed] = useState({});
   const [saveError, setSaveError]     = useState('');
@@ -2095,12 +2097,16 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
   // Playoff handlers
   // True when every first-round series in a conference is completed
-  const r1WestAllDone = westSlots.filter(Boolean).length > 0 && westSlots.filter(Boolean).every(s => s.status === 'completed');
-  const r1EastAllDone = eastSlots.filter(Boolean).length > 0 && eastSlots.filter(Boolean).every(s => s.status === 'completed');
+  const r1WestAllDone    = westSlots.filter(Boolean).length > 0 && westSlots.filter(Boolean).every(s => s.status === 'completed');
+  const r1EastAllDone    = eastSlots.filter(Boolean).length > 0 && eastSlots.filter(Boolean).every(s => s.status === 'completed');
+  const semisWestAllDone = westSemisSlots.length > 0 && westSemisSlots.every(s => s.status === 'completed');
+  const semisEastAllDone = eastSemisSlots.length > 0 && eastSemisSlots.every(s => s.status === 'completed');
 
-  // Auto-collapse R1 when all done (fires once when data loads; user can still re-open)
-  useEffect(() => { if (r1WestAllDone) setShowR1West(false); }, [r1WestAllDone]);
-  useEffect(() => { if (r1EastAllDone) setShowR1East(false); }, [r1EastAllDone]);
+  // Auto-collapse completed rounds (fires once when data loads; user can still re-open)
+  useEffect(() => { if (r1WestAllDone)    setShowR1West(false);    }, [r1WestAllDone]);
+  useEffect(() => { if (r1EastAllDone)    setShowR1East(false);    }, [r1EastAllDone]);
+  useEffect(() => { if (semisWestAllDone) setShowSemisWest(false); }, [semisWestAllDone]);
+  useEffect(() => { if (semisEastAllDone) setShowSemisEast(false); }, [semisEastAllDone]);
 
   // Auto-show Conf Semis column when any team has advanced (real or provisional)
   useEffect(() => {
@@ -2620,29 +2626,51 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
           {/* ── Conference Semifinals ── */}
           {(westSemisSlots.length > 0 || westProvisionalSemis.length > 0 || r1WestAllDone) && (
-            <div>
-              <div className="flex items-center gap-2 my-4">
-                <div className="h-px flex-1 bg-orange-500/20" />
-                <span className="text-xs text-orange-400 font-black uppercase tracking-wider">Conference Semifinals</span>
-                <div className="h-px flex-1 bg-orange-500/20" />
-              </div>
-              {westSemisSlots.length > 0 ? (
-                <div className="space-y-3">
-                  {westSemisSlots.map(s => (
-                    <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
-                  ))}
+            <div className="mb-2">
+              <button
+                onClick={() => setShowSemisWest(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-slate-700/60 bg-slate-900/60 hover:border-slate-600 transition-all mb-2 group"
+              >
+                <div className="flex items-center gap-2">
+                  {semisWestAllDone
+                    ? <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />
+                    : <span className="text-xs font-black text-orange-400 uppercase tracking-wider">Conference Semifinals</span>
+                  }
+                  {semisWestAllDone && (
+                    <span className="text-xs font-black text-green-400 uppercase tracking-wider">Conference Semifinals</span>
+                  )}
+                  <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${
+                    semisWestAllDone
+                      ? 'bg-green-500/20 border border-green-500/40 text-green-400'
+                      : 'bg-slate-700/50 border border-slate-600/50 text-slate-500'
+                  }`}>
+                    {westSemisSlots.filter(s => s.status === 'completed').length}/{westSemisSlots.length} done
+                  </span>
                 </div>
-              ) : westProvisionalSemis.length > 0 ? (
-                <div className="space-y-3">
-                  {westProvisionalSemis.map((slot, i) => (
-                    <ProvisionalSemiMobileCard key={i} slot={slot} />
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-6 text-slate-500 text-sm">
-                  <p className="font-bold mb-1">Matchups being determined…</p>
-                  <p className="text-xs text-slate-600">Check back once all First Round series finish</p>
-                </div>
+                {showSemisWest
+                  ? <ChevronUp className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                  : <ChevronDown className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                }
+              </button>
+              {showSemisWest && (
+                westSemisSlots.length > 0 ? (
+                  <div className="space-y-3">
+                    {westSemisSlots.map(s => (
+                      <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+                    ))}
+                  </div>
+                ) : westProvisionalSemis.length > 0 ? (
+                  <div className="space-y-3">
+                    {westProvisionalSemis.map((slot, i) => (
+                      <ProvisionalSemiMobileCard key={i} slot={slot} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-slate-500 text-sm">
+                    <p className="font-bold mb-1">Matchups being determined…</p>
+                    <p className="text-xs text-slate-600">Check back once all First Round series finish</p>
+                  </div>
+                )
               )}
             </div>
           )}
@@ -2766,29 +2794,51 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
 
           {/* ── Conference Semifinals ── */}
           {(eastSemisSlots.length > 0 || eastProvisionalSemis.length > 0 || r1EastAllDone) && (
-            <div>
-              <div className="flex items-center gap-2 my-4">
-                <div className="h-px flex-1 bg-blue-500/20" />
-                <span className="text-xs text-blue-400 font-black uppercase tracking-wider">Conference Semifinals</span>
-                <div className="h-px flex-1 bg-blue-500/20" />
-              </div>
-              {eastSemisSlots.length > 0 ? (
-                <div className="space-y-3">
-                  {eastSemisSlots.map(s => (
-                    <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
-                  ))}
+            <div className="mb-2">
+              <button
+                onClick={() => setShowSemisEast(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-slate-700/60 bg-slate-900/60 hover:border-slate-600 transition-all mb-2 group"
+              >
+                <div className="flex items-center gap-2">
+                  {semisEastAllDone
+                    ? <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />
+                    : <span className="text-xs font-black text-blue-400 uppercase tracking-wider">Conference Semifinals</span>
+                  }
+                  {semisEastAllDone && (
+                    <span className="text-xs font-black text-green-400 uppercase tracking-wider">Conference Semifinals</span>
+                  )}
+                  <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${
+                    semisEastAllDone
+                      ? 'bg-green-500/20 border border-green-500/40 text-green-400'
+                      : 'bg-slate-700/50 border border-slate-600/50 text-slate-500'
+                  }`}>
+                    {eastSemisSlots.filter(s => s.status === 'completed').length}/{eastSemisSlots.length} done
+                  </span>
                 </div>
-              ) : eastProvisionalSemis.length > 0 ? (
-                <div className="space-y-3">
-                  {eastProvisionalSemis.map((slot, i) => (
-                    <ProvisionalSemiMobileCard key={i} slot={slot} />
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-6 text-slate-500 text-sm">
-                  <p className="font-bold mb-1">Matchups being determined…</p>
-                  <p className="text-xs text-slate-600">Check back once all First Round series finish</p>
-                </div>
+                {showSemisEast
+                  ? <ChevronUp className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                  : <ChevronDown className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                }
+              </button>
+              {showSemisEast && (
+                eastSemisSlots.length > 0 ? (
+                  <div className="space-y-3">
+                    {eastSemisSlots.map(s => (
+                      <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+                    ))}
+                  </div>
+                ) : eastProvisionalSemis.length > 0 ? (
+                  <div className="space-y-3">
+                    {eastProvisionalSemis.map((slot, i) => (
+                      <ProvisionalSemiMobileCard key={i} slot={slot} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-slate-500 text-sm">
+                    <p className="font-bold mb-1">Matchups being determined…</p>
+                    <p className="text-xs text-slate-600">Check back once all First Round series finish</p>
+                  </div>
+                )
               )}
             </div>
           )}
