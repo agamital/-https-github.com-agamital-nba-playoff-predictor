@@ -8694,6 +8694,112 @@ def _try_advance_bracket(c, completed_series_id, season, round_name, conf, brack
             print(f"[Bracket] {conf} {next_round} created: team {new_home_id} vs team {new_away_id}")
 
 
+def _auto_update_futures_on_series_complete(c, conf: str, winner_team_id: int,
+                                              season: str, round_name: str,
+                                              conf_mvp: str | None = None):
+    """
+    Called automatically when a Conference Finals or NBA Finals series completes.
+
+    Conference Finals completion:
+      • Sets actual_west_champ_{season} or actual_east_champ_{season}
+      • Sets actual_west_finals_mvp_{season} or actual_east_finals_mvp_{season}
+        from the series leading scorer (if provided via conf_mvp).
+
+    NBA Finals completion:
+      • Sets actual_champion_{season}
+      • Sets actual_finals_mvp_{season} from the series leading scorer.
+
+    Rescores ALL futures predictions so leaderboard updates immediately.
+    """
+    def _upsert(key, value):
+        c.execute(
+            "INSERT INTO site_settings (key, value) VALUES (%s, %s) "
+            "ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+            (key, value),
+        )
+
+    def _get(key):
+        c.execute("SELECT value FROM site_settings WHERE key = %s", (key,))
+        row = c.fetchone()
+        return row[0] if row else ''
+
+    if round_name == 'Conference Finals':
+        if conf == 'West':
+            _upsert(f'actual_west_champ_{season}', str(winner_team_id))
+            if conf_mvp:
+                _upsert(f'actual_west_finals_mvp_{season}', conf_mvp)
+        elif conf == 'East':
+            _upsert(f'actual_east_champ_{season}', str(winner_team_id))
+            if conf_mvp:
+                _upsert(f'actual_east_finals_mvp_{season}', conf_mvp)
+        else:
+            print(f"[Futures] Unknown conference '{conf}' — skipping auto-update")
+            return
+    elif round_name == 'NBA Finals':
+        _upsert(f'actual_champion_{season}', str(winner_team_id))
+        if conf_mvp:
+            _upsert(f'actual_finals_mvp_{season}', conf_mvp)
+    else:
+        return  # Only CF and Finals trigger futures updates
+
+    # Load all current actuals
+    def _int_or_none(v):
+        try: return int(v) if v else None
+        except (ValueError, TypeError): return None
+
+    act_champ_id  = _int_or_none(_get(f'actual_champion_{season}'))
+    act_west_id   = _int_or_none(_get(f'actual_west_champ_{season}'))
+    act_east_id   = _int_or_none(_get(f'actual_east_champ_{season}'))
+    act_finals_mvp      = _get(f'actual_finals_mvp_{season}') or None
+    act_west_finals_mvp = _get(f'actual_west_finals_mvp_{season}') or None
+    act_east_finals_mvp = _get(f'actual_east_finals_mvp_{season}') or None
+
+    # Load MVP odds
+    base_odds = {}
+    for cat in ('finals_mvp', 'west_finals_mvp', 'east_finals_mvp'):
+        c.execute("SELECT value FROM site_settings WHERE key = %s", (f'odds_{cat}',))
+        row = c.fetchone()
+        base_odds[cat] = float(row[0]) if row else 1.0
+
+    # Load per-team conference / championship odds
+    c.execute("SELECT id, COALESCE(odds_championship,1.0), COALESCE(odds_conference,1.0) FROM teams")
+    team_odds_map = {r[0]: {'championship': float(r[1]), 'conference': float(r[2])}
+                     for r in c.fetchall()}
+
+    # Rescore all futures predictions
+    c.execute(
+        '''SELECT id, champion_team_id, west_champ_team_id, east_champ_team_id,
+                  finals_mvp, west_finals_mvp, east_finals_mvp
+           FROM futures_predictions WHERE season = %s''',
+        (season,),
+    )
+    for fp in c.fetchall():
+        fp_id = fp[0]
+        preds = {
+            'champion':        fp[1], 'west_champ':      fp[2], 'east_champ':      fp[3],
+            'finals_mvp':      fp[4], 'west_finals_mvp': fp[5], 'east_finals_mvp': fp[6],
+        }
+        actuals = {
+            'champion':        act_champ_id,   'west_champ':      act_west_id,
+            'east_champ':      act_east_id,    'finals_mvp':      act_finals_mvp,
+            'west_finals_mvp': act_west_finals_mvp, 'east_finals_mvp': act_east_finals_mvp,
+        }
+        odds = dict(base_odds)
+        odds['champion']   = team_odds_map.get(fp[1], {}).get('championship', 1.0)
+        odds['west_champ'] = team_odds_map.get(fp[2], {}).get('conference',   1.0)
+        odds['east_champ'] = team_odds_map.get(fp[3], {}).get('conference',   1.0)
+        pts, correct = calculate_futures_points(preds, actuals, odds)
+        c.execute(
+            '''UPDATE futures_predictions SET
+               is_correct_champion = %s, is_correct_west = %s, is_correct_east = %s,
+               points_earned = %s WHERE id = %s''',
+            (correct.get('champion'), correct.get('west_champ'), correct.get('east_champ'), pts, fp_id),
+        )
+
+    print(f"[Futures] Auto-set: round={round_name} conf={conf} winner={winner_team_id}"
+          + (f" mvp='{conf_mvp}'" if conf_mvp else " (mvp not yet set — admin can set via /api/admin/futures/results)"))
+
+
 @app.post("/api/admin/series/{series_id}/result")
 async def set_series_result(
     series_id: int,
@@ -8780,6 +8886,13 @@ async def set_series_result(
         _recalculate_all_points(c)
         winner_seed = home_seed if winner_team_id == home_team_id else away_seed
         _try_advance_bracket(c, series_id, season, round_name, conf, bracket_group, winner_team_id, winner_seed)
+
+        # Auto-update futures when Conference Finals or NBA Finals complete
+        if round_name in ('Conference Finals', 'NBA Finals'):
+            _auto_update_futures_on_series_complete(
+                c, conf, winner_team_id, season, round_name,
+                conf_mvp=eff_scorer,  # series leading scorer becomes default conf/finals MVP
+            )
 
         conn.commit()
         return {"message": "Result set and scores updated", "manual_override": manual_override}
@@ -8902,6 +9015,13 @@ async def rescore_completed_series(season: str = "2026"):
                 total_updated += 1
 
             series_touched += 1
+
+            # Re-apply futures auto-update for CF/Finals so champion + MVP stay in sync
+            if round_name in ('Conference Finals', 'NBA Finals'):
+                _auto_update_futures_on_series_complete(
+                    c, conf, winner_team_id, season, round_name,
+                    conf_mvp=actual_scorer,
+                )
 
         _recalculate_all_points(c)
         conn.commit()
