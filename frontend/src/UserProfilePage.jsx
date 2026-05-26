@@ -59,7 +59,7 @@ const ResultBadge = ({ isCorrect, points }) => {
   return null;
 };
 
-const FuturesPick = ({ label, color, team, mvp, isCorrect }) => {
+const FuturesPick = ({ label, color, team, mvp, isCorrect, pts }) => {
   const border =
     isCorrect === 1 ? 'border-green-500/40 bg-green-500/5' :
     isCorrect === 0 ? 'border-red-500/40 bg-red-500/5' :
@@ -79,7 +79,16 @@ const FuturesPick = ({ label, color, team, mvp, isCorrect }) => {
           <p className="text-xs text-slate-600 italic">Not picked</p>
         )}
       </div>
-      {isCorrect === 1 && <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />}
+      {isCorrect === 1 && (
+        <div className="flex items-center gap-1 shrink-0">
+          {pts != null && (
+            <span className="text-[9px] font-black text-green-400 bg-green-500/15 border border-green-500/30 px-1.5 py-0.5 rounded-full">
+              +{pts}
+            </span>
+          )}
+          <CheckCircle className="w-4 h-4 text-green-400" />
+        </div>
+      )}
       {isCorrect === 0 && <XCircle className="w-4 h-4 text-red-400 shrink-0" />}
     </div>
   );
@@ -643,15 +652,15 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2.5">
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">Champions</p>
-                <FuturesPick label="NBA Champion"     color="text-yellow-400" team={futures.champion_team}   isCorrect={futures.is_correct_champion} />
-                <FuturesPick label="Western Champion" color="text-red-400"    team={futures.west_champ_team} isCorrect={futures.is_correct_west} />
-                <FuturesPick label="Eastern Champion" color="text-blue-400"   team={futures.east_champ_team} isCorrect={futures.is_correct_east} />
+                <FuturesPick label="NBA Champion"     color="text-yellow-400" team={futures.champion_team}   isCorrect={futures.is_correct_champion}        pts={100} />
+                <FuturesPick label="Western Champion" color="text-red-400"    team={futures.west_champ_team} isCorrect={futures.is_correct_west}            pts={40} />
+                <FuturesPick label="Eastern Champion" color="text-blue-400"   team={futures.east_champ_team} isCorrect={futures.is_correct_east}            pts={40} />
               </div>
               <div className="space-y-2.5">
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">MVPs</p>
-                <FuturesPick label="Finals MVP"       color="text-yellow-400" mvp={futures.finals_mvp}       isCorrect={futures.is_correct_finals_mvp} />
-                <FuturesPick label="West Finals MVP"  color="text-red-400"    mvp={futures.west_finals_mvp}  isCorrect={futures.is_correct_west_finals_mvp} />
-                <FuturesPick label="East Finals MVP"  color="text-blue-400"   mvp={futures.east_finals_mvp}  isCorrect={futures.is_correct_east_finals_mvp} />
+                <FuturesPick label="Finals MVP"       color="text-yellow-400" mvp={futures.finals_mvp}       isCorrect={futures.is_correct_finals_mvp}      pts={30} />
+                <FuturesPick label="West Finals MVP"  color="text-red-400"    mvp={futures.west_finals_mvp}  isCorrect={futures.is_correct_west_finals_mvp}  pts={20} />
+                <FuturesPick label="East Finals MVP"  color="text-blue-400"   mvp={futures.east_finals_mvp}  isCorrect={futures.is_correct_east_finals_mvp}  pts={20} />
               </div>
             </div>
           ) : (

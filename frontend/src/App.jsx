@@ -1540,7 +1540,7 @@ const PlayerPickBar = ({ item, rank }) => {
 };
 
 // ── Futures team pick card — distribution bars + expandable per-user list ────
-const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onToggle, entries, entriesLoading, entryField, correctnessField, currentUser }) => {
+const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onToggle, entries, entriesLoading, entryField, correctnessField, ptsValue, currentUser }) => {
   const totalPicks = items.reduce((s, x) => s + x.count, 0);
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
@@ -1600,7 +1600,7 @@ const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onT
                           {team?.abbreviation || team?.name || '?'}
                         </span>
                         {correctnessField && e[correctnessField] !== undefined && (
-                          <ResultBadge isCorrect={e[correctnessField]} pts={null} />
+                          <ResultBadge isCorrect={e[correctnessField]} pts={e[correctnessField] === 1 ? (ptsValue ?? null) : null} />
                         )}
                       </div>
                     </div>
@@ -1617,7 +1617,7 @@ const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onT
 };
 
 // ── MVP pick card — player distribution bars + expandable per-user list ───────
-const MvpCategoryCard = ({ label, labelCls, items, expanded, onToggle, entries, entriesLoading, entryField, currentUser }) => {
+const MvpCategoryCard = ({ label, labelCls, items, expanded, onToggle, entries, entriesLoading, entryField, correctnessField, ptsValue, currentUser }) => {
   const totalPicks = items.reduce((s, x) => s + x.count, 0);
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
@@ -1667,9 +1667,14 @@ const MvpCategoryCard = ({ label, labelCls, items, expanded, onToggle, entries, 
                       )}
                       {isMe && <span className="text-[8px] font-black text-blue-400 bg-blue-500/20 border border-blue-500/30 px-1.5 py-0.5 rounded-full shrink-0">YOU</span>}
                       <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-blue-300' : 'text-slate-300'}`}>{e.username}</span>
-                      <span className={`text-xs font-black shrink-0 ${isMe ? 'text-blue-400' : 'text-slate-400'}`}>
-                        {e[entryField]}
-                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className={`text-xs font-black ${isMe ? 'text-blue-400' : 'text-slate-400'}`}>
+                          {e[entryField]}
+                        </span>
+                        {correctnessField && e[correctnessField] !== undefined && (
+                          <ResultBadge isCorrect={e[correctnessField]} pts={e[correctnessField] === 1 ? (ptsValue ?? null) : null} />
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -2048,6 +2053,7 @@ const GlobalStatsTab = ({ currentUser }) => {
               entriesLoading={futuresLoading}
               entryField="champion_team"
               correctnessField="is_correct_champion"
+              ptsValue={100}
               currentUser={currentUser}
             />
           )}
@@ -2067,6 +2073,7 @@ const GlobalStatsTab = ({ currentUser }) => {
                   entriesLoading={futuresLoading}
                   entryField="west_champ_team"
                   correctnessField="is_correct_west"
+                  ptsValue={40}
                   currentUser={currentUser}
                 />
               )}
@@ -2083,6 +2090,7 @@ const GlobalStatsTab = ({ currentUser }) => {
                   entriesLoading={futuresLoading}
                   entryField="east_champ_team"
                   correctnessField="is_correct_east"
+                  ptsValue={40}
                   currentUser={currentUser}
                 />
               )}
@@ -2092,16 +2100,16 @@ const GlobalStatsTab = ({ currentUser }) => {
           {/* ── MVP picks ── */}
           {(() => {
             const mvpSections = [
-              { key: 'top_finals_mvp',      entryKey: 'finals_mvp',      label: '🏆 Finals MVP',       cls: 'text-amber-400'  },
-              { key: 'top_west_finals_mvp', entryKey: 'west_finals_mvp', label: '🌵 West Finals MVP',  cls: 'text-blue-400'   },
-              { key: 'top_east_finals_mvp', entryKey: 'east_finals_mvp', label: '🗽 East Finals MVP',  cls: 'text-green-400'  },
+              { key: 'top_finals_mvp',      entryKey: 'finals_mvp',      label: '🏆 Finals MVP',       cls: 'text-amber-400', correctnessKey: 'is_correct_finals_mvp',      ptsVal: 30 },
+              { key: 'top_west_finals_mvp', entryKey: 'west_finals_mvp', label: '🌵 West Finals MVP',  cls: 'text-blue-400',  correctnessKey: 'is_correct_west_finals_mvp', ptsVal: 20 },
+              { key: 'top_east_finals_mvp', entryKey: 'east_finals_mvp', label: '🗽 East Finals MVP',  cls: 'text-green-400', correctnessKey: 'is_correct_east_finals_mvp', ptsVal: 20 },
             ].filter(s => (stats.futures?.[s.key] || []).length > 0);
             if (!mvpSections.length) return null;
             return (
               <div className="space-y-3">
                 <SectionDivider label="MVP Picks" />
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {mvpSections.map(({ key, entryKey, label, cls }) => (
+                  {mvpSections.map(({ key, entryKey, label, cls, correctnessKey, ptsVal }) => (
                     <MvpCategoryCard
                       key={key}
                       panelKey={key}
@@ -2113,6 +2121,8 @@ const GlobalStatsTab = ({ currentUser }) => {
                       entries={futuresEntries}
                       entriesLoading={futuresLoading}
                       entryField={entryKey}
+                      correctnessField={correctnessKey}
+                      ptsValue={ptsVal}
                       currentUser={currentUser}
                     />
                   ))}
