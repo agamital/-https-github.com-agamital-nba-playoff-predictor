@@ -3686,6 +3686,95 @@ def sync_daily_boxscores(date_str: str | None = None, season: str = '2026',
 
         conn.commit()
         print(f"[Boxscore] ✓ Updated leaders for {len(active_series)} active series")
+
+        # ── Also fix completed series whose leaders are still NULL ────────────
+        # This happens when set_series_result is called before boxscore data
+        # arrives.  We re-derive leaders from player_game_stats and rescore.
+        try:
+            c.execute("""
+                SELECT s.id, s.round, s.conference, s.season,
+                       ht.abbreviation AS home_abbr,
+                       at.abbreviation AS away_abbr,
+                       CASE WHEN s.game1_start_time IS NOT NULL
+                            THEN DATE(s.game1_start_time) - 1
+                            ELSE NULL END AS series_start,
+                       s.home_team_id, s.away_team_id, s.home_seed, s.away_seed,
+                       s.winner_team_id, s.actual_games
+                FROM series s
+                JOIN teams ht ON ht.id = s.home_team_id
+                JOIN teams at ON at.id = s.away_team_id
+                WHERE s.season = %s AND s.status = 'completed'
+                  AND s.winner_team_id IS NOT NULL AND s.actual_games IS NOT NULL
+                  AND (s.actual_leading_scorer IS NULL
+                       OR s.actual_leading_rebounder IS NULL
+                       OR s.actual_leading_assister IS NULL)
+            """, (season,))
+            need_leaders = c.fetchall()
+            rescored_after_leaders = 0
+            for (sid, round_name, conf, season_val, home_abbr, away_abbr,
+                 series_start, home_id, away_id, home_seed, away_seed,
+                 winner_id, actual_games) in need_leaders:
+                if series_start is None:
+                    series_start = _ROUND_FALLBACK_DATE.get(round_name, '2026-04-18')
+                else:
+                    series_start = str(series_start)
+                c.execute("""
+                    SELECT player_name,
+                           SUM(points)   AS total_pts,
+                           SUM(rebounds) AS total_reb,
+                           SUM(assists)  AS total_ast
+                    FROM player_game_stats
+                    WHERE season = %s AND game_date >= %s AND team_abbr IN (%s, %s)
+                    GROUP BY player_name ORDER BY total_pts DESC
+                """, (season_val, series_start, home_abbr, away_abbr))
+                rows = c.fetchall()
+                if not rows:
+                    continue
+                scorer_row    = max(rows, key=lambda r: r[1] or 0)
+                rebounder_row = max(rows, key=lambda r: r[2] or 0)
+                assister_row  = max(rows, key=lambda r: r[3] or 0)
+                new_scorer, new_rebounder, new_assister = scorer_row[0], rebounder_row[0], assister_row[0]
+                c.execute("""UPDATE series SET
+                               actual_leading_scorer        = %s,
+                               actual_leading_rebounder     = %s,
+                               actual_leading_assister      = %s,
+                               actual_leading_scorer_pts    = %s,
+                               actual_leading_rebounder_reb = %s,
+                               actual_leading_assister_ast  = %s
+                             WHERE id = %s""",
+                          (new_scorer, new_rebounder, new_assister,
+                           int(scorer_row[1] or 0), int(rebounder_row[2] or 0),
+                           int(assister_row[3] or 0), sid))
+                # Rescore predictions for this series now that leaders are set
+                c.execute("""SELECT id, predicted_winner_id, predicted_games,
+                                    leading_scorer, leading_rebounder, leading_assister
+                              FROM predictions WHERE series_id = %s""", (sid,))
+                for (pred_id, pred_winner_id, pred_games,
+                     pred_scorer, pred_rebounder, pred_assister) in c.fetchall():
+                    winner_correct = (pred_winner_id == winner_id)
+                    games_correct  = (pred_games == actual_games)
+                    games_diff     = abs(pred_games - actual_games) if pred_games else None
+                    pred_seed = home_seed if pred_winner_id == home_id else (away_seed if pred_winner_id == away_id else None)
+                    pts = calculate_series_points(round_name, home_seed, away_seed, pred_seed,
+                                                  winner_correct=winner_correct, games_correct=games_correct,
+                                                  games_diff=games_diff)
+                    pts += calculate_series_leader_points(
+                        {"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
+                        {"scorer": new_scorer, "rebounder": new_rebounder, "assister": new_assister},
+                        round_name=round_name)
+                    is_correct = 1 if winner_correct else 0
+                    c.execute("UPDATE predictions SET is_correct=%s, points_earned=%s WHERE id=%s",
+                              (is_correct, pts, pred_id))
+                rescored_after_leaders += 1
+            if rescored_after_leaders:
+                _recalculate_all_points(c)
+                conn.commit()
+                print(f"[Boxscore] ✓ Backfilled leaders + rescored {rescored_after_leaders} completed series")
+        except Exception as _comp_err:
+            print(f"[Boxscore] ⚠ Completed-series leader backfill error (non-critical): {_comp_err}")
+            try: conn.rollback()
+            except Exception: pass
+
     except Exception as _leaders_err:
         print(f"[Boxscore] ⚠ Series leaders update failed (non-critical): {type(_leaders_err).__name__}: {_leaders_err}")
         try: conn.rollback()
@@ -8894,8 +8983,18 @@ async def set_series_result(
                 conf_mvp=eff_scorer,  # series leading scorer becomes default conf/finals MVP
             )
 
+        leaders_scored = bool(eff_scorer or eff_rebounder or eff_assister)
         conn.commit()
-        return {"message": "Result set and scores updated", "manual_override": manual_override}
+        return {
+            "message": "Result set and scores updated",
+            "manual_override": manual_override,
+            "leaders_scored": leaders_scored,
+            "warning": (
+                "Leaders were not available at scoring time — call "
+                "POST /api/admin/rescore-completed-series once boxscore data arrives "
+                "to apply leader bonuses."
+            ) if not leaders_scored else None,
+        }
     except HTTPException:
         raise
     except Exception as e:
