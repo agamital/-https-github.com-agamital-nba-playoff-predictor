@@ -1577,26 +1577,32 @@ const FuturesCategoryCard = ({ label, labelCls, items, totalUsers, expanded, onT
                 .map((e, i) => {
                   const isMe = currentUser && e.username === currentUser.username;
                   const team = e[entryField];
+                  const correctVal = correctnessField ? e[correctnessField] : undefined;
+                  const rowBg = correctVal === 1
+                    ? (isMe ? 'bg-green-500/10' : 'bg-green-500/5')
+                    : correctVal === 0
+                    ? (isMe ? 'bg-red-500/8' : 'bg-red-500/4')
+                    : (isMe ? 'bg-amber-500/8' : '');
                   return (
-                    <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-amber-500/8' : ''}`}>
+                    <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${rowBg}`}>
                       {e.avatar_url ? (
                         <img src={e.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
                           loading="lazy" onError={ev => { ev.target.style.display = 'none'; }} />
                       ) : (
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-amber-500/30' : 'bg-slate-700'}`}>
-                          <span className={`text-[8px] font-black ${isMe ? 'text-amber-400' : 'text-slate-400'}`}>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${correctVal === 1 ? 'bg-green-500/30' : isMe ? 'bg-amber-500/30' : 'bg-slate-700'}`}>
+                          <span className={`text-[8px] font-black ${correctVal === 1 ? 'text-green-400' : isMe ? 'text-amber-400' : 'text-slate-400'}`}>
                             {(e.username || '?')[0].toUpperCase()}
                           </span>
                         </div>
                       )}
                       {isMe && <span className="text-[8px] font-black text-amber-400 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded-full shrink-0">YOU</span>}
-                      <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-amber-300' : 'text-slate-300'}`}>{e.username}</span>
+                      <span className={`text-xs font-bold flex-1 truncate ${correctVal === 1 ? 'text-green-300' : isMe ? 'text-amber-300' : 'text-slate-300'}`}>{e.username}</span>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {team?.logo_url && (
                           <img src={team.logo_url} alt="" className="w-5 h-5"
                             loading="lazy" onError={ev => ev.target.style.display = 'none'} />
                         )}
-                        <span className={`text-[10px] font-black ${isMe ? 'text-amber-400' : 'text-slate-400'}`}>
+                        <span className={`text-[10px] font-black ${correctVal === 1 ? 'text-green-400' : isMe ? 'text-amber-400' : 'text-slate-400'}`}>
                           {team?.abbreviation || team?.name || '?'}
                         </span>
                         {correctnessField && e[correctnessField] !== undefined && (
@@ -1653,22 +1659,28 @@ const MvpCategoryCard = ({ label, labelCls, items, expanded, onToggle, entries, 
                 .filter(e => e[entryField] != null)
                 .map((e, i) => {
                   const isMe = currentUser && e.username === currentUser.username;
+                  const correctVal = correctnessField ? e[correctnessField] : undefined;
+                  const rowBg = correctVal === 1
+                    ? (isMe ? 'bg-green-500/10' : 'bg-green-500/5')
+                    : correctVal === 0
+                    ? (isMe ? 'bg-red-500/8' : 'bg-red-500/4')
+                    : (isMe ? 'bg-blue-500/8' : '');
                   return (
-                    <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${isMe ? 'bg-blue-500/8' : ''}`}>
+                    <div key={i} className={`flex items-center gap-2.5 px-4 py-2.5 ${rowBg}`}>
                       {e.avatar_url ? (
                         <img src={e.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0"
                           loading="lazy" onError={ev => { ev.target.style.display = 'none'; }} />
                       ) : (
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isMe ? 'bg-blue-500/30' : 'bg-slate-700'}`}>
-                          <span className={`text-[8px] font-black ${isMe ? 'text-blue-400' : 'text-slate-400'}`}>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${correctVal === 1 ? 'bg-green-500/30' : isMe ? 'bg-blue-500/30' : 'bg-slate-700'}`}>
+                          <span className={`text-[8px] font-black ${correctVal === 1 ? 'text-green-400' : isMe ? 'text-blue-400' : 'text-slate-400'}`}>
                             {(e.username || '?')[0].toUpperCase()}
                           </span>
                         </div>
                       )}
                       {isMe && <span className="text-[8px] font-black text-blue-400 bg-blue-500/20 border border-blue-500/30 px-1.5 py-0.5 rounded-full shrink-0">YOU</span>}
-                      <span className={`text-xs font-bold flex-1 truncate ${isMe ? 'text-blue-300' : 'text-slate-300'}`}>{e.username}</span>
+                      <span className={`text-xs font-bold flex-1 truncate ${correctVal === 1 ? 'text-green-300' : isMe ? 'text-blue-300' : 'text-slate-300'}`}>{e.username}</span>
                       <div className="flex items-center gap-1 shrink-0">
-                        <span className={`text-xs font-black ${isMe ? 'text-blue-400' : 'text-slate-400'}`}>
+                        <span className={`text-xs font-black ${correctVal === 1 ? 'text-green-400' : isMe ? 'text-blue-400' : 'text-slate-400'}`}>
                           {e[entryField]}
                         </span>
                         {correctnessField && e[correctnessField] !== undefined && (

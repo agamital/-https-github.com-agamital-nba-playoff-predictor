@@ -463,20 +463,26 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           {/* Champions row */}
           <div className="grid grid-cols-3 gap-3">
             {[
-              { label: 'Champion',   team: futuresData.champion_team,  correct: futuresData.is_correct_champion },
-              { label: 'West Champ', team: futuresData.west_champ_team, correct: futuresData.is_correct_west },
-              { label: 'East Champ', team: futuresData.east_champ_team, correct: futuresData.is_correct_east },
-            ].map(({ label, team, correct }) => team && (
-              <div key={label} className={`p-3 rounded-xl border text-center ${
-                correct === 1 ? 'border-green-500/40 bg-green-500/10' :
-                correct === 0 ? 'border-red-500/40 bg-red-500/10' :
+              { label: 'Champion',   team: futuresData.champion_team,  correct: futuresData.is_correct_champion, pts: 100 },
+              { label: 'West Champ', team: futuresData.west_champ_team, correct: futuresData.is_correct_west,     pts: 40 },
+              { label: 'East Champ', team: futuresData.east_champ_team, correct: futuresData.is_correct_east,     pts: 40 },
+            ].map(({ label, team, correct, pts }) => team && (
+              <div key={label} className={`p-3 rounded-xl border text-center transition-all ${
+                correct === 1 ? 'border-green-500/50 bg-green-500/10 shadow-green-500/10 shadow-md' :
+                correct === 0 ? 'border-red-500/40 bg-red-500/8' :
                 'border-orange-500/30 bg-orange-500/10'
               }`}>
                 <img src={team.logo_url} alt="" className="w-10 h-10 mx-auto mb-1" loading="lazy" onError={e => e.target.style.display='none'} />
                 <p className="text-[10px] text-slate-500 uppercase font-bold">{label}</p>
                 <p className="text-xs font-black text-white">{team.abbreviation}</p>
-                {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400 mx-auto mt-1" />}
+                {correct === 1 && (
+                  <div className="flex items-center justify-center gap-1 mt-1.5">
+                    <span className="text-[9px] font-black text-green-400 bg-green-500/20 border border-green-500/30 px-1.5 py-0.5 rounded-full">+{pts} pts</span>
+                    <CheckCircle className="w-3.5 h-3.5 text-green-400" />
+                  </div>
+                )}
                 {correct === 0 && <p className="text-[10px] text-red-400 font-bold mt-1">✗ Wrong</p>}
+                {(correct === null || correct === undefined) && <p className="text-[10px] text-slate-600 mt-1">Pending</p>}
               </div>
             ))}
           </div>
@@ -484,21 +490,26 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           {(futuresData.finals_mvp || futuresData.west_finals_mvp || futuresData.east_finals_mvp) && (
             <div className="grid grid-cols-3 gap-3">
               {[
-                { label: 'Finals MVP',      name: futuresData.finals_mvp,      correct: futuresData.is_correct_finals_mvp,      color: 'text-orange-400' },
-                { label: 'West MVP',        name: futuresData.west_finals_mvp,  correct: futuresData.is_correct_west_finals_mvp, color: 'text-red-400' },
-                { label: 'East MVP',        name: futuresData.east_finals_mvp,  correct: futuresData.is_correct_east_finals_mvp, color: 'text-blue-400' },
-              ].map(({ label, name, correct, color }) => name && (
-                <div key={label} className={`p-3 rounded-xl border text-center ${
-                  correct === 1 ? 'border-green-500/40 bg-green-500/10' :
+                { label: 'Finals MVP',      name: futuresData.finals_mvp,      correct: futuresData.is_correct_finals_mvp,      color: 'text-orange-400', pts: 30 },
+                { label: 'West MVP',        name: futuresData.west_finals_mvp,  correct: futuresData.is_correct_west_finals_mvp, color: 'text-red-400',    pts: 20 },
+                { label: 'East MVP',        name: futuresData.east_finals_mvp,  correct: futuresData.is_correct_east_finals_mvp, color: 'text-blue-400',   pts: 20 },
+              ].map(({ label, name, correct, color, pts }) => name && (
+                <div key={label} className={`p-3 rounded-xl border text-center transition-all ${
+                  correct === 1 ? 'border-green-500/50 bg-green-500/10 shadow-green-500/10 shadow-md' :
                   correct === 0 ? 'border-red-500/40 bg-red-500/5' :
                   'border-slate-700/60 bg-slate-800/40'
                 }`}>
                   <Star className={`w-5 h-5 mx-auto mb-1 ${correct === 1 ? 'text-green-400' : correct === 0 ? 'text-red-400/60' : color}`} />
-                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${color}`}>{label}</p>
-                  <p className="text-xs font-black text-white leading-tight">{name}</p>
-                  {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400 mx-auto mt-1" />}
+                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${correct === 1 ? 'text-green-400/80' : color}`}>{label}</p>
+                  <p className={`text-xs font-black leading-tight ${correct === 1 ? 'text-green-100' : 'text-white'}`}>{name}</p>
+                  {correct === 1 && (
+                    <div className="flex items-center justify-center gap-1 mt-1.5">
+                      <span className="text-[9px] font-black text-green-400 bg-green-500/20 border border-green-500/30 px-1.5 py-0.5 rounded-full">+{pts} pts</span>
+                      <CheckCircle className="w-3.5 h-3.5 text-green-400" />
+                    </div>
+                  )}
                   {correct === 0 && <p className="text-[10px] text-red-400 font-bold mt-1">✗ Wrong</p>}
-                  {correct === null || correct === undefined ? <p className="text-[10px] text-slate-600 mt-1">Pending</p> : null}
+                  {(correct === null || correct === undefined) && <p className="text-[10px] text-slate-600 mt-1">Pending</p>}
                 </div>
               ))}
             </div>
