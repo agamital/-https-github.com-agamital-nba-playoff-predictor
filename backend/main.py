@@ -611,6 +611,10 @@ def init_db():
     # Add bracket_group to series for progressive bracket unlocking
     c.execute("ALTER TABLE series ADD COLUMN IF NOT EXISTS bracket_group TEXT DEFAULT 'A'")
 
+    # Add MVP correctness columns to futures_predictions (idempotent)
+    for _fc in ('is_correct_finals_mvp', 'is_correct_west_finals_mvp', 'is_correct_east_finals_mvp'):
+        c.execute(f"ALTER TABLE futures_predictions ADD COLUMN IF NOT EXISTS {_fc} INTEGER")
+
     # Performance indexes — idempotent, safe to run every startup
     c.execute("CREATE INDEX IF NOT EXISTS idx_series_season ON series(season)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_series_season_status ON series(season, status)")
@@ -8177,9 +8181,13 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
                 'game_finished': pg_status == 'completed',
             })
 
-        # Get futures prediction
+        # Get futures prediction (explicit columns to guard against f.* index shifts)
         c.execute('''
-            SELECT f.*,
+            SELECT f.finals_mvp, f.west_finals_mvp, f.east_finals_mvp,
+                   f.locked, f.predicted_at,
+                   f.is_correct_champion, f.is_correct_west, f.is_correct_east,
+                   f.is_correct_finals_mvp, f.is_correct_west_finals_mvp, f.is_correct_east_finals_mvp,
+                   f.points_earned,
                    tc.name, tc.abbreviation, tc.logo_url,
                    tw.name, tw.abbreviation, tw.logo_url,
                    te.name, te.abbreviation, te.logo_url
@@ -8190,24 +8198,27 @@ async def my_predictions(user_id: int, season: str = "2026", viewer_id: int = No
             WHERE f.user_id = %s AND f.season = %s
         ''', (user_id, season))
         frow = c.fetchone()
-        futures_locked = bool(frow[9]) if frow else False
+        futures_locked = bool(frow[3]) if frow else False
 
         # Privacy: futures picks are only visible to others after the user locks them
         futures_pred = None
         if frow and (show_all or futures_locked):
             futures_pred = {
-                'champion_team':   {'name': frow[15], 'abbreviation': frow[16], 'logo_url': frow[17]} if frow[15] else None,
-                'west_champ_team': {'name': frow[18], 'abbreviation': frow[19], 'logo_url': frow[20]} if frow[18] else None,
-                'east_champ_team': {'name': frow[21], 'abbreviation': frow[22], 'logo_url': frow[23]} if frow[21] else None,
-                'finals_mvp':      frow[6],
-                'west_finals_mvp': frow[7],
-                'east_finals_mvp': frow[8],
+                'champion_team':   {'name': frow[12], 'abbreviation': frow[13], 'logo_url': frow[14]} if frow[12] else None,
+                'west_champ_team': {'name': frow[15], 'abbreviation': frow[16], 'logo_url': frow[17]} if frow[15] else None,
+                'east_champ_team': {'name': frow[18], 'abbreviation': frow[19], 'logo_url': frow[20]} if frow[18] else None,
+                'finals_mvp':      frow[0],
+                'west_finals_mvp': frow[1],
+                'east_finals_mvp': frow[2],
                 'locked':          futures_locked,
-                'predicted_at':    frow[10],
-                'is_correct_champion': frow[11],
-                'is_correct_west':     frow[12],
-                'is_correct_east':     frow[13],
-                'points_earned':       frow[14] or 0,
+                'predicted_at':    frow[4],
+                'is_correct_champion':         frow[5],
+                'is_correct_west':             frow[6],
+                'is_correct_east':             frow[7],
+                'is_correct_finals_mvp':       frow[8],
+                'is_correct_west_finals_mvp':  frow[9],
+                'is_correct_east_finals_mvp':  frow[10],
+                'points_earned':               frow[11] or 0,
             }
 
         # Get leaders prediction
@@ -8881,8 +8892,11 @@ def _auto_update_futures_on_series_complete(c, conf: str, winner_team_id: int,
         c.execute(
             '''UPDATE futures_predictions SET
                is_correct_champion = %s, is_correct_west = %s, is_correct_east = %s,
+               is_correct_finals_mvp = %s, is_correct_west_finals_mvp = %s, is_correct_east_finals_mvp = %s,
                points_earned = %s WHERE id = %s''',
-            (correct.get('champion'), correct.get('west_champ'), correct.get('east_champ'), pts, fp_id),
+            (correct.get('champion'), correct.get('west_champ'), correct.get('east_champ'),
+             correct.get('finals_mvp'), correct.get('west_finals_mvp'), correct.get('east_finals_mvp'),
+             pts, fp_id),
         )
 
     print(f"[Futures] Auto-set: round={round_name} conf={conf} winner={winner_team_id}"
@@ -10293,7 +10307,11 @@ async def admin_futures_lock(locked: bool):
 async def get_futures(user_id: int, season: str = "2026"):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute('''SELECT f.*,
+    c.execute('''SELECT f.champion_team_id, f.west_champ_team_id, f.east_champ_team_id,
+                 f.finals_mvp, f.west_finals_mvp, f.east_finals_mvp,
+                 f.locked, f.points_earned,
+                 f.is_correct_champion, f.is_correct_west, f.is_correct_east,
+                 f.is_correct_finals_mvp, f.is_correct_west_finals_mvp, f.is_correct_east_finals_mvp,
                  tc.name, tc.abbreviation, tc.logo_url,
                  tw.name, tw.abbreviation, tw.logo_url,
                  te.name, te.abbreviation, te.logo_url
@@ -10306,24 +10324,25 @@ async def get_futures(user_id: int, season: str = "2026"):
     conn.close()
     if not row:
         return {"has_prediction": False}
-    # futures_predictions column order (SELECT f.*):
-    # 0:id 1:user_id 2:season 3:champion_team_id 4:west_champ_team_id 5:east_champ_team_id
-    # 6:finals_mvp 7:west_finals_mvp 8:east_finals_mvp 9:locked 10:predicted_at
-    # 11:is_correct_champion 12:is_correct_west 13:is_correct_east 14:points_earned
-    # Then joined: 15-17=champion_team, 18-20=west_champ_team, 21-23=east_champ_team
     return {
-        "has_prediction": True,
-        "champion_team_id": row[3],
-        "west_champ_team_id": row[4],
-        "east_champ_team_id": row[5],
-        "finals_mvp": row[6],
-        "west_finals_mvp": row[7],
-        "east_finals_mvp": row[8],
-        "locked": bool(row[9]),
-        "points_earned": row[14],
-        "champion_team": {"name": row[15], "abbreviation": row[16], "logo_url": row[17]} if row[15] else None,
-        "west_champ_team": {"name": row[18], "abbreviation": row[19], "logo_url": row[20]} if row[18] else None,
-        "east_champ_team": {"name": row[21], "abbreviation": row[22], "logo_url": row[23]} if row[21] else None,
+        "has_prediction":    True,
+        "champion_team_id":  row[0],
+        "west_champ_team_id": row[1],
+        "east_champ_team_id": row[2],
+        "finals_mvp":        row[3],
+        "west_finals_mvp":   row[4],
+        "east_finals_mvp":   row[5],
+        "locked":            bool(row[6]),
+        "points_earned":     row[7],
+        "is_correct_champion":        row[8],
+        "is_correct_west":            row[9],
+        "is_correct_east":            row[10],
+        "is_correct_finals_mvp":      row[11],
+        "is_correct_west_finals_mvp": row[12],
+        "is_correct_east_finals_mvp": row[13],
+        "champion_team":   {"name": row[14], "abbreviation": row[15], "logo_url": row[16]} if row[14] else None,
+        "west_champ_team": {"name": row[17], "abbreviation": row[18], "logo_url": row[19]} if row[17] else None,
+        "east_champ_team": {"name": row[20], "abbreviation": row[21], "logo_url": row[22]} if row[20] else None,
     }
 
 @app.post("/api/futures")
@@ -10416,7 +10435,8 @@ async def futures_all(season: str = "2026"):
                f.is_correct_champion, f.is_correct_west, f.is_correct_east, f.points_earned,
                tc.name, tc.abbreviation, tc.logo_url,
                tw.name, tw.abbreviation, tw.logo_url,
-               te.name, te.abbreviation, te.logo_url
+               te.name, te.abbreviation, te.logo_url,
+               f.is_correct_finals_mvp, f.is_correct_west_finals_mvp, f.is_correct_east_finals_mvp
         FROM futures_predictions f
         JOIN users u ON f.user_id = u.id
         LEFT JOIN teams tc ON f.champion_team_id = tc.id
@@ -10450,10 +10470,13 @@ async def futures_all(season: str = "2026"):
             'finals_mvp':        finals_mvp,
             'west_finals_mvp':   west_mvp,
             'east_finals_mvp':   east_mvp,
-            'is_correct_champion': row[4],
-            'is_correct_west':     row[5],
-            'is_correct_east':     row[6],
-            'points_earned':       row[7] or 0,
+            'is_correct_champion':        row[4],
+            'is_correct_west':            row[5],
+            'is_correct_east':            row[6],
+            'points_earned':              row[7] or 0,
+            'is_correct_finals_mvp':      row[17],
+            'is_correct_west_finals_mvp': row[18],
+            'is_correct_east_finals_mvp': row[19],
         })
 
         # Tally team picks
@@ -11837,8 +11860,10 @@ async def set_futures_results(season: str = "2026",
 
             c.execute('''UPDATE futures_predictions SET
                          is_correct_champion = %s, is_correct_west = %s, is_correct_east = %s,
+                         is_correct_finals_mvp = %s, is_correct_west_finals_mvp = %s, is_correct_east_finals_mvp = %s,
                          points_earned = %s WHERE id = %s''',
                       (correct.get('champion'), correct.get('west_champ'), correct.get('east_champ'),
+                       correct.get('finals_mvp'), correct.get('west_finals_mvp'), correct.get('east_finals_mvp'),
                        pts, fp_id))
 
         _recalculate_all_points(c)

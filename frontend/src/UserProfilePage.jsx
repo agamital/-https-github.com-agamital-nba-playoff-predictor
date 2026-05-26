@@ -649,9 +649,9 @@ const UserProfilePage = ({ username, currentUser, onNavigateToProfile, onBack })
               </div>
               <div className="space-y-2.5">
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">MVPs</p>
-                <FuturesPick label="Finals MVP"       color="text-yellow-400" mvp={futures.finals_mvp} />
-                <FuturesPick label="West Finals MVP"  color="text-red-400"    mvp={futures.west_finals_mvp} />
-                <FuturesPick label="East Finals MVP"  color="text-blue-400"   mvp={futures.east_finals_mvp} />
+                <FuturesPick label="Finals MVP"       color="text-yellow-400" mvp={futures.finals_mvp}       isCorrect={futures.is_correct_finals_mvp} />
+                <FuturesPick label="West Finals MVP"  color="text-red-400"    mvp={futures.west_finals_mvp}  isCorrect={futures.is_correct_west_finals_mvp} />
+                <FuturesPick label="East Finals MVP"  color="text-blue-400"   mvp={futures.east_finals_mvp}  isCorrect={futures.is_correct_east_finals_mvp} />
               </div>
             </div>
           ) : (

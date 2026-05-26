@@ -236,23 +236,33 @@ const TeamGrid = ({ teams, selectedId, onSelect, locked, oddsField, cols = 5 }) 
   </div>
 );
 
-const Section = ({ title, icon, color, children, pts, oddsMult }) => {
+const Section = ({ title, icon, color, children, pts, oddsMult, correct }) => {
   const finalPts = pts ? Math.floor(pts * (oddsMult || 1)) : null;
   const showMult = oddsMult && oddsMult !== 1 && pts;
   const isHighMult = oddsMult && oddsMult >= 1.5;
+  const isWin  = correct === 1;
+  const isLoss = correct === 0;
   return (
-    <div className={`border rounded-2xl p-5 transition-all ${isHighMult ? 'bg-orange-500/5 border-orange-500/30 shadow-sm shadow-orange-500/10' : 'bg-slate-900/50 border-slate-800'}`}>
-      <div className={`flex items-center gap-2 mb-1 ${color}`}>
+    <div className={`border rounded-2xl p-5 transition-all ${
+      isWin  ? 'bg-green-500/8 border-green-500/40 shadow-sm shadow-green-500/10' :
+      isLoss ? 'bg-red-500/5 border-red-500/30' :
+      isHighMult ? 'bg-orange-500/5 border-orange-500/30 shadow-sm shadow-orange-500/10' :
+      'bg-slate-900/50 border-slate-800'
+    }`}>
+      <div className={`flex items-center gap-2 mb-1 ${isWin ? 'text-green-400' : isLoss ? 'text-red-400/80' : color}`}>
         {icon}
         <h3 className="text-base font-black uppercase tracking-wider flex-1">{title}</h3>
+        {isWin  && <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />}
+        {isLoss && <span className="text-xs font-black text-red-400 shrink-0">✗ Wrong</span>}
         {finalPts != null && (
-          <span className={`ml-auto text-xs font-black shrink-0 ${isHighMult ? 'text-amber-400' : 'text-green-400'}`}>
+          <span className={`ml-auto text-xs font-black shrink-0 ${isWin ? 'text-green-400' : isHighMult ? 'text-amber-400' : 'text-green-400'}`}>
             {showMult ? `${pts} × ${oddsMult} = ${finalPts} pts` : `${finalPts} pts`}
           </span>
         )}
       </div>
-      {isHighMult && <p className="text-[10px] text-amber-500/70 font-bold mb-3">Higher risk = more points</p>}
-      {!isHighMult && <div className="mb-4" />}
+      {isHighMult && !isWin && !isLoss && <p className="text-[10px] text-amber-500/70 font-bold mb-3">Higher risk = more points</p>}
+      {!isHighMult && !isWin && !isLoss && <div className="mb-4" />}
+      {(isWin || isLoss) && <div className="mb-3" />}
       {children}
     </div>
   );
@@ -449,23 +459,50 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
 
       {/* Current picks summary */}
       {futuresData?.has_prediction && (
-        <div className="grid grid-cols-3 gap-3 mb-8">
-          {[
-            { label: 'Champion',   team: futuresData.champion_team,  correct: futuresData.is_correct_champion },
-            { label: 'West Champ', team: futuresData.west_champ_team, correct: futuresData.is_correct_west },
-            { label: 'East Champ', team: futuresData.east_champ_team, correct: futuresData.is_correct_east },
-          ].map(({ label, team, correct }) => team && (
-            <div key={label} className={`p-3 rounded-xl border text-center ${
-              correct === 1 ? 'border-green-500/40 bg-green-500/10' :
-              correct === 0 ? 'border-red-500/40 bg-red-500/10' :
-              'border-orange-500/30 bg-orange-500/10'
-            }`}>
-              <img src={team.logo_url} alt="" className="w-10 h-10 mx-auto mb-1" loading="lazy" onError={e => e.target.style.display='none'} />
-              <p className="text-[10px] text-slate-500 uppercase font-bold">{label}</p>
-              <p className="text-xs font-black text-white">{team.abbreviation}</p>
-              {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400 mx-auto mt-1" />}
+        <div className="space-y-3 mb-8">
+          {/* Champions row */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: 'Champion',   team: futuresData.champion_team,  correct: futuresData.is_correct_champion },
+              { label: 'West Champ', team: futuresData.west_champ_team, correct: futuresData.is_correct_west },
+              { label: 'East Champ', team: futuresData.east_champ_team, correct: futuresData.is_correct_east },
+            ].map(({ label, team, correct }) => team && (
+              <div key={label} className={`p-3 rounded-xl border text-center ${
+                correct === 1 ? 'border-green-500/40 bg-green-500/10' :
+                correct === 0 ? 'border-red-500/40 bg-red-500/10' :
+                'border-orange-500/30 bg-orange-500/10'
+              }`}>
+                <img src={team.logo_url} alt="" className="w-10 h-10 mx-auto mb-1" loading="lazy" onError={e => e.target.style.display='none'} />
+                <p className="text-[10px] text-slate-500 uppercase font-bold">{label}</p>
+                <p className="text-xs font-black text-white">{team.abbreviation}</p>
+                {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400 mx-auto mt-1" />}
+                {correct === 0 && <p className="text-[10px] text-red-400 font-bold mt-1">✗ Wrong</p>}
+              </div>
+            ))}
+          </div>
+          {/* MVPs row — only show if any MVP has been picked */}
+          {(futuresData.finals_mvp || futuresData.west_finals_mvp || futuresData.east_finals_mvp) && (
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'Finals MVP',      name: futuresData.finals_mvp,      correct: futuresData.is_correct_finals_mvp,      color: 'text-orange-400' },
+                { label: 'West MVP',        name: futuresData.west_finals_mvp,  correct: futuresData.is_correct_west_finals_mvp, color: 'text-red-400' },
+                { label: 'East MVP',        name: futuresData.east_finals_mvp,  correct: futuresData.is_correct_east_finals_mvp, color: 'text-blue-400' },
+              ].map(({ label, name, correct, color }) => name && (
+                <div key={label} className={`p-3 rounded-xl border text-center ${
+                  correct === 1 ? 'border-green-500/40 bg-green-500/10' :
+                  correct === 0 ? 'border-red-500/40 bg-red-500/5' :
+                  'border-slate-700/60 bg-slate-800/40'
+                }`}>
+                  <Star className={`w-5 h-5 mx-auto mb-1 ${correct === 1 ? 'text-green-400' : correct === 0 ? 'text-red-400/60' : color}`} />
+                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${color}`}>{label}</p>
+                  <p className="text-xs font-black text-white leading-tight">{name}</p>
+                  {correct === 1 && <CheckCircle className="w-4 h-4 text-green-400 mx-auto mt-1" />}
+                  {correct === 0 && <p className="text-[10px] text-red-400 font-bold mt-1">✗ Wrong</p>}
+                  {correct === null || correct === undefined ? <p className="text-[10px] text-slate-600 mt-1">Pending</p> : null}
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
 
@@ -477,16 +514,16 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           <div className="h-px flex-1 bg-slate-800" />
         </div>
 
-        <Section title="NBA Champion" color="text-yellow-400" icon={<Trophy className="w-5 h-5" />} pts={FUTURES_BASE_POINTS.champion} oddsMult={champOdds}>
+        <Section title="NBA Champion" color="text-yellow-400" icon={<Trophy className="w-5 h-5" />} pts={FUTURES_BASE_POINTS.champion} oddsMult={champOdds} correct={futuresData?.is_correct_champion}>
           <p className="text-[10px] text-slate-600 font-bold mb-2 uppercase tracking-wider">Top 10 per conference · {teams.length} playoff-eligible teams</p>
           <TeamGrid teams={teams} selectedId={champion} onSelect={setChampion} locked={locked} oddsField="odds_championship" cols={5} />
         </Section>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Section title="West Champion" color="text-red-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_champ} oddsMult={westOdds}>
+          <Section title="West Champion" color="text-red-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_champ} oddsMult={westOdds} correct={futuresData?.is_correct_west}>
             <TeamGrid teams={westTeams} selectedId={westChamp} onSelect={setWestChamp} locked={locked} oddsField="odds_conference" cols={5} />
           </Section>
-          <Section title="East Champion" color="text-blue-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_champ} oddsMult={eastOdds}>
+          <Section title="East Champion" color="text-blue-400" icon={<Trophy className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_champ} oddsMult={eastOdds} correct={futuresData?.is_correct_east}>
             <TeamGrid teams={eastTeams} selectedId={eastChamp} onSelect={setEastChamp} locked={locked} oddsField="odds_conference" cols={5} />
           </Section>
         </div>
@@ -498,15 +535,15 @@ const FuturesPage = ({ currentUser, onNavigate }) => {
           <div className="h-px flex-1 bg-slate-800" />
         </div>
 
-        <Section title="Finals MVP" color="text-orange-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.finals_mvp} oddsMult={odds.finals_mvp}>
+        <Section title="Finals MVP" color="text-orange-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.finals_mvp} oddsMult={odds.finals_mvp} correct={futuresData?.is_correct_finals_mvp}>
           <MvpSearchInput value={finalsMvp} onChange={setFinalsMvp} locked={locked} placeholder="Search any playoff player…" conference="All" mvpType="finals" />
         </Section>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Section title="West Finals MVP" color="text-red-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_finals_mvp} oddsMult={odds.west_finals_mvp}>
+          <Section title="West Finals MVP" color="text-red-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.west_finals_mvp} oddsMult={odds.west_finals_mvp} correct={futuresData?.is_correct_west_finals_mvp}>
             <MvpSearchInput value={westFinalsMvp} onChange={setWestFinalsMvp} locked={locked} placeholder="Search Western Conference players…" conference="West" mvpType="west" />
           </Section>
-          <Section title="East Finals MVP" color="text-blue-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_finals_mvp} oddsMult={odds.east_finals_mvp}>
+          <Section title="East Finals MVP" color="text-blue-400" icon={<Star className="w-4 h-4" />} pts={FUTURES_BASE_POINTS.east_finals_mvp} oddsMult={odds.east_finals_mvp} correct={futuresData?.is_correct_east_finals_mvp}>
             <MvpSearchInput value={eastFinalsMvp} onChange={setEastFinalsMvp} locked={locked} placeholder="Search Eastern Conference players…" conference="East" mvpType="east" />
           </Section>
         </div>
