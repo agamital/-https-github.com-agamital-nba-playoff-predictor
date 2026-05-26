@@ -1071,10 +1071,12 @@ def _finalize_series(series_id: int, winner_id: int, actual_games: int,
                 games_correct=games_correct,
                 games_diff=games_diff,
             )
-            # Add leader prediction points (10 pts each, only if actual leaders known)
+            # Add leader prediction points — round_name required for correct multiplier
+            # (10×1.0=10 R1, 10×1.5=15 Semis, 10×2.0=20 CF, 10×2.5=25 Finals)
             pts += calculate_series_leader_points(
                 predicted={"scorer": pred_scorer, "rebounder": pred_rebounder, "assister": pred_assister},
                 actual=actual_leaders,
+                round_name=round_name,
             )
             c.execute(
                 "UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s",
@@ -1430,6 +1432,9 @@ def sync_series_provisional_leaders(season: str = "2026") -> dict:
         target_series = c.fetchall()
         result["series_checked"] = len(target_series)
 
+        # Track completed series whose leaders changed so we can rescore predictions
+        completed_leaders_changed: list[int] = []
+
         for series_id, home_abbr, away_abbr, series_status in target_series:
             abbrs = [home_abbr.upper(), away_abbr.upper()]
 
@@ -1472,6 +1477,21 @@ def sync_series_provisional_leaders(season: str = "2026") -> dict:
             if not any(v[0] for v in leaders.values()):
                 continue
 
+            # Read current DB values to detect changes (so we know if rescore is needed)
+            c.execute(
+                "SELECT actual_leading_scorer, actual_leading_rebounder, actual_leading_assister "
+                "FROM series WHERE id = %s", (series_id,)
+            )
+            old_row = c.fetchone() or (None, None, None)
+            new_scorer, new_rebounder, new_assister = (
+                leaders["scorer"][0], leaders["rebounder"][0], leaders["assister"][0]
+            )
+            leaders_changed = (
+                old_row[0] != new_scorer or
+                old_row[1] != new_rebounder or
+                old_row[2] != new_assister
+            )
+
             c.execute("""
                 UPDATE series
                 SET actual_leading_scorer        = %s,
@@ -1482,11 +1502,61 @@ def sync_series_provisional_leaders(season: str = "2026") -> dict:
                     actual_leading_assister_ast  = %s
                 WHERE id = %s
             """, (
-                leaders["scorer"][0],    leaders["rebounder"][0],    leaders["assister"][0],
-                leaders["scorer"][1],    leaders["rebounder"][1],    leaders["assister"][1],
+                new_scorer,               new_rebounder,             new_assister,
+                leaders["scorer"][1],     leaders["rebounder"][1],   leaders["assister"][1],
                 series_id,
             ))
             result["series_updated"] += 1
+
+            # Flag completed series whose leaders changed — predictions need rescore
+            if series_status == 'completed' and leaders_changed:
+                completed_leaders_changed.append(series_id)
+
+        # Rescore predictions for completed series where leaders changed
+        if completed_leaders_changed:
+            try:
+                from scoring import calculate_series_points, calculate_series_leader_points
+                from main import _recalculate_all_points
+                rescored_count = 0
+                for sid in completed_leaders_changed:
+                    c.execute("""
+                        SELECT s.round, s.home_team_id, s.away_team_id,
+                               s.home_seed, s.away_seed, s.winner_team_id, s.actual_games,
+                               s.actual_leading_scorer, s.actual_leading_rebounder,
+                               s.actual_leading_assister
+                        FROM series s WHERE s.id = %s AND s.status = 'completed'
+                          AND s.winner_team_id IS NOT NULL AND s.actual_games IS NOT NULL
+                    """, (sid,))
+                    sr = c.fetchone()
+                    if not sr:
+                        continue
+                    (rnd, home_id, away_id, h_seed, a_seed,
+                     winner_id, actual_games, sc, rb, ast) = sr
+                    actual_ldrs = {"scorer": sc, "rebounder": rb, "assister": ast}
+                    c.execute("""SELECT id, predicted_winner_id, predicted_games,
+                                        leading_scorer, leading_rebounder, leading_assister
+                                 FROM predictions WHERE series_id = %s""", (sid,))
+                    for (pid, pw_id, pg, ps, pr, pa) in c.fetchall():
+                        w_ok  = pw_id == winner_id
+                        g_ok  = pg == actual_games
+                        g_dif = abs(pg - actual_games) if pg is not None else None
+                        pseed = h_seed if pw_id == home_id else (a_seed if pw_id == away_id else None)
+                        pts   = calculate_series_points(rnd, h_seed, a_seed, pseed,
+                                                        winner_correct=w_ok, games_correct=g_ok,
+                                                        games_diff=g_dif)
+                        pts  += calculate_series_leader_points(
+                                    {"scorer": ps, "rebounder": pr, "assister": pa},
+                                    actual_ldrs, round_name=rnd)
+                        c.execute("UPDATE predictions SET is_correct=%s, points_earned=%s WHERE id=%s",
+                                  (1 if w_ok else 0, pts, pid))
+                    rescored_count += 1
+                if rescored_count:
+                    _recalculate_all_points(c)
+                    _log(f"sync_series_provisional_leaders: rescored predictions for "
+                         f"{rescored_count} completed series after leader change")
+                result["series_rescored"] = rescored_count
+            except Exception as _rs_err:
+                _log(f"sync_series_provisional_leaders rescore error (non-critical): {_rs_err}")
 
         conn.commit()
         _log(f"sync_series_provisional_leaders: "
