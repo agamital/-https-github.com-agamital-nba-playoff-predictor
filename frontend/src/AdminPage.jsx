@@ -842,6 +842,22 @@ const FuturesResultsCard = ({ teams }) => {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Load existing saved results on mount
+  useEffect(() => {
+    api.getAdminFuturesResults().then(data => {
+      setResults({
+        actual_champion_id:      data.champion      || '',
+        actual_west_champ_id:    data.west_champ    || '',
+        actual_east_champ_id:    data.east_champ    || '',
+        actual_finals_mvp:       data.finals_mvp    || '',
+        actual_west_finals_mvp:  data.west_finals_mvp  || '',
+        actual_east_finals_mvp:  data.east_finals_mvp  || '',
+      });
+    }).catch(e => console.error('[FuturesResults] load error:', e))
+      .finally(() => setLoading(false));
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);
@@ -895,13 +911,22 @@ const FuturesResultsCard = ({ teams }) => {
       {expanded && (
         <div className="mt-4 space-y-3">
           <p className="text-xs text-slate-400">Setting results will auto-calculate points for all users.</p>
+          {loading ? (
+            <div className="flex items-center gap-2 py-4 text-slate-400 text-xs">
+              <div className="w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+              Loading current values…
+            </div>
+          ) : (
+            <>
           {teamSelect('actual_champion_id', 'NBA Champion')}
           {teamSelect('actual_west_champ_id', 'West Champion')}
           {teamSelect('actual_east_champ_id', 'East Champion')}
           {playerInput('actual_finals_mvp', 'Finals MVP')}
           {playerInput('actual_west_finals_mvp', 'West Finals MVP')}
           {playerInput('actual_east_finals_mvp', 'East Finals MVP')}
-          <button onClick={handleSave} disabled={saving}
+            </>
+          )}
+          <button onClick={handleSave} disabled={saving || loading}
             className={`w-full py-2 rounded-lg font-bold text-sm transition-all ${
               saved ? 'bg-green-500 text-white' : 'bg-green-600 hover:bg-green-700 text-white disabled:opacity-50'
             }`}>
