@@ -333,15 +333,28 @@ const TBDCard = ({ width = 'w-44' }) => (
   </div>
 );
 
-const FinalsCard = () => (
-  <div style={{ height: BH + 28, flexShrink: 0, width: 220 }} className="flex flex-col items-center justify-center gap-3 px-3">
-    <div className="text-center mb-1">
-      <Trophy className="w-7 h-7 text-yellow-400 mx-auto mb-1" />
-      <p className="text-xs text-yellow-400 uppercase font-black tracking-widest">NBA Finals</p>
+// FinalsSlot — replaces old static FinalsCard; connects to real DB series when available
+const FinalsSlot = ({ series = [], picks = {}, onTeamClick, confirmed = {} }) => {
+  const s = series[0] ?? null;
+  return (
+    <div style={{ height: BH + 28, flexShrink: 0, width: 220 }} className="flex flex-col items-center justify-center gap-3 px-3">
+      <div className="text-center mb-1">
+        <Trophy className="w-7 h-7 text-yellow-400 mx-auto mb-1" />
+        <p className="text-xs text-yellow-400 uppercase font-black tracking-widest">NBA Finals</p>
+      </div>
+      {s ? (
+        <MatchCard
+          series={s}
+          pick={picks[s.id]}
+          onTeamClick={onTeamClick}
+          hasBet={!!confirmed[s.id]}
+        />
+      ) : (
+        <TBDCard />
+      )}
     </div>
-    <TBDCard />
-  </div>
-);
+  );
+};
 
 // ── Playoff match card ────────────────────────────────────────────────────────
 
@@ -1968,7 +1981,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     });
   };
 
-  const { westSlots, eastSlots, westSemisSlots, eastSemisSlots, westProvisionalSemis, eastProvisionalSemis, westCFSlots, eastCFSlots, westSeries, eastSeries, westPI, eastPI, westSeed1, westSeed2, eastSeed1, eastSeed2, westSeedTeams, eastSeedTeams } = useMemo(() => {
+  const { westSlots, eastSlots, westSemisSlots, eastSemisSlots, westProvisionalSemis, eastProvisionalSemis, westCFSlots, eastCFSlots, finalsSeries, westSeries, eastSeries, westPI, eastPI, westSeed1, westSeed2, eastSeed1, eastSeed2, westSeedTeams, eastSeedTeams } = useMemo(() => {
     const minSeed = s => Math.min(
       s.home_seed ?? s.home_team?.seed ?? 99,
       s.away_seed ?? s.away_team?.seed ?? 99
@@ -1992,6 +2005,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
     const isCF = s => normRound(s) === 'conference_finals';
     const westCF = west.filter(isCF);
     const eastCF = east.filter(isCF);
+    const finals = series.filter(s => normRound(s) === 'nba_finals');
 
     const order = [1, 4, 3, 2];
     const wSlots = order.map(seed => westR1.find(s => minSeed(s) === seed) || null);
@@ -2084,6 +2098,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
       eastProvisionalSemis: eProvisionalSemis,
       westCFSlots: westCF,
       eastCFSlots: eastCF,
+      finalsSeries: finals,
       westSeries:  west,
       eastSeries: east,
       westPI: playInGames.filter(g => g.conference === 'Western'),
@@ -2420,7 +2435,7 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
                 <ConnectorCol count={1} dir="right" />
                 <CFCol label="Conf Finals" cfSlots={westCFSlots} picks={picks} onTeamClick={handleTeamClick} confirmed={confirmed} />
                 <HLine />
-                <FinalsCard />
+                <FinalsSlot series={finalsSeries} picks={picks} onTeamClick={handleTeamClick} confirmed={confirmed} />
                 <HLine />
                 <CFCol label="Conf Finals" cfSlots={eastCFSlots} picks={picks} onTeamClick={handleTeamClick} confirmed={confirmed} />
                 <ConnectorCol count={1} dir="left" />
@@ -2692,8 +2707,37 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
           )}
         </div>
 
-        {/* Finals teaser — only when no CF series are live/complete yet */}
-        {westCFSlots.length === 0 && eastCFSlots.length === 0 && (
+        {/* NBA Finals — shows real series when available, teaser otherwise */}
+        {finalsSeries.length > 0 ? (
+          <div>
+            <div className="flex items-center gap-2 my-4">
+              <div className="h-px flex-1 bg-yellow-400/30" />
+              <span className="text-xs text-yellow-400 font-black uppercase tracking-wider flex items-center gap-1.5">
+                <Trophy className="w-3.5 h-3.5" /> NBA Finals
+              </span>
+              <div className="h-px flex-1 bg-yellow-400/30" />
+            </div>
+            <div className="space-y-3">
+              {finalsSeries.map(s => (
+                <MobileMatchCard
+                  key={s.id}
+                  series={s}
+                  pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)}
+                  onTeamClick={handleTeamClick}
+                  onGamesSelect={handleGamesSelect}
+                  onLeaderSelect={handleLeaderSelect}
+                  onSave={handleSave}
+                  saved={saved[s.id]}
+                  communityStats={communityMap[s.id] ?? null}
+                  confirmed={!!confirmed[s.id]}
+                  onEdit={() => handleEdit(s.id)}
+                  predData={myPredMap[s.id]}
+                  highlighted={highlightedId === `series-${s.id}`}
+                />
+              ))}
+            </div>
+          </div>
+        ) : (westCFSlots.length === 0 && eastCFSlots.length === 0) && (
           <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/20 rounded-2xl p-5 text-center">
             <Trophy className="w-10 h-10 text-yellow-400 mx-auto mb-2" />
             <p className="text-yellow-400 font-black text-lg">NBA Finals</p>
@@ -2854,6 +2898,38 @@ const BracketPage = ({ currentUser, onNavigate, scrollTo }) => {
               <div className="space-y-3">
                 {eastCFSlots.map(s => (
                   <MobileMatchCard key={s.id} series={s} pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)} onTeamClick={handleTeamClick} onGamesSelect={handleGamesSelect} onLeaderSelect={handleLeaderSelect} onSave={handleSave} saved={saved[s.id]} communityStats={communityMap[s.id] ?? null} confirmed={!!confirmed[s.id]} onEdit={() => handleEdit(s.id)} predData={myPredMap[s.id]} highlighted={highlightedId === `series-${s.id}`} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── NBA Finals (when both CFs are done) ── */}
+          {finalsSeries.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 my-4">
+                <div className="h-px flex-1 bg-yellow-400/40" />
+                <span className="text-xs text-yellow-300 font-black uppercase tracking-wider flex items-center gap-1.5">
+                  <Trophy className="w-3.5 h-3.5" /> NBA Finals
+                </span>
+                <div className="h-px flex-1 bg-yellow-400/40" />
+              </div>
+              <div className="space-y-3">
+                {finalsSeries.map(s => (
+                  <MobileMatchCard
+                    key={s.id}
+                    series={s}
+                    pick={picks[s.id] || (myPredMap[s.id] ? { teamId: +myPredMap[s.id].predicted_winner_id, games: myPredMap[s.id].predicted_games, scorer: myPredMap[s.id].leading_scorer || '', rebounder: myPredMap[s.id].leading_rebounder || '', assister: myPredMap[s.id].leading_assister || '' } : undefined)}
+                    onTeamClick={handleTeamClick}
+                    onGamesSelect={handleGamesSelect}
+                    onLeaderSelect={handleLeaderSelect}
+                    onSave={handleSave}
+                    saved={saved[s.id]}
+                    communityStats={communityMap[s.id] ?? null}
+                    confirmed={!!confirmed[s.id]}
+                    onEdit={() => handleEdit(s.id)}
+                    predData={myPredMap[s.id]}
+                    highlighted={highlightedId === `series-${s.id}`}
+                  />
                 ))}
               </div>
             </div>
