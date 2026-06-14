@@ -7079,6 +7079,63 @@ async def set_playin_start_time(game_id: int, start_time: str | None = None):
     conn.close()
     return {"message": "Start time updated", "game_id": game_id, "start_time": start_time}
 
+@app.get("/api/leaderboard/top5")
+async def leaderboard_top5(season: str = "2026"):
+    """Top-5 with full per-category point breakdown for the final podium."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT u.id, u.username, u.avatar_url,
+            COALESCE((SELECT SUM(p.points_earned) FROM predictions p WHERE p.user_id=u.id),0)         AS series_pts,
+            COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions pp WHERE pp.user_id=u.id),0) AS playin_pts,
+            COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id=u.id AND fp.season=%s),0) AS futures_pts,
+            COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id=u.id AND lp.season=%s),0) AS leaders_pts,
+            -- Per-round series points
+            COALESCE((SELECT SUM(p2.points_earned) FROM predictions p2
+                      JOIN series s2 ON s2.id=p2.series_id
+                      WHERE p2.user_id=u.id AND s2.round='First Round'),0)              AS r1_pts,
+            COALESCE((SELECT SUM(p2.points_earned) FROM predictions p2
+                      JOIN series s2 ON s2.id=p2.series_id
+                      WHERE p2.user_id=u.id AND s2.round IN ('Conference Semifinals','Second Round')),0) AS r2_pts,
+            COALESCE((SELECT SUM(p2.points_earned) FROM predictions p2
+                      JOIN series s2 ON s2.id=p2.series_id
+                      WHERE p2.user_id=u.id AND s2.round='Conference Finals'),0)        AS cf_pts,
+            COALESCE((SELECT SUM(p2.points_earned) FROM predictions p2
+                      JOIN series s2 ON s2.id=p2.series_id
+                      WHERE p2.user_id=u.id AND s2.round='NBA Finals'),0)               AS finals_pts,
+            -- Accuracy
+            COALESCE((SELECT COUNT(*) FROM predictions p3 WHERE p3.user_id=u.id AND p3.is_correct IS NOT NULL),0)  AS total_preds,
+            COALESCE((SELECT COUNT(*) FROM predictions p3 WHERE p3.user_id=u.id AND p3.is_correct=1),0)            AS correct_preds,
+            COALESCE((SELECT COUNT(*) FROM predictions p3 JOIN series s3 ON s3.id=p3.series_id
+                      WHERE p3.user_id=u.id AND p3.is_correct=1 AND p3.predicted_games=s3.actual_games),0) AS bullseyes
+        FROM users u
+        ORDER BY (series_pts + playin_pts + futures_pts + leaders_pts) DESC
+        LIMIT 5
+    """, (season, season))
+    rows = c.fetchall()
+    conn.close()
+    result = []
+    for rank, row in enumerate(rows, 1):
+        total = int(row[3]+row[4]+row[5]+row[6])
+        result.append({
+            'rank': rank, 'user_id': row[0], 'username': row[1], 'avatar_url': row[2] or '',
+            'points': total,
+            'breakdown': {
+                'play_in':       int(row[4]),
+                'round_1':       int(row[7]),
+                'round_2':       int(row[8]),
+                'conf_finals':   int(row[9]),
+                'nba_finals':    int(row[10]),
+                'futures':       int(row[5]),
+                'leaders':       int(row[6]),
+            },
+            'total_preds': int(row[11]), 'correct_preds': int(row[12]),
+            'accuracy': round(int(row[12])/max(int(row[11]),1)*100,1),
+            'bullseyes': int(row[13]),
+        })
+    return result
+
+
 @app.get("/api/leaderboard")
 async def leaderboard(response: Response, season: str = "2026"):
     conn = None

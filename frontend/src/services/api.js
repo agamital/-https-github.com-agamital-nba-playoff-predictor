@@ -182,6 +182,11 @@ export const getLeaderboard = async (season = '2026', limit = 100) => {
   return response.data;
 };
 
+export const getLeaderboardTop5 = async (season = '2026') => {
+  const response = await api.get('/api/leaderboard/top5', { params: { season } });
+  return response.data;
+};
+
 // Standings
 export const getStandings = async (forceRefresh = false) => {
   const response = await api.get('/api/standings', { params: forceRefresh ? { force_refresh: true } : {} });

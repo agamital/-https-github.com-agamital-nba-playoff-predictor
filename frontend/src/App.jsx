@@ -241,6 +241,199 @@ function FuturesLockTimer() {
   );
 }
 
+// ── Final Podium ─────────────────────────────────────────────────────────────
+
+const BREAKDOWN_LABELS = [
+  { key: 'play_in',     label: 'Play-In',          color: 'text-purple-400',  bg: 'bg-purple-500/15',  border: 'border-purple-500/30'  },
+  { key: 'round_1',     label: 'Round 1',           color: 'text-blue-400',    bg: 'bg-blue-500/15',    border: 'border-blue-500/30'    },
+  { key: 'round_2',     label: 'Conf Semis',        color: 'text-cyan-400',    bg: 'bg-cyan-500/15',    border: 'border-cyan-500/30'    },
+  { key: 'conf_finals', label: 'Conf Finals',       color: 'text-yellow-400',  bg: 'bg-yellow-500/15',  border: 'border-yellow-500/30'  },
+  { key: 'nba_finals',  label: 'NBA Finals',        color: 'text-orange-400',  bg: 'bg-orange-500/15',  border: 'border-orange-500/30'  },
+  { key: 'futures',     label: 'Futures Picks',     color: 'text-green-400',   bg: 'bg-green-500/15',   border: 'border-green-500/30'   },
+  { key: 'leaders',     label: 'Stat Leaders',      color: 'text-pink-400',    bg: 'bg-pink-500/15',    border: 'border-pink-500/30'    },
+];
+
+const PODIUM_CONFIG = [
+  { rank: 1, height: 'h-28',  labelPos: 'top-2',   medal: '🥇', glow: 'shadow-yellow-500/30', border: 'border-yellow-500/50', ring: 'ring-yellow-400', bg: 'from-yellow-500/20 to-amber-600/10' },
+  { rank: 2, height: 'h-20',  labelPos: 'top-2',   medal: '🥈', glow: 'shadow-slate-400/20',  border: 'border-slate-400/40',  ring: 'ring-slate-400',  bg: 'from-slate-400/15 to-slate-500/5'  },
+  { rank: 3, height: 'h-14',  labelPos: 'top-1.5', medal: '🥉', glow: 'shadow-amber-700/20',  border: 'border-amber-700/40',  ring: 'ring-amber-600',  bg: 'from-amber-700/15 to-amber-800/5'  },
+];
+
+const FinalPodium = ({ onNavigate }) => {
+  const [expanded, setExpanded] = useState(null); // user_id or null
+  const { data: top5, isLoading } = useQuery({
+    queryKey: ['leaderboardTop5'],
+    queryFn: () => api.getLeaderboardTop5(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  if (isLoading) return (
+    <div className="flex justify-center py-12">
+      <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+  if (!top5?.length) return null;
+
+  const top3 = top5.slice(0, 3);
+  const rest = top5.slice(3);
+
+  // Podium order: 2nd | 1st | 3rd
+  const podiumOrder = [top3[1], top3[0], top3[2]].filter(Boolean);
+  const podiumCfg   = [PODIUM_CONFIG[1], PODIUM_CONFIG[0], PODIUM_CONFIG[2]];
+
+  const toggleExpand = (uid) => setExpanded(prev => prev === uid ? null : uid);
+
+  const UserAvatar = ({ user, size = 'w-14 h-14', ring }) => (
+    user.avatar_url
+      ? <img src={user.avatar_url} alt="" className={`${size} rounded-full object-cover ring-2 ${ring} shrink-0`} />
+      : <div className={`${size} rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center ring-2 ${ring} shrink-0`}>
+          <span className="text-white font-black text-lg">{(user.username||'?')[0].toUpperCase()}</span>
+        </div>
+  );
+
+  const RoadToTop = ({ user }) => {
+    const bd = user.breakdown || {};
+    const total = user.points;
+    return (
+      <div className="mt-3 pt-3 border-t border-slate-700/60 space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
+        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Road to the Top</p>
+        <div className="grid grid-cols-2 gap-1.5">
+          {BREAKDOWN_LABELS.map(({ key, label, color, bg, border }) => {
+            const pts = bd[key] || 0;
+            if (!pts) return null;
+            const pct = Math.round((pts / total) * 100);
+            return (
+              <div key={key} className={`rounded-xl border ${border} ${bg} p-2.5`}>
+                <p className={`text-[9px] font-black uppercase tracking-wider ${color} mb-1`}>{label}</p>
+                <div className="flex items-end justify-between gap-1">
+                  <span className="text-sm font-black text-white">+{pts}</span>
+                  <span className={`text-[9px] font-bold ${color} opacity-70`}>{pct}%</span>
+                </div>
+                <div className="h-1 bg-slate-800 rounded-full mt-1.5 overflow-hidden">
+                  <div className={`h-full rounded-full transition-all duration-700 ${bg.replace('/15','/60')}`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex items-center justify-between pt-1">
+          <span className="text-[10px] text-slate-500">
+            {user.correct_preds}/{user.total_preds} correct · {user.accuracy}% acc · {user.bullseyes} bullseye{user.bullseyes !== 1 ? 's' : ''}
+          </span>
+          <button onClick={() => onNavigate('profile', { userId: user.user_id })}
+            className="text-[10px] font-black text-orange-400 hover:text-orange-300 transition-colors">
+            Full profile →
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="mb-10">
+      {/* Title */}
+      <div className="text-center mb-6">
+        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-yellow-500/15 border border-yellow-500/30 mb-3">
+          <Trophy className="w-4 h-4 text-yellow-400" />
+          <span className="text-xs font-black text-yellow-400 uppercase tracking-widest">2026 Final Rankings</span>
+        </div>
+        <h2 className="text-2xl font-black text-white">Champions of the Predictor</h2>
+        <p className="text-slate-500 text-sm mt-1">Click any player to see their road to the top</p>
+      </div>
+
+      {/* Podium — 3 columns: 2nd | 1st | 3rd */}
+      <div className="flex items-end justify-center gap-3 mb-4">
+        {podiumOrder.map((user, i) => {
+          if (!user) return null;
+          const cfg = podiumCfg[i];
+          const isOpen = expanded === user.user_id;
+          return (
+            <div key={user.user_id} className="flex flex-col items-center" style={{ width: 110 }}>
+              {/* Medal */}
+              <span className="text-2xl mb-1">{cfg.medal}</span>
+              {/* Avatar */}
+              <button onClick={() => toggleExpand(user.user_id)}
+                className={`relative mb-2 transition-transform active:scale-95 ${isOpen ? 'scale-105' : 'hover:scale-105'}`}>
+                <UserAvatar user={user} size="w-14 h-14" ring={cfg.ring} />
+                {isOpen && <div className={`absolute -inset-1 rounded-full ring-2 ${cfg.ring} animate-pulse opacity-60`} />}
+              </button>
+              {/* Name + pts */}
+              <button onClick={() => toggleExpand(user.user_id)}
+                className="text-center group w-full">
+                <p className="text-[11px] font-black text-white truncate group-hover:text-orange-300 transition-colors">{user.username}</p>
+                <p className="text-lg font-black text-yellow-400 leading-tight">{user.points.toLocaleString()}</p>
+                <p className="text-[9px] text-slate-500 font-bold">pts</p>
+              </button>
+              {/* Podium block */}
+              <div className={`w-full mt-2 rounded-t-xl bg-gradient-to-b ${cfg.bg} border-t border-x ${cfg.border} shadow-lg ${cfg.glow} ${cfg.height} flex items-center justify-center`}>
+                <span className="text-2xl font-black text-white/20">#{cfg.rank}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 4th & 5th — flat row */}
+      {rest.map((user, i) => {
+        const rank = i + 4;
+        const isOpen = expanded === user.user_id;
+        return (
+          <button key={user.user_id} onClick={() => toggleExpand(user.user_id)}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all mb-2 text-left ${
+              isOpen ? 'border-orange-500/40 bg-orange-500/8' : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
+            }`}>
+            <span className="text-sm font-black text-slate-500 w-5 shrink-0">#{rank}</span>
+            {user.avatar_url
+              ? <img src={user.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-700 shrink-0" />
+              : <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center shrink-0">
+                  <span className="text-xs font-black text-slate-400">{(user.username||'?')[0].toUpperCase()}</span>
+                </div>
+            }
+            <span className="font-black text-white flex-1 text-sm">{user.username}</span>
+            <span className="text-base font-black text-orange-400">{user.points.toLocaleString()} <span className="text-[10px] text-slate-500 font-bold">pts</span></span>
+            <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
+          </button>
+        );
+      })}
+
+      {/* Expanded breakdown — shown below whichever card is open */}
+      {expanded && (() => {
+        const user = top5.find(u => u.user_id === expanded);
+        if (!user) return null;
+        const isTop3 = user.rank <= 3;
+        return (
+          <div className={`rounded-2xl border p-4 mb-3 ${
+            user.rank === 1 ? 'border-yellow-500/30 bg-yellow-500/5' :
+            user.rank === 2 ? 'border-slate-400/30 bg-slate-800/40' :
+            user.rank === 3 ? 'border-amber-700/30 bg-amber-900/10' :
+            'border-orange-500/30 bg-orange-500/5'
+          }`}>
+            <div className="flex items-center gap-3 mb-1">
+              {user.avatar_url
+                ? <img src={user.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" />
+                : <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center shrink-0">
+                    <span className="text-white font-black">{(user.username||'?')[0].toUpperCase()}</span>
+                  </div>
+              }
+              <div>
+                <p className="font-black text-white text-base">{user.username}</p>
+                <p className="text-xs text-slate-400">#{user.rank} · {user.points.toLocaleString()} pts total</p>
+              </div>
+            </div>
+            <RoadToTop user={user} />
+          </div>
+        );
+      })()}
+
+      {/* View full leaderboard */}
+      <button onClick={() => onNavigate('leaderboard')}
+        className="w-full mt-2 py-2.5 rounded-xl border border-slate-700 text-slate-400 hover:border-orange-500/40 hover:text-orange-400 transition-all text-xs font-bold flex items-center justify-center gap-2">
+        <Users className="w-3.5 h-3.5" /> View Full Leaderboard
+      </button>
+    </div>
+  );
+};
+
 const HomePage = ({ currentUser, onNavigate, onLogin }) => {
   const [mode, setMode] = useState('login'); // 'login' | 'register' | 'reset'
   const [formData, setFormData] = useState({ username: '', email: '', password: '', confirmPassword: '', newPassword: '' });
@@ -547,6 +740,12 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             ))}
           </Card>
         )}
+
+        {/* ── Final Podium ── */}
+        <div className="mb-2 mt-2">
+          <div className="h-px bg-slate-800 mb-8" />
+          <FinalPodium onNavigate={onNavigate} />
+        </div>
 
         {/* Divider before Futures/Leaders */}
         <div id="futures-section" className="flex items-center gap-3 mb-6">
