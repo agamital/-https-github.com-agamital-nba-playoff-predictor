@@ -656,6 +656,9 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
           </Card>
         </div>
 
+        {/* ── Final Standings Podium ── */}
+        <FinalPodium onNavigate={onNavigate} />
+
         {/* Live Playoff Records */}
         <PlayoffCurrentHighs highs={homePlayoffHighs} />
 
@@ -740,12 +743,6 @@ const HomePage = ({ currentUser, onNavigate, onLogin }) => {
             ))}
           </Card>
         )}
-
-        {/* ── Final Podium ── */}
-        <div className="mb-2 mt-2">
-          <div className="h-px bg-slate-800 mb-8" />
-          <FinalPodium onNavigate={onNavigate} />
-        </div>
 
         {/* Divider before Futures/Leaders */}
         <div id="futures-section" className="flex items-center gap-3 mb-6">
