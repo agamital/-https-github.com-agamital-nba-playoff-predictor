@@ -9650,6 +9650,115 @@ async def admin_sync_playoffs_from_api(season: str = "2026"):
     return result
 
 
+@app.post("/api/admin/finalize-all-series-leaders")
+async def admin_finalize_all_series_leaders(season: str = "2026"):
+    """
+    Derive actual_leading_scorer / rebounder / assister for ALL completed series
+    by querying player_game_stats directly by team + date range (bypasses
+    series_processed_events so it works even for series completed before boxscores
+    were linked).  Then rescores every prediction.
+    """
+    _ROUND_START = {
+        'First Round':           '2026-04-18',
+        'Conference Semifinals': '2026-05-04',
+        'Conference Finals':     '2026-05-18',
+        'NBA Finals':            '2026-06-02',
+    }
+    _ROUND_END = {
+        'First Round':           '2026-05-04',
+        'Conference Semifinals': '2026-05-19',
+        'Conference Finals':     '2026-06-03',
+        'NBA Finals':            '2026-06-30',
+    }
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT s.id, s.round,
+               ht.abbreviation AS home_abbr,
+               at.abbreviation AS away_abbr,
+               s.game1_start_time
+        FROM series s
+        JOIN teams ht ON s.home_team_id = ht.id
+        JOIN teams at ON s.away_team_id = at.id
+        WHERE s.season = %s AND s.status = 'completed'
+        ORDER BY s.id
+    """, (season,))
+    all_series = c.fetchall()
+
+    updated = []
+    skipped = []
+    for sid, round_name, home_abbr, away_abbr, g1 in all_series:
+        start_date = str(g1)[:10] if g1 else _ROUND_START.get(round_name, '2026-04-18')
+        end_date   = _ROUND_END.get(round_name, '2026-06-30')
+        abbrs = list({home_abbr.upper(), away_abbr.upper(),
+                      home_abbr, away_abbr,
+                      # ESPN short-forms
+                      'SA' if away_abbr == 'SAS' else away_abbr,
+                      'NY' if home_abbr == 'NYK' else home_abbr})
+
+        leaders = {}
+        for cat, col in (('scorer','points'),('rebounder','rebounds'),('assister','assists')):
+            c.execute(f"""
+                SELECT player_name, SUM({col}) AS total
+                FROM player_game_stats
+                WHERE season = %s
+                  AND game_date BETWEEN %s AND %s
+                  AND UPPER(team_abbr) = ANY(%s)
+                GROUP BY player_name
+                ORDER BY total DESC NULLS LAST
+                LIMIT 1
+            """, (season, start_date, end_date, [a.upper() for a in abbrs]))
+            row = c.fetchone()
+            leaders[cat] = row[0] if row and row[1] else None
+
+        if not any(leaders.values()):
+            skipped.append(sid)
+            continue
+
+        c.execute("""UPDATE series SET
+                     actual_leading_scorer    = %s,
+                     actual_leading_rebounder = %s,
+                     actual_leading_assister  = %s
+                     WHERE id = %s""",
+                  (leaders['scorer'], leaders['rebounder'], leaders['assister'], sid))
+        updated.append({'id': sid, 'round': round_name,
+                        'scorer': leaders['scorer'],
+                        'rebounder': leaders['rebounder'],
+                        'assister': leaders['assister']})
+
+    conn.commit()
+
+    # Rescore everything
+    from scoring import calculate_series_points, calculate_series_leader_points
+    c.execute("""SELECT s.id, s.round, s.home_seed, s.away_seed,
+                        s.winner_team_id, s.actual_games, s.home_team_id, s.away_team_id,
+                        s.actual_leading_scorer, s.actual_leading_rebounder, s.actual_leading_assister
+                 FROM series s WHERE s.season = %s AND s.status = 'completed'""", (season,))
+    all_comp = c.fetchall()
+    pred_total = 0
+    for (sid, rnd, hs, as_, wtid, ag, htid, atid, sc, rb, ast) in all_comp:
+        c.execute('UPDATE predictions SET is_correct = 0, points_earned = 0 WHERE series_id = %s', (sid,))
+        c.execute('SELECT id, predicted_winner_id, predicted_games, leading_scorer, leading_rebounder, leading_assister FROM predictions WHERE series_id = %s', (sid,))
+        for pred_id, pw, pg, ps, pr, pa in c.fetchall():
+            winner_ok = (pw == wtid)
+            games_ok  = (pg == ag)
+            games_diff = abs(pg - ag) if pg is not None else None
+            pred_seed = hs if pw == htid else (as_ if pw == atid else None)
+            pts = calculate_series_points(rnd, hs, as_, pred_seed, winner_correct=winner_ok, games_correct=games_ok, games_diff=games_diff)
+            pts += calculate_series_leader_points({'scorer': ps, 'rebounder': pr, 'assister': pa}, {'scorer': sc, 'rebounder': rb, 'assister': ast}, round_name=rnd)
+            c.execute('UPDATE predictions SET is_correct = %s, points_earned = %s WHERE id = %s', (1 if winner_ok else 0, pts, pred_id))
+            pred_total += 1
+
+    # Recalculate total points for all users
+    c.execute("""UPDATE users u SET points = COALESCE((
+                    SELECT SUM(p.points_earned) FROM predictions p WHERE p.user_id = u.id
+                 ),0) + COALESCE((SELECT fp.points_earned FROM futures_predictions fp WHERE fp.user_id = u.id AND fp.season = %s LIMIT 1),0)
+              """, (season,))
+    conn.commit()
+    conn.close()
+    return {"series_updated": updated, "series_skipped": skipped, "predictions_rescored": pred_total}
+
+
 @app.post("/api/admin/sync-series-leaders")
 async def admin_sync_series_leaders(season: str = "2026"):
     """
