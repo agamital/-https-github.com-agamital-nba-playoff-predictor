@@ -7084,61 +7084,77 @@ async def leaderboard_top5(season: str = "2026"):
     """Top-5 with full per-category point breakdown for the final podium."""
     conn = get_db_conn()
     c = conn.cursor()
-    # Compute total in a subquery so ORDER BY works cleanly in PostgreSQL
+
+    # Step 1: get top-5 user IDs ordered by total points
     c.execute("""
-        SELECT u.id, u.username, u.avatar_url,
-            COALESCE((SELECT SUM(p.points_earned)  FROM predictions p         WHERE p.user_id=u.id), 0)           AS series_pts,
-            COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions pp  WHERE pp.user_id=u.id), 0)          AS playin_pts,
-            COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id=u.id), 0)          AS futures_pts,
-            COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id=u.id), 0)          AS leaders_pts,
-            COALESCE((SELECT SUM(p2.points_earned) FROM predictions p2
-                      JOIN series s2 ON s2.id=p2.series_id
-                      WHERE p2.user_id=u.id AND s2.round='First Round'), 0)                                        AS r1_pts,
-            COALESCE((SELECT SUM(p2.points_earned) FROM predictions p2
-                      JOIN series s2 ON s2.id=p2.series_id
-                      WHERE p2.user_id=u.id AND s2.round IN ('Conference Semifinals','Second Round')), 0)           AS r2_pts,
-            COALESCE((SELECT SUM(p2.points_earned) FROM predictions p2
-                      JOIN series s2 ON s2.id=p2.series_id
-                      WHERE p2.user_id=u.id AND s2.round='Conference Finals'), 0)                                  AS cf_pts,
-            COALESCE((SELECT SUM(p2.points_earned) FROM predictions p2
-                      JOIN series s2 ON s2.id=p2.series_id
-                      WHERE p2.user_id=u.id AND s2.round='NBA Finals'), 0)                                         AS finals_pts,
-            COALESCE((SELECT COUNT(*) FROM predictions pa WHERE pa.user_id=u.id AND pa.is_correct IS NOT NULL), 0) AS total_preds,
-            COALESCE((SELECT COUNT(*) FROM predictions pb WHERE pb.user_id=u.id AND pb.is_correct=1), 0)           AS correct_preds,
-            COALESCE((SELECT COUNT(*) FROM predictions pc
-                      JOIN series sc ON sc.id=pc.series_id
-                      WHERE pc.user_id=u.id AND pc.is_correct=1 AND pc.predicted_games=sc.actual_games), 0)        AS bullseyes
+        SELECT u.id, u.username, u.avatar_url
         FROM users u
-        ORDER BY (
-            COALESCE((SELECT SUM(p.points_earned)  FROM predictions p         WHERE p.user_id=u.id), 0) +
-            COALESCE((SELECT SUM(pp.points_earned) FROM playin_predictions pp  WHERE pp.user_id=u.id), 0) +
-            COALESCE((SELECT SUM(fp.points_earned) FROM futures_predictions fp WHERE fp.user_id=u.id), 0) +
-            COALESCE((SELECT SUM(lp.points_earned) FROM leaders_predictions lp WHERE lp.user_id=u.id), 0)
-        ) DESC
+        ORDER BY u.points DESC
         LIMIT 5
     """)
-    rows = c.fetchall()
-    conn.close()
+    users = c.fetchall()
+
     result = []
-    for rank, row in enumerate(rows, 1):
-        r = [int(v) if v is not None else 0 for v in row]
-        total = r[3] + r[4] + r[5] + r[6]
+    for rank, (uid, uname, avatar) in enumerate(users, 1):
+        # Series breakdown by round
+        c.execute("""
+            SELECT s.round, COALESCE(SUM(p.points_earned), 0)
+            FROM predictions p
+            JOIN series s ON s.id = p.series_id
+            WHERE p.user_id = %s
+            GROUP BY s.round
+        """, (uid,))
+        round_pts = {row[0]: int(row[1]) for row in c.fetchall()}
+
+        # Play-in
+        c.execute("SELECT COALESCE(SUM(points_earned),0) FROM playin_predictions WHERE user_id=%s", (uid,))
+        playin = int(c.fetchone()[0])
+
+        # Futures
+        c.execute("SELECT COALESCE(SUM(points_earned),0) FROM futures_predictions WHERE user_id=%s", (uid,))
+        futures = int(c.fetchone()[0])
+
+        # Leaders
+        c.execute("SELECT COALESCE(SUM(points_earned),0) FROM leaders_predictions WHERE user_id=%s", (uid,))
+        leaders = int(c.fetchone()[0])
+
+        # Accuracy
+        c.execute("""
+            SELECT
+                COUNT(CASE WHEN p.is_correct IS NOT NULL THEN 1 END),
+                COUNT(CASE WHEN p.is_correct = 1 THEN 1 END),
+                COUNT(CASE WHEN p.is_correct = 1 AND p.predicted_games = s2.actual_games THEN 1 END)
+            FROM predictions p
+            LEFT JOIN series s2 ON s2.id = p.series_id
+            WHERE p.user_id = %s
+        """, (uid,))
+        acc_row = c.fetchone()
+        total_p, correct_p, bullseyes = int(acc_row[0]), int(acc_row[1]), int(acc_row[2])
+
+        r1 = round_pts.get('First Round', 0)
+        r2 = round_pts.get('Conference Semifinals', 0) + round_pts.get('Second Round', 0)
+        cf = round_pts.get('Conference Finals', 0)
+        fn = round_pts.get('NBA Finals', 0)
+        total = r1 + r2 + cf + fn + playin + futures + leaders
+
         result.append({
-            'rank': rank, 'user_id': r[0], 'username': row[1], 'avatar_url': row[2] or '',
+            'rank': rank, 'user_id': uid, 'username': uname, 'avatar_url': avatar or '',
             'points': total,
             'breakdown': {
-                'play_in':      r[4],
-                'round_1':      r[7],
-                'round_2':      r[8],
-                'conf_finals':  r[9],
-                'nba_finals':   r[10],
-                'futures':      r[5],
-                'leaders':      r[6],
+                'play_in':     playin,
+                'round_1':     r1,
+                'round_2':     r2,
+                'conf_finals': cf,
+                'nba_finals':  fn,
+                'futures':     futures,
+                'leaders':     leaders,
             },
-            'total_preds': r[11], 'correct_preds': r[12],
-            'accuracy': round(r[12] / max(r[11], 1) * 100, 1),
-            'bullseyes': r[13],
+            'total_preds': total_p, 'correct_preds': correct_p,
+            'accuracy': round(correct_p / max(total_p, 1) * 100, 1),
+            'bullseyes': bullseyes,
         })
+
+    conn.close()
     return result
 
 
